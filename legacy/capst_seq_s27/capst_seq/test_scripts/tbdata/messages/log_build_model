@@ -1,0 +1,130 @@
+
+INFO (TDA-005): Command Line Invocation: 
+            build_model -cell s27 -designtop s27 -allowmissingmodules no -workdir /home/cmos/capst_seq/test_scripts -designsource /home/cmos/capst_seq/test_scripts/s27.test_netlist.v -messagecounteach 100 -stdout summary -techlib /home/cmos/capst_seq/saed90nm.v  [end TDA_005]
+
+INFO (TDA-014): Cadence(R) Modus(TM) DFT Software Solution, Version 22.10-p008_1, built Oct 18 2022 (linux26_64) [end TDA_014]
+
+INFO (TDA-015): Log File: /home/cmos/capst_seq/test_scripts/testresults/logs/log_build_model_032726141300-723550000 [end TDA_015]
+
+INFO (TDA-007): Job Information:
+            Date Started: Friday Mar 27 14:13:00 2026  IST
+            Host machine is pescad-09.pes.edu, x86_64 running Linux 4.18.0-425.3.1.el8.x86_64.
+            This job is process number 19526.
+[end TDA_007]
+
+INFO (TDA-009): Options/Values information.
+            (options marked with '*' have program generated values,
+             options marked with '+' were specified to default.)
+
+            -WORKDIR /home/cmos/capst_seq/test_scripts
+
+            -designtop s27
+            -TECHLIB /home/cmos/capst_seq/saed90nm.v
+            -LOGFILE /home/cmos/capst_seq/test_scripts/testresults/logs/log_build_model_032726141300-723550000
+            -STDOUT summary
+            -messagecounteach 100
+            -DESIGNSOURCE /home/cmos/capst_seq/test_scripts/s27.test_netlist.v
+          + -allowmissingmodules no
+[end TDA_009]
+INFO (TFW-117): Modus checked out a modus_atpg license.  [end TFW_117] 
+INFO (TEI-195): Build Model - Controller starting: [end TEI_195] 
+
+
+Search Order  1:  "/home/cmos/capst_seq/test_scripts/s27.test_netlist.v"
+Search Order  2:  "/home/cmos/capst_seq/saed90nm.v"
+
+
+
+Reading Verilog data from /home/cmos/capst_seq/test_scripts/s27.test_netlist.v
+
+Verilog Parser complete - 1 modules, 0 gates, 0 user defined primitives.
+
+
+Reading Verilog data from /home/cmos/capst_seq/saed90nm.v
+
+Verilog Parser complete - 340 modules, 7265 gates, 26 user defined primitives.
+
+
+
+INFO (TEI-196): Build Model - Hierarchical Model Build starting: [end TEI_196] 
+
+WARNING (TEI-142): All pins on net 'SI_D_SE_SDFCHK' of 'cell SDFFX1' appear to be sources. This may cause creation of Verilog patterns with scanformat of parallel to fail. Cell contents file: '/home/cmos/capst_seq/saed90nm.v'.  [end TEI_142] 
+WARNING (TEI-110): Pin 'notifier' of 'cell saed90_dff_pos' has no external net connection for any usage in the design. Cell contents file: '/home/cmos/capst_seq/saed90nm.v'.  [end TEI_110] 
+
+
+Number of blocks in the hierarchical model is: 408.
+
+Number of technology library cell instances in the hierarchical model is: 12.
+
+
+INFO (TEI-197): Build Model - Hierarchical Model Build completed. [end TEI_197] 
+
+
+
+INFO (TEI-198): Build Model - Flat Model Build starting: [end TEI_198] 
+
+ defaultTIE = X
+ defaultDFN = T
+
+WARNING (TLM-105): Multi-source net 'SI_D_SE_SDFCHK' of 'cell SDFFX1' has no dotting function(DFN) properties specified. Input option 'defaultDFN' set to 'T' is used to model the net.  [end TLM_105] 
+
+INFO (TLM-055): Design Summary
+                --------------
+
+Hierarchical Model:                  Flattened Model:
+            408  Blocks                          50  Blocks
+          1,073  Pins                            50  Nodes
+            605  Nets
+
+Primary Inputs:                      Primary Outputs:
+          7  Input Only                         2  Output Only
+          0  Input/Output                       0  Input/Output
+          7  Total Inputs                       2  Total Outputs
+
+Tied Nets:                           Dotted Nets:
+          0  Tied to 0                          0  Two-State
+          0  Tied to 1                          0  Three-State
+          0  Tied to X                          0  Total Dotted Nets
+          0  Total Tied Nets
+
+Selected Primitive Functions:
+          0  Clock Chopper (CHOP) primitives 
+          0  RAMs
+          0  ROMs
+          0  TSDs
+          0  Resistors
+          0  Transistors
+          3  MUX2s
+          0  Latches
+
+
+          3  Rising  Edge Flop w/Set and Reset-Dominant Port
+          3  Total Flops
+
+         12  Technology Library Cell Instances
+
+[end TLM_055] 
+Optimization removed logic for 1 of 11 cells in this design.
+
+Optimization removed a total of 12 tied Latch Ports.
+Optimization removed a total of 27 non-controlling inputs.
+Optimization removed a total of 390 dangling logic nodes.
+
+
+
+INFO (TEI-199): Build Model - Flat Model Build completed.  [end TEI_199] 
+
+
+INFO (TDA-001): Maximum Memory used during the run and Cumulative Time in hours:minutes:seconds:
+
+                  Total Memory =          103,909,152  bytes
+
+                      CPU Time =    0:00:00.55
+                  Elapsed Time =    0:00:04.05                    [end TDA_001]
+
+
+
+INFO (TEI-200): Build Model - Controller completed. [end TEI_200] 
+
+INFO (TFW-119): Modus checked in a modus_atpg license.  [end TFW_119] 
+

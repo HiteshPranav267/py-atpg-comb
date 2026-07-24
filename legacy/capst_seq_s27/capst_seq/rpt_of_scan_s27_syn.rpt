@@ -1,0 +1,13 @@
+Reporting 1 scan chain (muxed_scan)
+ 
+Chain 1: scan_1 
+  scan_in:      scan_in 
+  scan_out:     scan_out   
+  shift_enable: SE (active high) 
+  clock_domain: CK (edge: rise)
+  length: 3
+    bit 1 	DFF_0_Q_reg  <CK (rise)>  
+    bit 2 	DFF_1_Q_reg  <CK (rise)>  
+    bit 3 	DFF_2_Q_reg  <CK (rise)>  
+------------------------
+

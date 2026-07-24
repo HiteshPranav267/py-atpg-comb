@@ -1,0 +1,151 @@
+Starting Command: report_test_structures 
+
+INFO (TDA-005): Command Line Invocation: 
+            report_test_structures -reportscanchain all -testmode FULLSCAN -workdir /home/cmos/s1238_capstone/test_scripts -stdout summary  [end TDA_005]
+
+INFO (TDA-014): Cadence(R) Modus(TM) DFT Software Solution, Version 22.10-p008_1, built Oct 18 2022 (linux26_64) [end TDA_014]
+
+INFO (TDA-015): Log File: /home/cmos/s1238_capstone/test_scripts/testresults/logs/log_report_test_structures_FULLSCAN_033026195248-634257000 [end TDA_015]
+
+INFO (TDA-007): Job Information:
+            Date Started: Monday Mar 30 19:52:48 2026  IST
+            Host machine is pescad-14.pes.edu, x86_64 running Linux 4.18.0-425.3.1.el8.x86_64.
+            This job is process number 21950.
+[end TDA_007]
+
+INFO (TDA-009): Options/Values information.
+            (options marked with '*' have program generated values,
+             options marked with '+' were specified to default.)
+
+            -WORKDIR /home/cmos/s1238_capstone/test_scripts
+            -TESTMODE FULLSCAN
+
+            -LOGFILE /home/cmos/s1238_capstone/test_scripts/testresults/logs/log_report_test_structures_FULLSCAN_033026195248-634257000
+            -STDOUT summary
+            -reportscanchain all
+[end TDA_009]
+INFO (TFW-117): Modus checked out a modus_atpg license.  [end TFW_117] 
+
+INFO (TLM-055): Design Summary
+                --------------
+
+Hierarchical Model:                  Flattened Model:
+          3,026  Blocks                         644  Blocks
+          8,420  Pins                           644  Nodes
+          4,829  Nets
+
+Primary Inputs:                      Primary Outputs:
+         17  Input Only                        15  Output Only
+          0  Input/Output                       0  Input/Output
+         17  Total Inputs                      15  Total Outputs
+
+Tied Nets:                           Dotted Nets:
+          0  Tied to 0                          0  Two-State
+          0  Tied to 1                          0  Three-State
+          0  Tied to X                          0  Total Dotted Nets
+          0  Total Tied Nets
+
+Selected Primitive Functions:
+          0  Clock Chopper (CHOP) primitives 
+          0  RAMs
+          0  ROMs
+          0  TSDs
+          0  Resistors
+          0  Transistors
+         23  MUX2s
+          0  Latches
+
+
+         18  Rising  Edge Flop w/Set and Reset-Dominant Port
+         18  Total Flops
+
+        289  Technology Library Cell Instances
+
+[end TLM_055] 
+
+Information for Test Mode:  FULLSCAN
+-------------------------
+
+         Scan Type = GSD
+
+
+
+
+Control/Observe Chain Information for Test Mode:  FULLSCAN
+-----------------------------------------------
+
+     1 Control Chains (0 Control Only)
+     1 Observe Chains (0 Observe Only)
+     1 Chains are Control and Observe
+
+  Longest Scan Chain: 18 bits
+  Average Scan Chain Length: 18 bits
+
+
+  Control Chain: 1
+    Fed by: Scan-In
+    Number of Control Points: 1
+      Control Point Pin Index/Name          16/port:scan_in    Pipeline Stages: 0 
+    Load Point Pin Index/Name  16/port:scan_in
+    Length: 18
+    Scan Section: Scan_Section_Sequence
+  Observe Chain: 1
+    Number of Observe Points: 1
+      Observe Point Pin Index/Name          31/port:scan_out    Pipeline Stages: 0 
+    Unload Point Pin Index/Name  31/port:scan_out
+    Unload Point In Phase with Load Point
+    Length: 18
+    Scan Section: Scan_Section_Sequence
+
+    Position     Type  Block Index  IO Phase  ObserveChn  ObservePos  Block Name
+    --------  -------  -----------  --------  ----------  ----------  ----------
+           1  rDFF_Cs            1        ++           1          18  inst:DFF_0_Q_reg
+           2  rDFF_Cs         1162        --           1          17  inst:DFF_1_Q_reg
+           3  rDFF_Cs         1291        --           1          16  inst:DFF_2_Q_reg
+           4  rDFF_Cs         1420        --           1          15  inst:DFF_3_Q_reg
+           5  rDFF_Cs         1549        --           1          14  inst:DFF_4_Q_reg
+           6  rDFF_Cs         1678        --           1          13  inst:DFF_5_Q_reg
+           7  rDFF_Cs         1807        ++           1          12  inst:DFF_6_Q_reg
+           8  rDFF_Cs         1936        ++           1          11  inst:DFF_7_Q_reg
+           9  rDFF_Cs         2065        --           1          10  inst:DFF_8_Q_reg
+          10  rDFF_Cs         2194        ++           1           9  inst:DFF_9_Q_reg
+          11  rDFF_Cs          130        --           1           8  inst:DFF_10_Q_reg
+          12  rDFF_Cs          259        --           1           7  inst:DFF_11_Q_reg
+          13  rDFF_Cs          388        ++           1           6  inst:DFF_12_Q_reg
+          14  rDFF_Cs          517        ++           1           5  inst:DFF_13_Q_reg
+          15  rDFF_Cs          646        --           1           4  inst:DFF_14_Q_reg
+          16  rDFF_Cs          775        ++           1           3  inst:DFF_15_Q_reg
+          17  rDFF_Cs          904        --           1           2  inst:DFF_16_Q_reg
+          18  rDFF_Cs         1033        ++           1           1  inst:DFF_17_Q_reg
+
+
+Report completed.
+
+
+INFO (TDA-001): Maximum Memory used during the run and Cumulative Time in hours:minutes:seconds:
+
+                  Total Memory =            5,791,888  bytes
+
+                      CPU Time =    0:00:00.00
+                  Elapsed Time =    0:00:00.00                    [end TDA_001]
+
+     Date Ended:  Monday Mar 30 19:52:48 2026  IST
+
+INFO (TFW-119): Modus checked in a modus_atpg license.  [end TFW_119] 
+
+
+
+-------------------------------------------------------------------------------
+*                      Message Summary                                        *
+-------------------------------------------------------------------------------
+ Count  Number             First Instance of Message Text
+------- ------             ------------------------------
+
+  INFO Messages...
+      1 INFO (TFW-117): Modus checked out a modus_atpg license.   
+      1 INFO (TFW-119): Modus checked in a modus_atpg license.   
+      1 INFO (TLM-055): Design Summary
+
+ For a detailed explanation of a message and a suggested user response execute 'msgHelp <message id>'.  For example: msgHelp TDA-009
+
+-------------------------------------------------------------------------------

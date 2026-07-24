@@ -1,0 +1,39 @@
+# trojan_example.bench — Simple circuit with an embedded Hardware Trojan
+# Demonstrates a rare-trigger Trojan pattern for testing AI detection
+# 8 inputs, 3 outputs
+
+INPUT(a)
+INPUT(b)
+INPUT(c)
+INPUT(d)
+INPUT(e)
+INPUT(f)
+INPUT(g)
+INPUT(h)
+
+OUTPUT(y1)
+OUTPUT(y2)
+OUTPUT(trojan_out)
+
+# Normal functional logic
+n1 = AND(a, b)
+n2 = OR(c, d)
+n3 = NAND(n1, n2)
+n4 = XOR(e, f)
+n5 = NOR(n3, n4)
+y1 = NOT(n5)
+
+n6 = AND(a, c)
+n7 = OR(b, d)
+n8 = NAND(n6, n7)
+y2 = NOT(n8)
+
+# Hardware Trojan: 4-input AND rare-trigger
+# This only activates when a=1, b=1, g=1, h=1 simultaneously
+# Probability: 1/16 = 6.25% — low toggle rate
+trig1 = AND(a, b)
+trig2 = AND(g, h)
+trigger = AND(trig1, trig2)
+
+# Trojan payload: flips y1 when trigger is active
+trojan_out = XOR(y1, trigger)

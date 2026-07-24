@@ -1,0 +1,11 @@
+flask
+flask-socketio
+networkx
+paramiko
+openai
+anthropic
+python-dotenv
+pywebview
+pyinstaller
+PyQt6
+qtpy

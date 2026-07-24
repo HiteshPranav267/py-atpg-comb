@@ -1,0 +1,373 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>PyATPG - Feature Analysis</title>
+<!-- Material Symbols -->
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@100..900&display=swap" rel="stylesheet"/>
+<!-- Tailwind CSS -->
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<!-- Tailwind Config -->
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    "colors": {
+                        "on-surface-variant": "#c1c6d7",
+                        "outline": "#8b90a0",
+                        "tertiary-fixed-dim": "#c8c6c5",
+                        "tertiary": "#c8c6c5",
+                        "on-primary-fixed-variant": "#004493",
+                        "surface-dim": "#131313",
+                        "secondary": "#d7baff",
+                        "surface-container-lowest": "#0e0e0e",
+                        "inverse-on-surface": "#303030",
+                        "on-primary-container": "#00285c",
+                        "surface": "#131313",
+                        "primary-fixed-dim": "#adc6ff",
+                        "on-error-container": "#ffdad6",
+                        "tertiary-fixed": "#e5e2e1",
+                        "tertiary-container": "#929090",
+                        "on-background": "#e5e2e1",
+                        "on-tertiary-container": "#2a2a29",
+                        "surface-variant": "#353535",
+                        "inverse-surface": "#e5e2e1",
+                        "on-tertiary-fixed-variant": "#474646",
+                        "error-container": "#93000a",
+                        "background": "#131313",
+                        "on-surface": "#e5e2e1",
+                        "primary": "#adc6ff",
+                        "primary-container": "#4b8eff",
+                        "secondary-container": "#6702c8",
+                        "surface-bright": "#393939",
+                        "on-tertiary-fixed": "#1c1b1b",
+                        "primary-fixed": "#d8e2ff",
+                        "inverse-primary": "#005bc1",
+                        "secondary-fixed": "#eddcff",
+                        "on-secondary-container": "#ceacff",
+                        "surface-container": "#202020",
+                        "secondary-fixed-dim": "#d7baff",
+                        "surface-container-highest": "#353535",
+                        "surface-tint": "#adc6ff",
+                        "on-secondary-fixed-variant": "#6100be",
+                        "on-primary-fixed": "#001a41",
+                        "surface-container-high": "#2a2a2a",
+                        "surface-container-low": "#1b1b1c",
+                        "on-error": "#690005",
+                        "on-secondary-fixed": "#280056",
+                        "on-secondary": "#440088",
+                        "error": "#ffb4ab",
+                        "on-primary": "#002e69",
+                        "outline-variant": "#414755",
+                        "on-tertiary": "#313030"
+                    },
+                    "borderRadius": {
+                        "DEFAULT": "0.25rem",
+                        "lg": "0.5rem",
+                        "xl": "0.75rem",
+                        "full": "9999px"
+                    },
+                    "spacing": {
+                        "md": "12px",
+                        "xl": "24px",
+                        "lg": "16px",
+                        "sm": "8px",
+                        "base": "4px",
+                        "panel-gap": "1px",
+                        "xs": "4px",
+                        "container-padding": "8px"
+                    },
+                    "fontFamily": {
+                        "code-sm": ["JetBrains Mono"],
+                        "headline-sm": ["Inter"],
+                        "body-md": ["Inter"],
+                        "body-sm": ["Inter"],
+                        "code-md": ["JetBrains Mono"],
+                        "label-caps": ["Inter"]
+                    },
+                    "fontSize": {
+                        "code-sm": ["11px", { "lineHeight": "16px", "fontWeight": "400" }],
+                        "headline-sm": ["18px", { "lineHeight": "24px", "fontWeight": "600" }],
+                        "body-md": ["14px", { "lineHeight": "20px", "fontWeight": "400" }],
+                        "body-sm": ["12px", { "lineHeight": "16px", "fontWeight": "400" }],
+                        "code-md": ["13px", { "lineHeight": "20px", "fontWeight": "450" }],
+                        "label-caps": ["10px", { "lineHeight": "12px", "letterSpacing": "0.05em", "fontWeight": "700" }]
+                    }
+                }
+            }
+        }
+    </script>
+<style>
+        /* Custom scrollbar for dense tables */
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            background: theme('colors.surface-dim');
+        }
+        ::-webkit-scrollbar-thumb {
+            background: theme('colors.surface-variant');
+            border-radius: 4px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: theme('colors.outline');
+        }
+    </style>
+</head>
+<body class="bg-background text-on-surface font-body-md h-screen flex overflow-hidden">
+<!-- SideNavBar -->
+<nav class="flex flex-col h-screen py-lg space-y-base bg-surface-container-low dark:bg-surface-container-low docked left-0 h-full w-64 border-r border-outline-variant dark:border-outline-variant flat no shadows shrink-0">
+<div class="px-lg mb-lg">
+<h1 class="font-headline-sm text-headline-sm text-on-surface">Project Alpha</h1>
+<p class="font-body-sm text-body-sm text-on-surface-variant mt-1">Circuit: 74LS181</p>
+</div>
+<div class="flex-1 overflow-y-auto px-md space-y-xs">
+<!-- Dashboard -->
+<a class="flex items-center space-x-md px-md py-sm rounded-DEFAULT text-on-surface-variant dark:text-on-surface-variant hover:bg-surface-variant/30 transition-all cursor-pointer duration-150 font-label-caps text-label-caps" href="#">
+<span class="material-symbols-outlined text-[18px]">dashboard</span>
+<span>Dashboard</span>
+</a>
+<!-- Circuits -->
+<a class="flex items-center space-x-md px-md py-sm rounded-DEFAULT text-on-surface-variant dark:text-on-surface-variant hover:bg-surface-variant/30 transition-all cursor-pointer duration-150 font-label-caps text-label-caps" href="#">
+<span class="material-symbols-outlined text-[18px]">memory</span>
+<span>Circuits</span>
+</a>
+<!-- Trojan Dataset -->
+<a class="flex items-center space-x-md px-md py-sm rounded-DEFAULT text-on-surface-variant dark:text-on-surface-variant hover:bg-surface-variant/30 transition-all cursor-pointer duration-150 font-label-caps text-label-caps" href="#">
+<span class="material-symbols-outlined text-[18px]">terminal</span>
+<span>Trojan Dataset</span>
+</a>
+<!-- Feature Analysis (ACTIVE) -->
+<a class="flex items-center space-x-md px-md py-sm text-primary dark:text-primary-fixed-dim bg-primary/10 border-l-2 border-primary transition-all cursor-pointer duration-150 font-label-caps text-label-caps" href="#">
+<span class="material-symbols-outlined text-[18px]">analytics</span>
+<span>Feature Analysis</span>
+</a>
+<!-- ATPG -->
+<a class="flex items-center space-x-md px-md py-sm rounded-DEFAULT text-on-surface-variant dark:text-on-surface-variant hover:bg-surface-variant/30 transition-all cursor-pointer duration-150 font-label-caps text-label-caps" href="#">
+<span class="material-symbols-outlined text-[18px]">precision_manufacturing</span>
+<span>ATPG</span>
+</a>
+<!-- Ranking -->
+<a class="flex items-center space-x-md px-md py-sm rounded-DEFAULT text-on-surface-variant dark:text-on-surface-variant hover:bg-surface-variant/30 transition-all cursor-pointer duration-150 font-label-caps text-label-caps" href="#">
+<span class="material-symbols-outlined text-[18px]">format_list_numbered</span>
+<span>Ranking</span>
+</a>
+<!-- Benchmark -->
+<a class="flex items-center space-x-md px-md py-sm rounded-DEFAULT text-on-surface-variant dark:text-on-surface-variant hover:bg-surface-variant/30 transition-all cursor-pointer duration-150 font-label-caps text-label-caps" href="#">
+<span class="material-symbols-outlined text-[18px]">rocket_launch</span>
+<span>Benchmark</span>
+</a>
+<!-- Results -->
+<a class="flex items-center space-x-md px-md py-sm rounded-DEFAULT text-on-surface-variant dark:text-on-surface-variant hover:bg-surface-variant/30 transition-all cursor-pointer duration-150 font-label-caps text-label-caps" href="#">
+<span class="material-symbols-outlined text-[18px]">equalizer</span>
+<span>Results</span>
+</a>
+<!-- Reports -->
+<a class="flex items-center space-x-md px-md py-sm rounded-DEFAULT text-on-surface-variant dark:text-on-surface-variant hover:bg-surface-variant/30 transition-all cursor-pointer duration-150 font-label-caps text-label-caps" href="#">
+<span class="material-symbols-outlined text-[18px]">description</span>
+<span>Reports</span>
+</a>
+</div>
+</nav>
+<!-- Main Content Area -->
+<div class="flex-1 flex flex-col min-w-0">
+<!-- TopNavBar -->
+<header class="flex justify-between items-center w-full px-lg h-12 z-50 bg-surface-container dark:bg-surface-container docked full-width top-0 border-b border-outline-variant dark:border-outline-variant flat no shadows font-body-md text-body-md shrink-0">
+<div class="flex items-center">
+<span class="font-headline-sm text-headline-sm font-bold text-primary dark:text-primary-fixed-dim tracking-tight">PyATPG</span>
+</div>
+<div class="flex items-center space-x-sm">
+<!-- Trailing Icons -->
+<button class="p-xs rounded-full text-on-surface-variant dark:text-on-surface-variant hover:bg-surface-variant dark:hover:bg-surface-variant/50 transition-colors cursor-pointer active:opacity-80 flex items-center justify-center">
+<span class="material-symbols-outlined text-[20px]">palette</span>
+</button>
+<button class="p-xs rounded-full text-on-surface-variant dark:text-on-surface-variant hover:bg-surface-variant dark:hover:bg-surface-variant/50 transition-colors cursor-pointer active:opacity-80 flex items-center justify-center">
+<span class="material-symbols-outlined text-[20px]">settings</span>
+</button>
+<button class="p-xs rounded-full text-on-surface-variant dark:text-on-surface-variant hover:bg-surface-variant dark:hover:bg-surface-variant/50 transition-colors cursor-pointer active:opacity-80 flex items-center justify-center">
+<span class="material-symbols-outlined text-[20px]">help</span>
+</button>
+</div>
+</header>
+<!-- Main Workspace Canvas -->
+<main class="flex-1 flex flex-col p-lg overflow-hidden bg-background">
+<!-- Toolbar -->
+<div class="flex items-center justify-between mb-lg shrink-0">
+<div class="flex items-center space-x-md">
+<!-- Search Input -->
+<div class="relative">
+<span class="material-symbols-outlined absolute left-sm top-1/2 -translate-y-1/2 text-[16px] text-outline">search</span>
+<input class="bg-surface border border-outline-variant rounded-DEFAULT pl-8 pr-sm py-1 font-body-sm text-body-sm text-on-surface focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary w-64 placeholder:text-outline h-8 transition-colors" placeholder="Search gates, types..." type="text"/>
+</div>
+<!-- Filters -->
+<button class="flex items-center space-x-xs px-sm py-1 h-8 border border-outline-variant rounded-DEFAULT bg-surface-container hover:bg-surface-variant transition-colors text-on-surface font-body-sm text-body-sm">
+<span class="material-symbols-outlined text-[16px]">filter_list</span>
+<span>Filter by Role</span>
+</button>
+<button class="flex items-center space-x-xs px-sm py-1 h-8 border border-outline-variant rounded-DEFAULT bg-surface-container hover:bg-surface-variant transition-colors text-on-surface font-body-sm text-body-sm">
+<span class="material-symbols-outlined text-[16px]">tune</span>
+<span>Thresholds</span>
+</button>
+</div>
+<!-- Export -->
+<div class="flex space-x-sm">
+<button class="flex items-center space-x-xs px-md py-1 h-8 border border-outline-variant rounded-DEFAULT bg-surface hover:bg-surface-variant transition-colors text-on-surface font-body-sm text-body-sm font-medium">
+<span class="material-symbols-outlined text-[16px]">download</span>
+<span>Export CSV</span>
+</button>
+<button class="flex items-center space-x-xs px-md py-1 h-8 rounded-DEFAULT bg-primary-container text-on-primary-container hover:bg-primary-container/80 transition-colors font-body-sm text-body-sm font-medium">
+<span class="material-symbols-outlined text-[16px]">data_object</span>
+<span>Export JSON</span>
+</button>
+</div>
+</div>
+<!-- Data Table Container -->
+<div class="flex-1 overflow-auto border border-outline-variant rounded-DEFAULT bg-surface-container-low shadow-sm flex flex-col min-h-0">
+<table class="w-full text-left border-collapse whitespace-nowrap">
+<thead class="sticky top-0 z-10 bg-surface-container border-b border-outline-variant">
+<tr class="font-label-caps text-label-caps text-on-surface-variant">
+<th class="px-md py-sm font-semibold">Gate</th>
+<th class="px-md py-sm font-semibold">Type</th>
+<th class="px-md py-sm font-semibold text-right">CC0</th>
+<th class="px-md py-sm font-semibold text-right">CC1</th>
+<th class="px-md py-sm font-semibold text-right">CO</th>
+<th class="px-md py-sm font-semibold text-right">Toggle Rate</th>
+<th class="px-md py-sm font-semibold text-right">Fanin</th>
+<th class="px-md py-sm font-semibold text-right">Fanout</th>
+<th class="px-md py-sm font-semibold text-right">Centrality</th>
+<th class="px-md py-sm font-semibold text-right">Detectability</th>
+<th class="px-md py-sm font-semibold text-center">Role</th>
+<th class="px-md py-sm font-semibold text-center">Ground Truth</th>
+<th class="px-sm py-sm w-10"></th>
+</tr>
+</thead>
+<tbody class="font-code-md text-code-md text-on-surface divide-y divide-outline-variant/50">
+<!-- Row 1 (Trojan Trigger) -->
+<tr class="hover:bg-surface-variant/40 transition-colors group">
+<td class="px-md py-xs">U1402</td>
+<td class="px-md py-xs text-on-surface-variant">AND2X1</td>
+<td class="px-md py-xs text-right text-primary-fixed-dim">0.0124</td>
+<td class="px-md py-xs text-right text-primary-fixed-dim">0.9876</td>
+<td class="px-md py-xs text-right">0.0001</td>
+<td class="px-md py-xs text-right">0.0045</td>
+<td class="px-md py-xs text-right text-on-surface-variant">2</td>
+<td class="px-md py-xs text-right text-on-surface-variant">1</td>
+<td class="px-md py-xs text-right">0.854</td>
+<td class="px-md py-xs text-right text-error">Low</td>
+<td class="px-md py-xs text-center">
+<span class="inline-flex items-center px-2 py-0.5 rounded-sm bg-secondary-container/20 border border-secondary-container text-secondary-fixed-dim font-code-sm text-code-sm">Trigger</span>
+</td>
+<td class="px-md py-xs text-center">
+<span class="inline-flex items-center px-2 py-0.5 rounded-sm bg-error/10 border border-error/50 text-error font-code-sm text-code-sm">Trojan</span>
+</td>
+<td class="px-sm py-xs text-right">
+<button class="opacity-0 group-hover:opacity-100 text-outline hover:text-on-surface transition-all"><span class="material-symbols-outlined text-[16px]">more_vert</span></button>
+</td>
+</tr>
+<!-- Row 2 (Trojan Payload) -->
+<tr class="hover:bg-surface-variant/40 transition-colors group">
+<td class="px-md py-xs">U1405</td>
+<td class="px-md py-xs text-on-surface-variant">XOR2X1</td>
+<td class="px-md py-xs text-right">0.5012</td>
+<td class="px-md py-xs text-right">0.4988</td>
+<td class="px-md py-xs text-right">0.0003</td>
+<td class="px-md py-xs text-right">0.1240</td>
+<td class="px-md py-xs text-right text-on-surface-variant">2</td>
+<td class="px-md py-xs text-right text-on-surface-variant">4</td>
+<td class="px-md py-xs text-right">0.912</td>
+<td class="px-md py-xs text-right">Med</td>
+<td class="px-md py-xs text-center">
+<span class="inline-flex items-center px-2 py-0.5 rounded-sm bg-tertiary-container/20 border border-tertiary-container text-tertiary-fixed-dim font-code-sm text-code-sm">Payload</span>
+</td>
+<td class="px-md py-xs text-center">
+<span class="inline-flex items-center px-2 py-0.5 rounded-sm bg-error/10 border border-error/50 text-error font-code-sm text-code-sm">Trojan</span>
+</td>
+<td class="px-sm py-xs text-right">
+<button class="opacity-0 group-hover:opacity-100 text-outline hover:text-on-surface transition-all"><span class="material-symbols-outlined text-[16px]">more_vert</span></button>
+</td>
+</tr>
+<!-- Row 3 (Benign Normal) -->
+<tr class="hover:bg-surface-variant/40 transition-colors group">
+<td class="px-md py-xs">U0122</td>
+<td class="px-md py-xs text-on-surface-variant">NAND2X1</td>
+<td class="px-md py-xs text-right">0.7450</td>
+<td class="px-md py-xs text-right">0.2550</td>
+<td class="px-md py-xs text-right">0.1540</td>
+<td class="px-md py-xs text-right">0.4510</td>
+<td class="px-md py-xs text-right text-on-surface-variant">2</td>
+<td class="px-md py-xs text-right text-on-surface-variant">3</td>
+<td class="px-md py-xs text-right">0.231</td>
+<td class="px-md py-xs text-right">High</td>
+<td class="px-md py-xs text-center">
+<span class="inline-flex items-center px-2 py-0.5 rounded-sm border border-transparent text-on-surface-variant font-code-sm text-code-sm">-</span>
+</td>
+<td class="px-md py-xs text-center">
+<span class="inline-flex items-center px-2 py-0.5 rounded-sm bg-surface-variant/50 border border-outline-variant/30 text-on-surface-variant font-code-sm text-code-sm">Benign</span>
+</td>
+<td class="px-sm py-xs text-right">
+<button class="opacity-0 group-hover:opacity-100 text-outline hover:text-on-surface transition-all"><span class="material-symbols-outlined text-[16px]">more_vert</span></button>
+</td>
+</tr>
+<!-- Row 4 (Benign Normal) -->
+<tr class="hover:bg-surface-variant/40 transition-colors group">
+<td class="px-md py-xs">U0123</td>
+<td class="px-md py-xs text-on-surface-variant">NOR2X1</td>
+<td class="px-md py-xs text-right">0.2110</td>
+<td class="px-md py-xs text-right">0.7890</td>
+<td class="px-md py-xs text-right">0.1120</td>
+<td class="px-md py-xs text-right">0.3320</td>
+<td class="px-md py-xs text-right text-on-surface-variant">2</td>
+<td class="px-md py-xs text-right text-on-surface-variant">1</td>
+<td class="px-md py-xs text-right">0.198</td>
+<td class="px-md py-xs text-right">High</td>
+<td class="px-md py-xs text-center">
+<span class="inline-flex items-center px-2 py-0.5 rounded-sm border border-transparent text-on-surface-variant font-code-sm text-code-sm">-</span>
+</td>
+<td class="px-md py-xs text-center">
+<span class="inline-flex items-center px-2 py-0.5 rounded-sm bg-surface-variant/50 border border-outline-variant/30 text-on-surface-variant font-code-sm text-code-sm">Benign</span>
+</td>
+<td class="px-sm py-xs text-right">
+<button class="opacity-0 group-hover:opacity-100 text-outline hover:text-on-surface transition-all"><span class="material-symbols-outlined text-[16px]">more_vert</span></button>
+</td>
+</tr>
+<!-- Row 5 (Benign Rare Node) -->
+<tr class="hover:bg-surface-variant/40 transition-colors group">
+<td class="px-md py-xs">U0899</td>
+<td class="px-md py-xs text-on-surface-variant">INVX1</td>
+<td class="px-md py-xs text-right text-primary-fixed-dim">0.9991</td>
+<td class="px-md py-xs text-right text-primary-fixed-dim">0.0009</td>
+<td class="px-md py-xs text-right">0.4500</td>
+<td class="px-md py-xs text-right text-primary-fixed-dim">0.0018</td>
+<td class="px-md py-xs text-right text-on-surface-variant">1</td>
+<td class="px-md py-xs text-right text-on-surface-variant">8</td>
+<td class="px-md py-xs text-right">0.441</td>
+<td class="px-md py-xs text-right">Med</td>
+<td class="px-md py-xs text-center">
+<span class="inline-flex items-center px-2 py-0.5 rounded-sm border border-transparent text-on-surface-variant font-code-sm text-code-sm">-</span>
+</td>
+<td class="px-md py-xs text-center">
+<span class="inline-flex items-center px-2 py-0.5 rounded-sm bg-surface-variant/50 border border-outline-variant/30 text-on-surface-variant font-code-sm text-code-sm">Benign</span>
+</td>
+<td class="px-sm py-xs text-right">
+<button class="opacity-0 group-hover:opacity-100 text-outline hover:text-on-surface transition-all"><span class="material-symbols-outlined text-[16px]">more_vert</span></button>
+</td>
+</tr>
+</tbody>
+</table>
+</div>
+<!-- Status Bar -->
+<div class="h-6 mt-2 flex items-center justify-between font-code-sm text-code-sm text-outline shrink-0">
+<span>Showing 5 of 12,451 Gates</span>
+<div class="flex space-x-md">
+<span class="flex items-center"><span class="w-2 h-2 rounded-full bg-error mr-1"></span> 2 Trojan Gates Detected</span>
+<span>Analysis Complete: 12ms</span>
+</div>
+</div>
+</main>
+</div>
+</body></html>

@@ -1,0 +1,3 @@
+SOURCE=/home/cmos/s1238_capstone/test_scripts/s1238.test_netlist.v
+TECHLIB=/home/cmos/s1238_capstone/saed90nm.v
+RUNDIR=/home/cmos/s1238_capstone/

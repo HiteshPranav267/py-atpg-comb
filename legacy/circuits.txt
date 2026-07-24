@@ -1,0 +1,53 @@
+Very small sanity test
+INPUT a b
+OUTPUT z
+
+z = AND a b
+-----------------------------------------------------------------------------
+c1
+INPUT a b c d e
+OUTPUT z
+
+f = NOT b
+g = AND a f
+h = OR c d
+i = NAND h e
+z = NOR g i
+-----------------------------------------------------------------------------
+c17
+INPUT a b c d e
+OUTPUT v w
+
+j = NAND a c
+k = NAND c d
+p = NAND b k
+s = NAND k e
+v = NAND k p
+w = NAND p s
+-----------------------------------------------------------------------------
+Reconvergent fanout example
+INPUT a b c
+OUTPUT z
+
+d = AND a b
+e = OR a c
+z = XOR d e
+-----------------------------------------------------------------------------
+Trojan-style trigger
+INPUT a b c d
+OUTPUT z
+
+t = AND a b
+u = AND c d
+z = AND t u
+-----------------------------------------------------------------------------
+MUX-based stealth logic
+INPUT a b s
+OUTPUT z
+
+n1 = AND a s
+n2 = AND b s
+z = OR n1 n2
+----------------------------------------------------------------------------
+more circuits -
+https://github.com/santoshsmalagi/Benchmarks

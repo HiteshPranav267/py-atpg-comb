@@ -1,0 +1,381 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>PyATPG - Results &amp; Benchmarking</title>
+<!-- Material Symbols -->
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<!-- Tailwind CSS & Configuration -->
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<script id="tailwind-config">
+      tailwind.config = {
+        darkMode: "class",
+        theme: {
+          extend: {
+            "colors": {
+                    "on-surface-variant": "#c1c6d7",
+                    "outline": "#8b90a0",
+                    "tertiary-fixed-dim": "#c8c6c5",
+                    "tertiary": "#c8c6c5",
+                    "on-primary-fixed-variant": "#004493",
+                    "surface-dim": "#131313",
+                    "secondary": "#d7baff",
+                    "surface-container-lowest": "#0e0e0e",
+                    "inverse-on-surface": "#303030",
+                    "on-primary-container": "#00285c",
+                    "surface": "#131313",
+                    "primary-fixed-dim": "#adc6ff",
+                    "on-error-container": "#ffdad6",
+                    "tertiary-fixed": "#e5e2e1",
+                    "tertiary-container": "#929090",
+                    "on-background": "#e5e2e1",
+                    "on-tertiary-container": "#2a2a29",
+                    "surface-variant": "#353535",
+                    "inverse-surface": "#e5e2e1",
+                    "on-tertiary-fixed-variant": "#474646",
+                    "error-container": "#93000a",
+                    "background": "#131313",
+                    "on-surface": "#e5e2e1",
+                    "primary": "#adc6ff",
+                    "primary-container": "#4b8eff",
+                    "secondary-container": "#6702c8",
+                    "surface-bright": "#393939",
+                    "on-tertiary-fixed": "#1c1b1b",
+                    "primary-fixed": "#d8e2ff",
+                    "inverse-primary": "#005bc1",
+                    "secondary-fixed": "#eddcff",
+                    "on-secondary-container": "#ceacff",
+                    "surface-container": "#202020",
+                    "secondary-fixed-dim": "#d7baff",
+                    "surface-container-highest": "#353535",
+                    "surface-tint": "#adc6ff",
+                    "on-secondary-fixed-variant": "#6100be",
+                    "on-primary-fixed": "#001a41",
+                    "surface-container-high": "#2a2a2a",
+                    "surface-container-low": "#1b1b1c",
+                    "on-error": "#690005",
+                    "on-secondary-fixed": "#280056",
+                    "on-secondary": "#440088",
+                    "error": "#ffb4ab",
+                    "on-primary": "#002e69",
+                    "outline-variant": "#414755",
+                    "on-tertiary": "#313030"
+            },
+            "borderRadius": {
+                    "DEFAULT": "0.25rem",
+                    "lg": "0.5rem",
+                    "xl": "0.75rem",
+                    "full": "9999px"
+            },
+            "spacing": {
+                    "md": "12px",
+                    "xl": "24px",
+                    "lg": "16px",
+                    "sm": "8px",
+                    "base": "4px",
+                    "panel-gap": "1px",
+                    "xs": "4px",
+                    "container-padding": "8px"
+            },
+            "fontFamily": {
+                    "code-sm": ["JetBrains Mono"],
+                    "headline-sm": ["Inter"],
+                    "body-md": ["Inter"],
+                    "body-sm": ["Inter"],
+                    "code-md": ["JetBrains Mono"],
+                    "label-caps": ["Inter"]
+            },
+            "fontSize": {
+                    "code-sm": ["11px", {"lineHeight": "16px", "fontWeight": "400"}],
+                    "headline-sm": ["18px", {"lineHeight": "24px", "fontWeight": "600"}],
+                    "body-md": ["14px", {"lineHeight": "20px", "fontWeight": "400"}],
+                    "body-sm": ["12px", {"lineHeight": "16px", "fontWeight": "400"}],
+                    "code-md": ["13px", {"lineHeight": "20px", "fontWeight": "450"}],
+                    "label-caps": ["10px", {"lineHeight": "12px", "letterSpacing": "0.05em", "fontWeight": "700"}]
+            }
+          },
+        },
+      }
+    </script>
+<style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=JetBrains+Mono:wght@400;450&display=swap');
+        
+        .material-symbols-outlined {
+          font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+        
+        /* Custom scrollbar for clinical IDE feel */
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            background: transparent; 
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #353535; 
+            border-radius: 4px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #414755; 
+        }
+    </style>
+</head>
+<body class="bg-background text-on-surface h-screen w-screen overflow-hidden flex font-body-md text-body-md">
+<!-- SideNavBar (Shared Component) -->
+<aside class="flex flex-col h-screen py-lg space-y-base bg-surface-container-low dark:bg-surface-container-low border-r border-outline-variant dark:border-outline-variant w-64 shrink-0">
+<!-- Header -->
+<div class="px-lg pb-lg mb-sm border-b border-outline-variant dark:border-outline-variant">
+<h2 class="font-headline-sm text-headline-sm text-on-surface mb-xs">Project Alpha</h2>
+<p class="font-code-sm text-code-sm text-on-surface-variant">Circuit: 74LS181</p>
+</div>
+<!-- Navigation Links -->
+<nav class="flex-1 overflow-y-auto px-sm space-y-xs">
+<!-- Dashboard -->
+<a class="flex items-center px-md py-sm rounded text-on-surface-variant dark:text-on-surface-variant hover:bg-surface-variant/30 transition-all cursor-pointer duration-150" href="#">
+<span class="material-symbols-outlined mr-md text-[18px]">dashboard</span>
+<span class="font-label-caps text-label-caps">Dashboard</span>
+</a>
+<!-- Circuits -->
+<a class="flex items-center px-md py-sm rounded text-on-surface-variant dark:text-on-surface-variant hover:bg-surface-variant/30 transition-all cursor-pointer duration-150" href="#">
+<span class="material-symbols-outlined mr-md text-[18px]">memory</span>
+<span class="font-label-caps text-label-caps">Circuits</span>
+</a>
+<!-- Trojan Dataset -->
+<a class="flex items-center px-md py-sm rounded text-on-surface-variant dark:text-on-surface-variant hover:bg-surface-variant/30 transition-all cursor-pointer duration-150" href="#">
+<span class="material-symbols-outlined mr-md text-[18px]">terminal</span>
+<span class="font-label-caps text-label-caps">Trojan Dataset</span>
+</a>
+<!-- Feature Analysis -->
+<a class="flex items-center px-md py-sm rounded text-on-surface-variant dark:text-on-surface-variant hover:bg-surface-variant/30 transition-all cursor-pointer duration-150" href="#">
+<span class="material-symbols-outlined mr-md text-[18px]">analytics</span>
+<span class="font-label-caps text-label-caps">Feature Analysis</span>
+</a>
+<!-- ATPG -->
+<a class="flex items-center px-md py-sm rounded text-on-surface-variant dark:text-on-surface-variant hover:bg-surface-variant/30 transition-all cursor-pointer duration-150" href="#">
+<span class="material-symbols-outlined mr-md text-[18px]">precision_manufacturing</span>
+<span class="font-label-caps text-label-caps">ATPG</span>
+</a>
+<!-- Ranking -->
+<a class="flex items-center px-md py-sm rounded text-on-surface-variant dark:text-on-surface-variant hover:bg-surface-variant/30 transition-all cursor-pointer duration-150" href="#">
+<span class="material-symbols-outlined mr-md text-[18px]">format_list_numbered</span>
+<span class="font-label-caps text-label-caps">Ranking</span>
+</a>
+<!-- Benchmark -->
+<a class="flex items-center px-md py-sm rounded text-on-surface-variant dark:text-on-surface-variant hover:bg-surface-variant/30 transition-all cursor-pointer duration-150" href="#">
+<span class="material-symbols-outlined mr-md text-[18px]">rocket_launch</span>
+<span class="font-label-caps text-label-caps">Benchmark</span>
+</a>
+<!-- Results (Active) -->
+<a class="flex items-center px-md py-sm rounded-r text-primary dark:text-primary-fixed-dim bg-primary/10 border-l-2 border-primary cursor-pointer duration-150" href="#">
+<span class="material-symbols-outlined mr-md text-[18px]">equalizer</span>
+<span class="font-label-caps text-label-caps">Results</span>
+</a>
+<!-- Reports -->
+<a class="flex items-center px-md py-sm rounded text-on-surface-variant dark:text-on-surface-variant hover:bg-surface-variant/30 transition-all cursor-pointer duration-150" href="#">
+<span class="material-symbols-outlined mr-md text-[18px]">description</span>
+<span class="font-label-caps text-label-caps">Reports</span>
+</a>
+</nav>
+</aside>
+<!-- Main Content Area -->
+<div class="flex-1 flex flex-col min-w-0">
+<!-- TopNavBar (Shared Component) -->
+<header class="flex justify-between items-center w-full px-lg h-12 z-50 bg-surface-container dark:bg-surface-container border-b border-outline-variant dark:border-outline-variant shrink-0">
+<div class="flex items-center">
+<span class="font-headline-sm text-headline-sm font-bold text-primary dark:text-primary-fixed-dim mr-xl">PyATPG</span>
+</div>
+<div class="flex items-center space-x-md">
+<button class="text-on-surface-variant dark:text-on-surface-variant hover:bg-surface-variant dark:hover:bg-surface-variant/50 transition-colors cursor-pointer active:opacity-80 p-xs rounded">
+<span class="material-symbols-outlined text-[20px]">palette</span>
+</button>
+<button class="text-on-surface-variant dark:text-on-surface-variant hover:bg-surface-variant dark:hover:bg-surface-variant/50 transition-colors cursor-pointer active:opacity-80 p-xs rounded">
+<span class="material-symbols-outlined text-[20px]">settings</span>
+</button>
+<button class="text-on-surface-variant dark:text-on-surface-variant hover:bg-surface-variant dark:hover:bg-surface-variant/50 transition-colors cursor-pointer active:opacity-80 p-xs rounded">
+<span class="material-symbols-outlined text-[20px]">help</span>
+</button>
+</div>
+</header>
+<!-- Main Workspace -->
+<main class="flex-1 overflow-y-auto p-xl bg-background flex flex-col space-y-xl">
+<!-- Page Header & Config Panel -->
+<div class="flex justify-between items-end border-b border-surface-variant pb-md">
+<div>
+<h1 class="font-headline-sm text-headline-sm text-on-surface mb-xs">Results &amp; Benchmarking</h1>
+<p class="font-body-sm text-body-sm text-on-surface-variant">Visualization of current research metrics and run states.</p>
+</div>
+<div class="flex space-x-md items-center bg-surface-container border border-outline-variant rounded px-md py-sm">
+<div class="flex items-center">
+<span class="font-label-caps text-label-caps text-outline mr-sm">DATASET:</span>
+<span class="font-code-sm text-code-sm text-primary">Trojan_v2</span>
+</div>
+<div class="w-px h-4 bg-outline-variant mx-sm"></div>
+<div class="flex items-center">
+<span class="font-label-caps text-label-caps text-outline mr-sm">RANKER:</span>
+<span class="font-code-sm text-code-sm text-primary">Gemini_AI</span>
+</div>
+</div>
+</div>
+<!-- Progress Bar -->
+<div class="bg-surface-container border border-outline-variant rounded p-md">
+<div class="flex justify-between items-center mb-sm">
+<div class="flex items-center space-x-sm">
+<span class="material-symbols-outlined text-primary text-[18px] animate-pulse">sync</span>
+<span class="font-body-sm text-body-sm text-on-surface">Running Benchmark: <span class="font-code-sm text-code-sm">74LS181_Eval_09</span></span>
+</div>
+<span class="font-code-sm text-code-sm text-on-surface-variant">68%</span>
+</div>
+<div class="w-full h-1 bg-surface-variant rounded-full overflow-hidden">
+<div class="h-full bg-primary w-[68%] relative">
+<!-- Simulated glowing tip -->
+<div class="absolute right-0 top-0 bottom-0 w-8 bg-gradient-to-r from-transparent to-white opacity-30"></div>
+</div>
+</div>
+</div>
+<!-- Metrics Summary Cards -->
+<div class="grid grid-cols-4 gap-lg">
+<!-- Top-1 Recall -->
+<div class="bg-surface-container border border-outline-variant rounded p-lg flex flex-col justify-between group hover:border-primary/50 transition-colors duration-300">
+<div class="flex justify-between items-start mb-xl">
+<span class="font-label-caps text-label-caps text-on-surface-variant">TOP-1 RECALL</span>
+<span class="material-symbols-outlined text-outline text-[20px] group-hover:text-primary transition-colors">verified</span>
+</div>
+<div>
+<div class="font-headline-sm text-headline-sm text-on-surface text-[28px] leading-tight mb-xs">92.0<span class="text-on-surface-variant text-[20px]">%</span></div>
+<div class="font-body-sm text-body-sm text-tertiary-container flex items-center">
+<span class="material-symbols-outlined text-[14px] text-primary mr-xs">trending_up</span>
+                            +3.2% from baseline
+                        </div>
+</div>
+</div>
+<!-- Precision -->
+<div class="bg-surface-container border border-outline-variant rounded p-lg flex flex-col justify-between group hover:border-primary/50 transition-colors duration-300">
+<div class="flex justify-between items-start mb-xl">
+<span class="font-label-caps text-label-caps text-on-surface-variant">PRECISION</span>
+<span class="material-symbols-outlined text-outline text-[20px] group-hover:text-primary transition-colors">my_location</span>
+</div>
+<div>
+<div class="font-headline-sm text-headline-sm text-on-surface text-[28px] leading-tight mb-xs">88.5<span class="text-on-surface-variant text-[20px]">%</span></div>
+<div class="font-body-sm text-body-sm text-tertiary-container flex items-center">
+<span class="material-symbols-outlined text-[14px] text-primary mr-xs">trending_up</span>
+                            +1.5% from baseline
+                        </div>
+</div>
+</div>
+<!-- MRR -->
+<div class="bg-surface-container border border-outline-variant rounded p-lg flex flex-col justify-between group hover:border-primary/50 transition-colors duration-300">
+<div class="flex justify-between items-start mb-xl">
+<span class="font-label-caps text-label-caps text-on-surface-variant">MEAN RECIPROCAL RANK (MRR)</span>
+<span class="material-symbols-outlined text-outline text-[20px] group-hover:text-primary transition-colors">sort</span>
+</div>
+<div>
+<div class="font-headline-sm text-headline-sm text-on-surface text-[28px] leading-tight mb-xs">0.94</div>
+<div class="font-body-sm text-body-sm text-tertiary-container flex items-center">
+<span class="material-symbols-outlined text-[14px] text-primary mr-xs">check</span>
+                            Highly optimal
+                        </div>
+</div>
+</div>
+<!-- SSR -->
+<div class="bg-surface-container border border-outline-variant rounded p-lg flex flex-col justify-between group hover:border-primary/50 transition-colors duration-300">
+<div class="flex justify-between items-start mb-xl">
+<span class="font-label-caps text-label-caps text-on-surface-variant">SEARCH SPACE REDUCTION</span>
+<span class="material-symbols-outlined text-outline text-[20px] group-hover:text-primary transition-colors">compress</span>
+</div>
+<div>
+<div class="font-headline-sm text-headline-sm text-on-surface text-[28px] leading-tight mb-xs">99.8<span class="text-on-surface-variant text-[20px]">%</span></div>
+<div class="font-body-sm text-body-sm text-tertiary-container flex items-center">
+<span class="material-symbols-outlined text-[14px] text-outline mr-xs">horizontal_rule</span>
+                            Stable
+                        </div>
+</div>
+</div>
+</div>
+<!-- Charts Section -->
+<div class="grid grid-cols-2 gap-lg flex-1 min-h-[300px]">
+<!-- Bar Chart: Recall Comparison -->
+<div class="bg-surface-container border border-outline-variant rounded flex flex-col p-lg">
+<div class="mb-lg flex justify-between items-center">
+<h3 class="font-body-md text-body-md text-on-surface font-semibold">Recall across Rankers</h3>
+<span class="material-symbols-outlined text-outline text-[16px] cursor-pointer hover:text-on-surface">more_horiz</span>
+</div>
+<!-- Chart Area -->
+<div class="flex-1 flex items-end justify-around border-b border-l border-outline-variant relative pt-xl pb-sm pl-sm">
+<!-- Y-axis labels -->
+<div class="absolute left-[-24px] top-0 bottom-0 flex flex-col justify-between text-right w-5 py-sm">
+<span class="font-code-sm text-code-sm text-outline">100</span>
+<span class="font-code-sm text-code-sm text-outline">50</span>
+<span class="font-code-sm text-code-sm text-outline">0</span>
+</div>
+<!-- Bar: Random -->
+<div class="flex flex-col items-center group w-1/4">
+<div class="font-code-sm text-code-sm text-on-surface-variant mb-xs opacity-0 group-hover:opacity-100 transition-opacity">12%</div>
+<div class="w-full bg-surface-variant group-hover:bg-surface-variant/80 transition-colors rounded-t" style="height: 12%;"></div>
+<div class="font-label-caps text-label-caps text-on-surface mt-sm">Random</div>
+</div>
+<!-- Bar: SCOAP -->
+<div class="flex flex-col items-center group w-1/4">
+<div class="font-code-sm text-code-sm text-on-surface-variant mb-xs opacity-0 group-hover:opacity-100 transition-opacity">65%</div>
+<div class="w-full bg-tertiary-container group-hover:bg-tertiary-container/80 transition-colors rounded-t" style="height: 65%;"></div>
+<div class="font-label-caps text-label-caps text-on-surface mt-sm">SCOAP</div>
+</div>
+<!-- Bar: Gemini -->
+<div class="flex flex-col items-center group w-1/4">
+<div class="font-code-sm text-code-sm text-primary mb-xs opacity-0 group-hover:opacity-100 transition-opacity">92%</div>
+<div class="w-full bg-primary shadow-[0_0_12px_rgba(173,198,255,0.2)] group-hover:brightness-110 transition-all rounded-t" style="height: 92%;"></div>
+<div class="font-label-caps text-label-caps text-primary mt-sm font-bold">Gemini_AI</div>
+</div>
+</div>
+</div>
+<!-- Line Chart: SSR Over Time -->
+<div class="bg-surface-container border border-outline-variant rounded flex flex-col p-lg">
+<div class="mb-lg flex justify-between items-center">
+<h3 class="font-body-md text-body-md text-on-surface font-semibold">SSR Progression (Epochs)</h3>
+<div class="flex space-x-sm">
+<span class="w-2 h-2 rounded-full bg-primary self-center"></span>
+<span class="font-code-sm text-code-sm text-outline">Gemini_AI</span>
+</div>
+</div>
+<!-- Chart Area (SVG) -->
+<div class="flex-1 relative border-b border-l border-outline-variant ml-md mb-md">
+<!-- Grid lines -->
+<div class="absolute inset-0 flex flex-col justify-between pointer-events-none">
+<div class="border-t border-surface-variant w-full h-0"></div>
+<div class="border-t border-surface-variant w-full h-0"></div>
+<div class="border-t border-surface-variant w-full h-0"></div>
+<div class="border-t border-surface-variant w-full h-0"></div>
+</div>
+<!-- Y-axis labels -->
+<div class="absolute left-[-28px] top-0 bottom-0 flex flex-col justify-between text-right w-6 py-0">
+<span class="font-code-sm text-code-sm text-outline leading-none transform -translate-y-1/2">100%</span>
+<span class="font-code-sm text-code-sm text-outline leading-none transform -translate-y-1/2">95%</span>
+<span class="font-code-sm text-code-sm text-outline leading-none transform translate-y-1/2">90%</span>
+</div>
+<!-- SVG Line -->
+<svg class="absolute inset-0 w-full h-full overflow-visible" preserveaspectratio="none" viewbox="0 0 100 100">
+<!-- Gemini Line -->
+<path class="stroke-primary" d="M0,90 Q10,70 20,40 T40,15 T60,5 T80,2 T100,0.5" fill="none" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" vector-effect="non-scaling-stroke"></path>
+<!-- Data points -->
+<circle class="fill-surface stroke-primary" cx="20" cy="40" r="3" stroke-width="2" vector-effect="non-scaling-stroke"></circle>
+<circle class="fill-surface stroke-primary" cx="40" cy="15" r="3" stroke-width="2" vector-effect="non-scaling-stroke"></circle>
+<circle class="fill-surface stroke-primary" cx="60" cy="5" r="3" stroke-width="2" vector-effect="non-scaling-stroke"></circle>
+<circle class="fill-surface stroke-primary" cx="80" cy="2" r="3" stroke-width="2" vector-effect="non-scaling-stroke"></circle>
+<circle class="fill-primary" cx="100" cy="0.5" r="3" vector-effect="non-scaling-stroke"></circle>
+</svg>
+<!-- X-axis labels -->
+<div class="absolute bottom-[-24px] left-0 right-0 flex justify-between px-sm">
+<span class="font-code-sm text-code-sm text-outline">Ep 1</span>
+<span class="font-code-sm text-code-sm text-outline">Ep 5</span>
+<span class="font-code-sm text-code-sm text-outline">Ep 10</span>
+<span class="font-code-sm text-code-sm text-outline">Ep 15</span>
+<span class="font-code-sm text-code-sm text-outline">Ep 20</span>
+</div>
+</div>
+</div>
+</div>
+</main>
+</div>
+</body></html>

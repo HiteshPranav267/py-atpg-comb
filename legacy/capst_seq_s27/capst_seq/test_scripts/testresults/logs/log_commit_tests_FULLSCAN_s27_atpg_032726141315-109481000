@@ -1,0 +1,122 @@
+Starting Command: commit_tests 
+
+INFO (TDA-005): Command Line Invocation: 
+            commit_tests -inexperiment s27_atpg -testmode FULLSCAN -workdir /home/cmos/capst_seq/test_scripts -stdout summary  [end TDA_005]
+
+INFO (TDA-014): Cadence(R) Modus(TM) DFT Software Solution, Version 22.10-p008_1, built Oct 18 2022 (linux26_64) [end TDA_014]
+
+INFO (TDA-015): Log File: /home/cmos/capst_seq/test_scripts/testresults/logs/log_commit_tests_FULLSCAN_s27_atpg_032726141315-109481000 [end TDA_015]
+
+INFO (TDA-007): Job Information:
+            Date Started: Friday Mar 27 14:13:15 2026  IST
+            Host machine is pescad-09.pes.edu, x86_64 running Linux 4.18.0-425.3.1.el8.x86_64.
+            This job is process number 19655.
+[end TDA_007]
+
+INFO (TDA-009): Options/Values information.
+            (options marked with '*' have program generated values,
+             options marked with '+' were specified to default.)
+
+            -WORKDIR /home/cmos/capst_seq/test_scripts
+            -TESTMODE FULLSCAN
+
+            -INEXPERIMENT s27_atpg
+            -LOGFILE /home/cmos/capst_seq/test_scripts/testresults/logs/log_commit_tests_FULLSCAN_s27_atpg_032726141315-109481000
+            -STDOUT summary
+[end TDA_009]
+INFO (TFW-117): Modus checked out a modus_atpg license.  [end TFW_117] 
+
+INFO (TBD-806): Input test vector File(s) (bytes, name):  [end TBD_806] 
+          12004 /home/cmos/capst_seq/test_scripts/tbdata/TBDbin.FULLSCAN.s27_atpg
+
+INFO (TBD-807): Experiment s27_atpg odometers prior to commit_tests: 1.1.1.2.1 thru 1.2.1.3.5 (Relative test numbers 1 thru 8).  [end TBD_807] 
+
+Testmode and Global statistics prior to commit_tests
+
+                 ---- ATCov ---- ------------------------ Testmode Faults ----------------------- ------------------------- Global Faults ------------------------
+                 Testmode Global        Total       Tested     Possibly    Redundant     Untested        Total       Tested     Possibly    Redundant     Untested
+
+Total Static         0.00   0.00          106            0            0            0          106          106            0            0            0          106
+Collapsed Static     0.00   0.00           64            0            0            0           64           64            0            0            0           64
+PI Static            0.00   0.00           14            0            0            0           14           14            0            0            0           14
+PO Static            0.00   0.00            4            0            0            0            4            4            0            0            0            4
+
+Total Dynamic                               0
+
+Parametric        
+
+IDDq                 0.00   0.00          106            0                                    106          106            0                                    106
+
+Path                 0.00   0.00            0            0                                      0            0            0                                      0
+
+
+
+
+Testmode and Global statistics after commit_tests
+
+                 ---- ATCov ---- ------------------------ Testmode Faults ----------------------- ------------------------- Global Faults ------------------------
+                 Testmode Global        Total       Tested     Possibly    Redundant     Untested        Total       Tested     Possibly    Redundant     Untested
+
+Total Static       100.00 100.00          106          106            0            0            0          106          106            0            0            0
+Collapsed Static   100.00 100.00           64           64            0            0            0           64           64            0            0            0
+PI Static          100.00 100.00           14           14            0            0            0           14           14            0            0            0
+PO Static          100.00 100.00            4            4            0            0            0            4            4            0            0            0
+
+Total Dynamic                               0
+
+Parametric        
+
+IDDq                 0.00   0.00          106            0                                    106          106            0                                    106
+
+Path                 0.00   0.00            0            0                                      0            0            0                                      0
+
+
+
+INFO (TBD-810): Experiment s27_atpg is saved to the master test vectors odometers: 1.1.1.2.1 to 1.2.1.3.5 (Relative test numbers 1 to 8).  [end TBD_810] 
+
+INFO (TBD-809): Master test vector file statistics:  [end TBD_809]   
+  experiments     = 1
+  test sections   = 2
+  tester loops    = 2
+  test procedures = 5
+  test sequence   = 8
+  init sequencess = 2
+
+INFO (TBD-805): File(s) generated (bytes and name):  [end TBD_805] 
+          12004 /home/cmos/capst_seq/test_scripts/tbdata/TBDbin.FULLSCAN 
+          98304 /home/cmos/capst_seq/test_scripts/tbdata/faultStatus 
+
+INFO (TBD-831): commit_tests completed successfully.  [end TBD_831] 
+
+INFO (TDA-001): Maximum Memory used during the run and Cumulative Time in hours:minutes:seconds:
+
+                  Total Memory =            5,769,952  bytes
+
+                      CPU Time =    0:00:00.00
+                  Elapsed Time =    0:00:00.01                    [end TDA_001]
+
+     Date Ended:  Friday Mar 27 14:13:15 2026  IST
+
+INFO (TFW-119): Modus checked in a modus_atpg license.  [end TFW_119] 
+
+
+
+-------------------------------------------------------------------------------
+*                      Message Summary                                        *
+-------------------------------------------------------------------------------
+ Count  Number             First Instance of Message Text
+------- ------             ------------------------------
+
+  INFO Messages...
+      1 INFO (TBD-805): File(s) generated (bytes and name):   
+      1 INFO (TBD-806): Input test vector File(s) (bytes, name):   
+      1 INFO (TBD-807): Experiment s27_atpg odometers prior to commit_tests: 1.1.1.2.1 thru 1.2.1.3.5 (Relative test numbers 1 thru 8).   
+      1 INFO (TBD-809): Master test vector file statistics:     
+      1 INFO (TBD-810): Experiment s27_atpg is saved to the master test vectors odometers: 1.1.1.2.1 to 1.2.1.3.5 (Relative test numbers 1 to 8).   
+      1 INFO (TBD-831): commit_tests completed successfully.   
+      1 INFO (TFW-117): Modus checked out a modus_atpg license.   
+      1 INFO (TFW-119): Modus checked in a modus_atpg license.   
+
+ For a detailed explanation of a message and a suggested user response execute 'msgHelp <message id>'.  For example: msgHelp TDA-009
+
+-------------------------------------------------------------------------------

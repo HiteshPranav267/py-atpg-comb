@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+  <title>PyATPG | Agentic Control Panel</title>
+  
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;900&family=JetBrains+Mono:wght@400;500&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet"/>
+  <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@200..700,0..1&display=swap" rel="stylesheet"/>
+
+  <!-- xterm.js -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.css" />
+  <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.js"></script>
+  
+  <!-- socket.io -->
+  <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+
+  <!-- Graph -->
+  <script src="https://unpkg.com/cytoscape@3.28.1/dist/cytoscape.min.js"></script>
+  <script src="https://unpkg.com/dagre@0.8.5/dist/dagre.min.js"></script>
+  <script src="https://unpkg.com/cytoscape-dagre@2.5.0/cytoscape-dagre.js"></script>
+
+  <link rel="stylesheet" href="/static/css/style.css?v=4">
+</head>
+<body class="valolyze-theme">
+
+  <!-- ═══ NAVIGATION ═══ -->
+  <nav class="app-nav">
+    <div class="nav-brand">
+      <div class="logo-orb"></div>
+      <span>PyATPG (Atalanta)</span>
+    </div>
+    <div class="nav-links">
+      <button class="nav-tab active" data-page="agentic">Agentic</button>
+    </div>
+    <div class="nav-status">
+      <div id="conn-indicator" class="status-dot green"></div>
+      <span id="conn-text">Local Only</span>
+    </div>
+  </nav>
+
+  <!-- ═══ PAGE 2: AGENTIC ═══ -->
+  <section id="page-agentic" class="app-page active">
+    <div class="agentic-grid">
+      
+      <!-- LEFT: INPUT & CONTROLS -->
+      <div class="agent-panel left">
+        <div class="panel-section">
+          <div class="tabs-header">
+            <button class="input-tab active" data-type="paste">Paste Code</button>
+            <button class="input-tab" data-type="upload">Upload File</button>
+          </div>
+          
+          <div id="input-paste" class="input-area active">
+            <textarea id="netlist-text" placeholder="Paste Verilog / Bench netlist here..."></textarea>
+          </div>
+          
+          <div id="input-upload" class="input-area">
+            <div id="drop-zone">
+              <span class="material-symbols-outlined">upload_file</span>
+              <p>Drag & Drop .v or .bench file</p>
+              <input type="file" id="file-input" hidden>
+            </div>
+          </div>
+
+          <div class="control-row">
+            <button id="btn-load" class="btn-secondary">Load Circuit</button>
+            <button id="btn-visualize" class="btn-outline hidden">Visualize Circuit</button>
+          </div>
+        </div>
+
+        <div id="circuit-summary" class="summary-card hidden">
+            <!-- Filled by JS -->
+        </div>
+
+        <div class="panel-section">
+            <button id="btn-analyze" class="btn-primary w-full hidden">Run Trojan Analysis</button>
+            <div id="suspects-table" class="mt-4 hidden">
+                <!-- Filled by JS -->
+            </div>
+        </div>
+
+        <div class="panel-section bottom">
+            <button id="btn-export" class="btn-outline w-full hidden">Export Modus Job Bundle</button>
+            <button id="btn-dispatch" class="btn-accent w-full mt-2 hidden">Dispatch to Server</button>
+        </div>
+      </div>
+
+      <!-- RIGHT: VISUALIZER & CONSOLE -->
+      <div class="agent-panel right">
+        <!-- Visualizer Area -->
+        <div class="visualizer-container">
+            <div class="vis-controls-inline">
+                <div class="vis-title-mini">Circuit Topology</div>
+                <select id="metric-select">
+                    <option value="none">Structure Only</option>
+                    <option value="cc0">CC0</option>
+                    <option value="cc1">CC1</option>
+                    <option value="co">CO</option>
+                    <option value="toggle">Toggle Rate</option>
+                    <option value="score">Suspicion</option>
+                </select>
+                <button id="toggle-heatmap" class="btn-toggle-mini">Heatmap</button>
+            </div>
+            <div id="cy"></div>
+            
+            <!-- Zoom/Fit Controls -->
+            <div class="vis-zoom-controls">
+                <div id="zoom-indicator" class="zoom-indicator">100%</div>
+                <button id="btn-zoom-in" title="Zoom In">
+                    <span class="material-symbols-outlined">add</span>
+                </button>
+                <button id="btn-zoom-out" title="Zoom Out">
+                    <span class="material-symbols-outlined">remove</span>
+                </button>
+                <button id="btn-zoom-fit" title="Fit to Screen">
+                    <span class="material-symbols-outlined">center_focus_strong</span>
+                </button>
+            </div>
+            
+            <!-- Floating Node Panel -->
+            <div id="node-panel" class="node-panel-mini hidden">
+                <div class="node-panel-header">
+                    <h4 id="node-id">Gate</h4>
+                    <button id="close-node-panel">&times;</button>
+                </div>
+                <div id="node-info" class="node-panel-body"></div>
+            </div>
+        </div>
+
+        <!-- Console Area -->
+        <div class="console-container">
+            <div class="console-header">
+                <h3>Live Console</h3>
+                <button id="btn-download-log" class="btn-icon hidden" title="Download Log">
+                    <span class="material-symbols-outlined">download</span>
+                </button>
+            </div>
+            <div id="live-console" class="console-output">
+                <div class="log-line system">Agent standby. Awaiting circuit...</div>
+            </div>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- PAGE 3: REMOVED (INTEGRATED INTO PAGE 2) -->
+
+  <div id="toast-container"></div>
+
+  <script src="/static/js/app.js?v=5"></script>
+</body>
+</html>

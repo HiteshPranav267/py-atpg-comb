@@ -1,0 +1,16 @@
+* Name of circuit:  c17.bench
+* Primary inputs :
+  N1 N2 N3 N6 N7 
+  
+* Primary outputs:
+  N22 N23 
+
+* Test patterns and fault free responses:
+
+   1: 01100 11
+   2: 01010 11
+   3: 00111 00
+   4: 00001 01
+   5: 10100 10
+   6: 01110 00
+   7: 10000 00
