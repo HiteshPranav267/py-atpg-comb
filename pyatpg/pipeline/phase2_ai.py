@@ -1,10 +1,14 @@
 import sys
+import time
 
 try:
     from google import genai
     from google.genai import types
 except ImportError:
     genai = None
+
+_RETRYABLE_MARKERS = ("503", "UNAVAILABLE", "429", "RESOURCE_EXHAUSTED", "500", "INTERNAL")
+
 
 class AIPrioritizer:
     """Phase 2: AI Prioritization Brain"""
@@ -48,14 +52,20 @@ Profiles:
         for p in profiles_copy[:200]:
             prompt += p['profile'] + "\n"
             
-        response = client.models.generate_content(
-            model='gemini-flash-latest',
-            contents=prompt,
-        )
-        
-        # Parse comma separated response
-        text = response.text.replace('\n', '').strip()
-        return [g.strip() for g in text.split(',') if g.strip()]
+        for attempt in range(3):
+            try:
+                response = client.models.generate_content(
+                    model='gemini-flash-latest',
+                    contents=prompt,
+                )
+                text = response.text.replace('\n', '').strip()
+                return [g.strip() for g in text.split(',') if g.strip()]
+            except Exception as e:
+                retryable = any(marker in str(e) for marker in _RETRYABLE_MARKERS)
+                if not retryable or attempt == 2:
+                    raise
+                time.sleep(2 ** attempt)  # 1s, 2s
+        raise RuntimeError("Gemini API failure: exhausted retries")
 
     def prioritize(self, profiles, summary=""):
         """Run prioritization based on available credentials."""

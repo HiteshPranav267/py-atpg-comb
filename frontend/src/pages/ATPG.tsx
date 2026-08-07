@@ -87,11 +87,17 @@ export default function ATPG() {
       {report && (
         <div className="mt-6 flex flex-col gap-6">
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <Stat label="Baseline Coverage" value={`${report.baseline_coverage?.coverage_pct ?? 0}%`} />
-            <Stat label="Baseline Patterns" value={String(report.baseline_coverage?.test_patterns ?? 0)} />
-            <Stat label="Targeted Coverage" value={`${report.targeted_coverage?.coverage_pct ?? 0}%`} />
-            <Stat label="Pattern Reduction" value={`${report.comparison?.pattern_reduction_pct ?? 0}%`} />
+            <Stat label="Baseline Coverage" value={report.baseline_coverage ? `${report.baseline_coverage.coverage_pct}%` : '—'} />
+            <Stat label="Baseline Patterns" value={report.baseline_coverage ? String(report.baseline_coverage.test_patterns) : '—'} />
+            <Stat label="Targeted Coverage" value={report.targeted_coverage ? `${report.targeted_coverage.coverage_pct}%` : 'N/A'} />
+            <Stat label="Pattern Reduction" value={report.comparison ? `${report.comparison.pattern_reduction_pct}%` : 'N/A'} />
           </div>
+
+          {report.note && (
+            <div className="p-4 rounded-md border border-yellow-500/40 bg-yellow-500/10 text-yellow-500 text-sm">
+              {report.note}
+            </div>
+          )}
 
           <div className="bg-card border border-border rounded-lg p-6">
             <h3 className="font-semibold text-lg mb-1">AI-Flagged Suspects ({report.ai_suspects.length})</h3>

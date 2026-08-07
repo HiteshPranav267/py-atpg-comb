@@ -60,4 +60,13 @@ class AtpgService:
         report['circuit_name'] = clean_name
         report['ai_suspects'] = suspicious_gates
         report['used_llm'] = api_key is not None
+
+        # With zero flagged gates, the targeted run has zero faults to target:
+        # Atalanta reports "-nan%" coverage in that case, which our parser
+        # reads as 0. That's not a real result, so don't present it as one.
+        if not suspicious_gates:
+            report['targeted_coverage'] = None
+            report['comparison'] = None
+            report['note'] = 'No gates were flagged as suspicious, so no targeted ATPG run was meaningful to perform.'
+
         return report

@@ -36,10 +36,11 @@ class AtlantaExporter:
 echo "[PyATPG] Starting Atalanta Job for {self.circuit_name}"
 chmod +x ./atalanta
 # First generate a baseline
-./atalanta -t {self.circuit_name}_baseline.ufaults {self.circuit_name}.bench > baseline_atalanta.log
+./atalanta -t {self.circuit_name}_baseline.vec {self.circuit_name}.bench > baseline_atalanta.log
 
-# Now run targeted faults
-./atalanta -f {self.circuit_name}.faults -t {self.circuit_name}.ufaults {self.circuit_name}.bench > targeted_atalanta.log
+# Now run targeted faults. -t writes generated test vectors; -U writes the
+# per-fault undetected/redundant report we actually need for cross-referencing.
+./atalanta -f {self.circuit_name}.faults -t {self.circuit_name}.vec -U {self.circuit_name}.ufaults {self.circuit_name}.bench > targeted_atalanta.log
 
 echo "[PyATPG] Done."
 """

@@ -133,4 +133,5 @@ export interface AtpgReport {
   circuit_name: string;
   ai_suspects: string[];
   used_llm: boolean;
+  note?: string;
 }

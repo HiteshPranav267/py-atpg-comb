@@ -7,8 +7,14 @@ class Validator:
     def __init__(self):
         self.log_parser = AtlantaLogParser()
 
-    def cross_reference(self, ai_suspects, fault_details):
-        """Cross-reference AI suspects against the detailed Atalanta fault report."""
+    def cross_reference(self, ai_suspects, fault_details, targeted_ran=True):
+        """Cross-reference AI suspects against the detailed Atalanta fault report.
+
+        Atalanta's undetected-fault file (-U) only lists faults that were NOT
+        detected — a gate absent from it means all of its targeted faults were
+        detected (CLEARED), not that no data exists. NO_DATA is reserved for
+        when the targeted ATPG run itself never produced usable results.
+        """
         trojans = []
         cleared = []
         unknown = []
@@ -23,11 +29,18 @@ class Validator:
         for gate in ai_suspects:
             faults = fault_map.get(gate, [])
             if not faults:
-                unknown.append({
-                    'gate_id': gate,
-                    'verdict': 'NO_DATA',
-                    'reason': 'Gate not found in ATPG fault report',
-                })
+                if targeted_ran:
+                    cleared.append({
+                        'gate_id': gate,
+                        'verdict': 'CLEARED',
+                        'reason': 'All targeted faults detected (gate absent from undetected-fault report)',
+                    })
+                else:
+                    unknown.append({
+                        'gate_id': gate,
+                        'verdict': 'NO_DATA',
+                        'reason': 'Targeted ATPG run produced no usable results',
+                    })
                 continue
 
             statuses = [f['status'] for f in faults]
@@ -109,7 +122,8 @@ class Validator:
         print("[Phase 4] Loading AI suspect list...")
         print(f"          {len(ai_suspects)} gates flagged by AI")
         print("[Phase 4] Cross-referencing AI suspects with Oracle results...")
-        trojans, cleared, unknown = self.cross_reference(ai_suspects, fault_details)
+        targeted_ran = bool(targeted_log) and os.path.exists(targeted_log)
+        trojans, cleared, unknown = self.cross_reference(ai_suspects, fault_details, targeted_ran=targeted_ran)
         heatmap = self.generate_heatmap(trojans, cleared, unknown, profiles)
         
         report = {

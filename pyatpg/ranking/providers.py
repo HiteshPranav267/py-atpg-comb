@@ -1,5 +1,9 @@
 import os
+import time
 from abc import ABC, abstractmethod
+
+# Gemini transient failures (over capacity, rate limited) worth retrying.
+_RETRYABLE_MARKERS = ("503", "UNAVAILABLE", "429", "RESOURCE_EXHAUSTED", "500", "INTERNAL")
 
 
 class LLMProvider(ABC):
@@ -34,13 +38,20 @@ class GeminiProvider(LLMProvider):
             self._client = genai.Client(api_key=api_key)
         return self._client
 
-    def complete(self, prompt: str) -> str:
+    def complete(self, prompt: str, max_retries: int = 3) -> str:
         client = self._get_client()
-        try:
-            response = client.models.generate_content(
-                model=self.model_name,
-                contents=prompt
-            )
-            return response.text
-        except Exception as e:
-            raise RuntimeError(f"Gemini API failure: {str(e)}") from e
+        last_error: Exception = RuntimeError("Gemini API failure")
+        for attempt in range(max_retries):
+            try:
+                response = client.models.generate_content(
+                    model=self.model_name,
+                    contents=prompt
+                )
+                return response.text
+            except Exception as e:
+                last_error = e
+                retryable = any(marker in str(e) for marker in _RETRYABLE_MARKERS)
+                if not retryable or attempt == max_retries - 1:
+                    raise RuntimeError(f"Gemini API failure: {str(e)}") from e
+                time.sleep(2 ** attempt)  # 1s, 2s, 4s
+        raise RuntimeError(f"Gemini API failure: {str(last_error)}") from last_error
