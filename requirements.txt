@@ -5,7 +5,8 @@ paramiko
 openai
 anthropic
 python-dotenv
-pywebview
-pyinstaller
-PyQt6
-qtpy
+fastapi
+uvicorn[standard]
+pydantic
+google-genai
+python-multipart
