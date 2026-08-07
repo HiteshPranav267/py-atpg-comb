@@ -1,0 +1,12 @@
+* Name of circuit:  /home/hitesh-pranav/Documents/pranav omen/clg stuff/Capstone/pyatpg/pyatpg-git/benchmarks/c17.bench
+* Primary inputs :
+  1 2 3 6 7 
+  
+* Primary outputs:
+  22 23 
+
+* Test patterns and fault free responses:
+
+   1: 10100 10
+   2: 01000 11
+   3: 01110 00
