@@ -10,14 +10,30 @@ import type {
 } from '@/types';
 
 // Axios instance pointing to the FastAPI backend
+// VITE_API_URL should be the Render root URL e.g. https://py-atpg-comb.onrender.com
+// All business routes live under /api, so we append it here.
+const BASE = import.meta.env.VITE_API_URL
+  ? `${import.meta.env.VITE_API_URL}/api`
+  : '/api';
+
 const apiClient = axios.create({
-  baseURL: import.meta.env.VITE_API_URL || '/api',
+  baseURL: BASE,
   headers: {
     'Content-Type': 'application/json',
   },
 });
 
+// Separate client for the /health endpoint (no /api prefix)
+const healthClient = axios.create({
+  baseURL: import.meta.env.VITE_API_URL || '',
+});
+
 export const api = {
+  // Health
+  healthCheck: async (): Promise<{ status: string }> => {
+    const res = await healthClient.get('/health');
+    return res.data;
+  },
   // Circuit
   uploadCircuit: async (file: File): Promise<CircuitMetadata> => {
     const formData = new FormData();

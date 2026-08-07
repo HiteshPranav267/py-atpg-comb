@@ -13,7 +13,7 @@ export function AppLayout() {
     // Basic health check to set status
     const checkHealth = async () => {
       try {
-        await api.getRankers();
+        await api.healthCheck();
         setBackendStatus('CONNECTED');
       } catch (error) {
         setBackendStatus('DISCONNECTED');
