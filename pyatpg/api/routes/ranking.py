@@ -63,7 +63,7 @@ def run_ranking(req: RankingRequestSchema):
                 for g in result.ranked_gates
             ],
         )
-    except ValueError as e:
+    except (ValueError, ImportError) as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

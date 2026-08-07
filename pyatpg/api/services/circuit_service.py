@@ -25,7 +25,7 @@ class CircuitService:
             "gates": stats.get("gates", 0),
             "primary_inputs": stats.get("primary_inputs", 0),
             "primary_outputs": stats.get("primary_outputs", 0),
-            "levels": stats.get("levels", 0),
+            "levels": stats.get("max_level", 0),
         }
 
     @staticmethod

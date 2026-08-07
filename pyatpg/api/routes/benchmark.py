@@ -17,7 +17,7 @@ def get_rankers():
 
 
 @router.post("/start", response_model=Dict[str, str])
-def start_benchmark(req: BenchmarkStartRequest):
+async def start_benchmark(req: BenchmarkStartRequest):
     try:
         job_id = BenchmarkService.start_benchmark(req.dataset_dir, req.ranker_name, req.k)
         return {"job_id": job_id}

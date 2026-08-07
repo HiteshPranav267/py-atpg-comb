@@ -38,21 +38,21 @@ Verilog Netlist
 
 ## Features
 
-| Layer | Capability |
-|---|---|
-| **Parsing** | Structural Verilog parser (gates, DFFs, scan chains) |
-| **Circuit Graph** | NetworkX-based DAG with level, fanin/fanout, centrality |
-| **SCOAP** | Controllability (CC0/CC1) & Observability (CO) metrics |
-| **Toggle Analysis** | Simulated toggle rate per gate |
-| **ATPG Integration** | ATALANTA wrapper — fault coverage & redundancy info |
-| **Feature Extraction** | Unified `FeatureSet` from structural + ATPG features |
-| **Trojan Dataset** | Automated Trojan insertion with configurable strategies |
-| **Ranking Engine** | Pluggable `GateRanker` interface |
-| **LLM Ranker** | Gemini/OpenAI provider abstraction via `LLMProvider` |
-| **Evaluation** | Top-K Accuracy, MRR, Precision/Recall, Search Space Reduction |
-| **Benchmarking** | Async batch benchmark runner over full dataset directories |
-| **REST API** | FastAPI backend exposing all modules as stateless endpoints |
-| **EDA Frontend** | React + Vite desktop-style application |
+| Layer                        | Capability                                                    |
+| ---------------------------- | ------------------------------------------------------------- |
+| **Parsing**            | Structural Verilog parser (gates, DFFs, scan chains)          |
+| **Circuit Graph**      | NetworkX-based DAG with level, fanin/fanout, centrality       |
+| **SCOAP**              | Controllability (CC0/CC1) & Observability (CO) metrics        |
+| **Toggle Analysis**    | Simulated toggle rate per gate                                |
+| **ATPG Integration**   | ATALANTA wrapper — fault coverage & redundancy info          |
+| **Feature Extraction** | Unified`FeatureSet` from structural + ATPG features         |
+| **Trojan Dataset**     | Automated Trojan insertion with configurable strategies       |
+| **Ranking Engine**     | Pluggable`GateRanker` interface                             |
+| **LLM Ranker**         | Gemini/OpenAI provider abstraction via`LLMProvider`         |
+| **Evaluation**         | Top-K Accuracy, MRR, Precision/Recall, Search Space Reduction |
+| **Benchmarking**       | Async batch benchmark runner over full dataset directories    |
+| **REST API**           | FastAPI backend exposing all modules as stateless endpoints   |
+| **EDA Frontend**       | React + Vite desktop-style application                        |
 
 ---
 
@@ -108,17 +108,17 @@ npm run dev
 
 ## API Endpoints
 
-| Method | Route | Description |
-|---|---|---|
-| `GET` | `/health` | Backend health check |
-| `POST` | `/api/circuit/parse` | Upload & parse a Verilog file |
-| `POST` | `/api/features/extract` | Extract full FeatureSet from Verilog |
-| `GET` | `/api/ranking/rankers` | List all available rankers dynamically |
-| `POST` | `/api/ranking/run` | Run a ranker on a FeatureSet |
-| `POST` | `/api/benchmark/start` | Start an async benchmark job |
-| `GET` | `/api/benchmark/status/{id}` | Poll benchmark job status |
-| `GET` | `/api/benchmark/result/{id}` | Retrieve completed benchmark results |
-| `POST` | `/api/trojan/generate` | Generate a Trojan dataset from a base circuit |
+| Method   | Route                          | Description                                   |
+| -------- | ------------------------------ | --------------------------------------------- |
+| `GET`  | `/health`                    | Backend health check                          |
+| `POST` | `/api/circuit/parse`         | Upload & parse a Verilog file                 |
+| `POST` | `/api/features/extract`      | Extract full FeatureSet from Verilog          |
+| `GET`  | `/api/ranking/rankers`       | List all available rankers dynamically        |
+| `POST` | `/api/ranking/run`           | Run a ranker on a FeatureSet                  |
+| `POST` | `/api/benchmark/start`       | Start an async benchmark job                  |
+| `GET`  | `/api/benchmark/status/{id}` | Poll benchmark job status                     |
+| `GET`  | `/api/benchmark/result/{id}` | Retrieve completed benchmark results          |
+| `POST` | `/api/trojan/generate`       | Generate a Trojan dataset from a base circuit |
 
 Interactive docs available at `http://127.0.0.1:8000/docs`.
 
@@ -126,12 +126,12 @@ Interactive docs available at `http://127.0.0.1:8000/docs`.
 
 ## Rankers
 
-| Ranker | Strategy |
-|---|---|
-| `RandomRanker` | Uniform random baseline |
-| `ScoapRanker` | Ranks by low controllability × high observability |
-| `RareNodeRanker` | Ranks by lowest toggle rate (rare activation) |
-| `LLMRanker` | Chain-of-thought reasoning via Gemini / OpenAI |
+| Ranker             | Strategy                                           |
+| ------------------ | -------------------------------------------------- |
+| `RandomRanker`   | Uniform random baseline                            |
+| `ScoapRanker`    | Ranks by low controllability × high observability |
+| `RareNodeRanker` | Ranks by lowest toggle rate (rare activation)      |
+| `LLMRanker`      | Chain-of-thought reasoning via Gemini / OpenAI     |
 
 All rankers implement the same `GateRanker` interface and are auto-discovered by the API — no hardcoding required on the frontend.
 
@@ -148,7 +148,7 @@ All rankers implement the same `GateRanker` interface and are auto-discovered by
 
 ## Tech Stack
 
-**Backend:** Python · FastAPI · Pydantic · NetworkX · ATALANTA  
+**Backend:** Python · FastAPI · Pydantic · NetworkX · ATALANTA
 **Frontend:** React · TypeScript · Vite · TailwindCSS · shadcn/ui · TanStack Table · Zustand · React Query
 
 ---
