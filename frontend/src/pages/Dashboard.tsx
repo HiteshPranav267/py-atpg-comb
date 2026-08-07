@@ -1,7 +1,14 @@
 import { ShieldAlert, Cpu, Activity, Database } from 'lucide-react';
 import { Link } from 'react-router-dom';
+import { useAppStore } from '@/store';
 
 export default function Dashboard() {
+  const { activeCircuit, activeFeatureSet, benchmarkHistory } = useAppStore();
+
+  const avgAccuracy = benchmarkHistory.length > 0
+    ? `${(benchmarkHistory.reduce((sum, r) => sum + r.top1_accuracy, 0) / benchmarkHistory.length * 100).toFixed(1)}%`
+    : '—';
+
   return (
     <div className="p-8 max-w-6xl mx-auto w-full">
       <div className="flex items-center gap-4 mb-8">
@@ -10,10 +17,10 @@ export default function Dashboard() {
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-12">
-        <Card title="Circuits" value="12" icon={Cpu} />
-        <Card title="Features Extracted" value="45K" icon={Database} />
-        <Card title="Avg Extraction Time" value="1.2s" icon={Activity} />
-        <Card title="Accuracy" value="94.2%" icon={ShieldAlert} />
+        <Card title="Active Circuit" value={activeCircuit ? `${activeCircuit.gates} gates` : '—'} icon={Cpu} />
+        <Card title="Features Extracted" value={activeFeatureSet ? String(activeFeatureSet.gate_features.length) : '—'} icon={Database} />
+        <Card title="Last Extraction Time" value={activeFeatureSet ? `${activeFeatureSet.extraction_time_ms.toFixed(1)}ms` : '—'} icon={Activity} />
+        <Card title="Avg Benchmark Top-1 Acc" value={avgAccuracy} icon={ShieldAlert} />
       </div>
 
       <div className="grid md:grid-cols-2 gap-6">
@@ -38,11 +45,19 @@ export default function Dashboard() {
         <div className="border border-border bg-card rounded-lg p-6 flex flex-col gap-4">
           <h2 className="text-xl font-semibold">Recent Benchmarks</h2>
           <div className="space-y-4">
-            {[1, 2, 3].map((i) => (
-              <div key={i} className="flex items-center justify-between border-b border-border pb-3 last:border-0">
+            {benchmarkHistory.length === 0 && (
+              <p className="text-sm text-muted-foreground">
+                No benchmarks run yet. Start one from the{' '}
+                <Link to="/benchmark" className="text-primary hover:underline">Benchmark</Link> tab.
+              </p>
+            )}
+            {benchmarkHistory.slice(0, 5).map((r) => (
+              <div key={`${r.job_id}-${r.circuit_name}`} className="flex items-center justify-between border-b border-border pb-3 last:border-0">
                 <div>
-                  <div className="text-sm font-medium">ISCAS85_Benchmark_{i}</div>
-                  <div className="text-xs text-muted-foreground font-mono">SCOAP Ranker • Top-1: 100%</div>
+                  <div className="text-sm font-medium">{r.circuit_name}</div>
+                  <div className="text-xs text-muted-foreground font-mono">
+                    {r.ranker_name} • Top-1: {(r.top1_accuracy * 100).toFixed(0)}%
+                  </div>
                 </div>
                 <span className="text-xs text-green-500 font-medium bg-green-500/10 px-2 py-1 rounded">Completed</span>
               </div>

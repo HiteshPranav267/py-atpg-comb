@@ -2,11 +2,13 @@ import { useState, useEffect } from 'react';
 import { Rocket, Activity, CheckCircle2, XCircle } from 'lucide-react';
 import { useMutation } from '@tanstack/react-query';
 import { api } from '@/services/api';
+import { useAppStore } from '@/store';
 import { DataTable } from '@/components/tables/DataTable';
 import { createColumnHelper } from '@tanstack/react-table';
 import type { EvaluationResult } from '@/types';
 
 export default function Benchmark() {
+  const addBenchmarkResults = useAppStore((s) => s.addBenchmarkResults);
   const [datasetDir, setDatasetDir] = useState<string>('tests/fixtures/dataset');
   const [selectedRanker, setSelectedRanker] = useState<string>('random');
   const [k, setK] = useState<number>(10);
@@ -49,7 +51,11 @@ export default function Benchmark() {
           if (res.status === 'COMPLETED') {
             setStatus('COMPLETED');
             const resultData = await api.getBenchmarkResult(jobId);
-            setResults(resultData.results || []);
+            const finalResults = resultData.results || [];
+            setResults(finalResults);
+            if (finalResults.length > 0) {
+              addBenchmarkResults(jobId, finalResults);
+            }
           } else if (res.status === 'FAILED') {
             setStatus('FAILED');
             setErrorMsg(res.message);
