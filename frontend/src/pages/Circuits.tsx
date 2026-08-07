@@ -13,15 +13,14 @@ export default function Circuits() {
 
   const uploadMutation = useMutation({
     mutationFn: api.uploadCircuit,
-    onSuccess: (data) => {
-      setActiveCircuit(data);
-    }
   });
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      uploadMutation.mutate(file);
+      uploadMutation.mutate(file, {
+        onSuccess: (data) => setActiveCircuit(data, file),
+      });
     }
   };
 

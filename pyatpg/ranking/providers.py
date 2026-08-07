@@ -17,7 +17,7 @@ class LLMProvider(ABC):
 class GeminiProvider(LLMProvider):
     """Implementation of LLMProvider using Google Gemini SDK."""
 
-    def __init__(self, model_name: str = "gemini-1.5-pro"):
+    def __init__(self, model_name: str = "gemini-flash-latest"):
         self.model_name = model_name
         self._client = None
         

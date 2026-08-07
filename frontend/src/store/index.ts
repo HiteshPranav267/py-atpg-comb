@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import type { CircuitMetadata, FeatureSet, RankingResult, EvaluationResult } from '@/types';
+import type { CircuitMetadata, FeatureSet, RankingResult, EvaluationResult, AtpgReport } from '@/types';
 
 export interface BenchmarkHistoryEntry extends EvaluationResult {
   job_id: string;
@@ -10,14 +10,19 @@ export interface BenchmarkHistoryEntry extends EvaluationResult {
 interface AppState {
   // Global State
   activeCircuit: CircuitMetadata | null;
+  // The raw uploaded Verilog file, kept so every other tool (features,
+  // trojan generation, ATPG) can reuse the same circuit without re-uploading.
+  activeCircuitFile: File | null;
   activeFeatureSet: FeatureSet | null;
   activeRanking: RankingResult | null;
+  activeAtpgReport: AtpgReport | null;
   selectedGateId: string | null;
 
   // Actions
-  setActiveCircuit: (circuit: CircuitMetadata | null) => void;
+  setActiveCircuit: (circuit: CircuitMetadata | null, file?: File | null) => void;
   setActiveFeatureSet: (featureSet: FeatureSet | null) => void;
   setActiveRanking: (ranking: RankingResult | null) => void;
+  setActiveAtpgReport: (report: AtpgReport | null) => void;
   setSelectedGateId: (gateId: string | null) => void;
 
   // Benchmark history (backend is stateless / in-memory only, so we
@@ -34,13 +39,26 @@ export const useAppStore = create<AppState>()(
   persist(
     (set) => ({
       activeCircuit: null,
+      activeCircuitFile: null,
       activeFeatureSet: null,
       activeRanking: null,
+      activeAtpgReport: null,
       selectedGateId: null,
 
-      setActiveCircuit: (circuit) => set({ activeCircuit: circuit }),
+      setActiveCircuit: (circuit, file) => set((state) => {
+        const isNewUpload = file !== undefined;
+        return {
+          activeCircuit: circuit,
+          activeCircuitFile: isNewUpload ? file : state.activeCircuitFile,
+          // A new/cleared circuit invalidates anything derived from the old one
+          activeFeatureSet: (circuit === null || isNewUpload) ? null : state.activeFeatureSet,
+          activeRanking: (circuit === null || isNewUpload) ? null : state.activeRanking,
+          activeAtpgReport: (circuit === null || isNewUpload) ? null : state.activeAtpgReport,
+        };
+      }),
       setActiveFeatureSet: (featureSet) => set({ activeFeatureSet: featureSet }),
       setActiveRanking: (ranking) => set({ activeRanking: ranking }),
+      setActiveAtpgReport: (report) => set({ activeAtpgReport: report }),
       setSelectedGateId: (gateId) => set({ selectedGateId: gateId }),
 
       benchmarkHistory: [],

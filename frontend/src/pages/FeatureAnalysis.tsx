@@ -1,5 +1,5 @@
-import { useRef } from 'react';
-import { Play, Database, LayoutGrid } from 'lucide-react';
+import { Play, Database, LayoutGrid, AlertTriangle } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import { useMutation } from '@tanstack/react-query';
 import { api } from '@/services/api';
 import { useAppStore } from '@/store';
@@ -8,8 +8,7 @@ import { createColumnHelper } from '@tanstack/react-table';
 import type { GateFeature } from '@/types';
 
 export default function FeatureAnalysis() {
-  const { activeFeatureSet, setActiveFeatureSet } = useAppStore();
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const { activeCircuit, activeCircuitFile, activeFeatureSet, setActiveFeatureSet } = useAppStore();
 
   const extractMutation = useMutation({
     mutationFn: api.extractFeatures,
@@ -18,10 +17,9 @@ export default function FeatureAnalysis() {
     }
   });
 
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      extractMutation.mutate(file);
+  const handleExtract = () => {
+    if (activeCircuitFile) {
+      extractMutation.mutate(activeCircuitFile);
     }
   };
 
@@ -55,6 +53,11 @@ export default function FeatureAnalysis() {
           <h2 className="text-lg font-bold text-primary flex items-center gap-2">
             <LayoutGrid className="w-5 h-5" /> Feature Extraction
           </h2>
+          {activeCircuit && (
+            <span className="text-sm font-mono text-muted-foreground border-l border-border pl-4">
+              {activeCircuit.name}
+            </span>
+          )}
           {activeFeatureSet && (
             <span className="text-sm font-mono text-muted-foreground border-l border-border pl-4">
               Time: {activeFeatureSet.extraction_time_ms.toFixed(2)} ms
@@ -62,20 +65,14 @@ export default function FeatureAnalysis() {
           )}
         </div>
         <div>
-          <input 
-            type="file" 
-            ref={fileInputRef} 
-            onChange={handleFileUpload}
-            className="hidden" 
-            accept=".v,.verilog"
-          />
-          <button 
-            onClick={() => fileInputRef.current?.click()}
-            disabled={extractMutation.isPending}
+          <button
+            onClick={handleExtract}
+            disabled={!activeCircuitFile || extractMutation.isPending}
+            title={!activeCircuitFile ? 'Upload a circuit in the Circuits tab first' : undefined}
             className="flex items-center gap-2 bg-primary hover:bg-primary/90 text-primary-foreground px-4 py-1.5 rounded-md text-sm font-medium transition-colors disabled:opacity-50"
           >
-            <Play className="w-4 h-4 fill-current" /> 
-            {extractMutation.isPending ? 'Extracting...' : 'Extract Features (Upload)'}
+            <Play className="w-4 h-4 fill-current" />
+            {extractMutation.isPending ? 'Extracting...' : 'Extract Features'}
           </button>
         </div>
       </div>
@@ -91,7 +88,13 @@ export default function FeatureAnalysis() {
               </span>
             )}
           </div>
-          <div className="flex-1 overflow-hidden p-0">
+          <div className="flex-1 overflow-hidden p-0 relative">
+            {!activeCircuitFile && (
+              <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 text-muted-foreground text-sm">
+                <AlertTriangle className="w-6 h-6" />
+                <span>No circuit loaded. <Link to="/circuits" className="text-primary hover:underline">Upload one in Circuits</Link> first.</span>
+              </div>
+            )}
             <DataTable columns={columns} data={data} className="h-full border-none rounded-none" />
           </div>
         </div>

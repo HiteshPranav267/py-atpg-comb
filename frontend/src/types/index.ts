@@ -89,3 +89,48 @@ export interface CircuitMetadata {
   primary_outputs: number;
   levels: number;
 }
+
+export interface CoverageResult {
+  coverage_pct: number;
+  test_patterns: number;
+  error?: string;
+}
+
+export interface CoverageComparison {
+  targeted_coverage: number;
+  baseline_coverage: number;
+  coverage_diff: number;
+  targeted_patterns: number;
+  baseline_patterns: number;
+  pattern_reduction_pct: number;
+  speedup_factor: number;
+}
+
+export interface VerdictGate {
+  gate_id: string;
+  verdict: string;
+  reason: string;
+}
+
+export interface HeatmapEntry {
+  verdict: string;
+  color: string;
+  severity: string;
+  toggle_rate?: number | null;
+  co?: number | null;
+  centrality?: number | null;
+}
+
+export interface AtpgReport {
+  targeted_coverage: CoverageResult | null;
+  baseline_coverage: CoverageResult | null;
+  comparison: CoverageComparison | null;
+  trojan_candidates: VerdictGate[];
+  cleared_gates: VerdictGate[];
+  unknown_gates: VerdictGate[];
+  heatmap: Record<string, HeatmapEntry>;
+  circuit_stats: Record<string, any>;
+  circuit_name: string;
+  ai_suspects: string[];
+  used_llm: boolean;
+}

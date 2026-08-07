@@ -6,7 +6,8 @@ import type {
   RankingResult,
   BenchmarkStartRequest,
   BenchmarkStatusResponse,
-  BenchmarkResultResponse
+  BenchmarkResultResponse,
+  AtpgReport
 } from '@/types';
 
 // Axios instance pointing to the FastAPI backend
@@ -66,8 +67,14 @@ export const api = {
   },
 
   // Trojan
-  generateTrojanDataset: async (circuit_path: string, variants: number = 10, strategy: string = 'random'): Promise<any> => {
-    const res = await apiClient.post('/trojan/generate', { circuit_path, variants, strategy });
+  generateTrojanDataset: async (params: { file: File; variants?: number; strategy?: string }): Promise<any> => {
+    const formData = new FormData();
+    formData.append('file', params.file);
+    formData.append('variants', String(params.variants ?? 10));
+    formData.append('strategy', params.strategy ?? 'random');
+    const res = await apiClient.post('/trojan/generate', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' }
+    });
     return res.data;
   },
 
@@ -84,6 +91,19 @@ export const api = {
 
   getBenchmarkResult: async (jobId: string): Promise<BenchmarkResultResponse> => {
     const res = await apiClient.get(`/benchmark/result/${jobId}`);
+    return res.data;
+  },
+
+  // ATPG (Atalanta)
+  runAtpg: async (params: { file: File; patterns?: number; use_llm?: boolean }): Promise<AtpgReport> => {
+    const formData = new FormData();
+    formData.append('file', params.file);
+    formData.append('patterns', String(params.patterns ?? 3000));
+    formData.append('use_llm', String(params.use_llm ?? true));
+    const res = await apiClient.post('/atpg/run', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: 120000,
+    });
     return res.data;
   }
 };
