@@ -9,24 +9,33 @@ import type {
   BenchmarkResultResponse,
   AtpgReport
 } from '@/types';
+import { useAppStore } from '@/store';
 
 // Axios instance pointing to the FastAPI backend
 // VITE_API_URL should be the Render root URL e.g. https://py-atpg-comb.onrender.com
 // All business routes live under /api, so we append it here.
-const BASE = import.meta.env.VITE_API_URL
-  ? `${import.meta.env.VITE_API_URL}/api`
-  : '/api';
+// A user-set override (Settings page) takes priority over the build-time value,
+// so the same build can be pointed at a local or deployed backend without rebuilding.
+function resolveBaseRoot(): string {
+  return useAppStore.getState().apiBaseUrlOverride || import.meta.env.VITE_API_URL || '';
+}
 
 const apiClient = axios.create({
-  baseURL: BASE,
   headers: {
     'Content-Type': 'application/json',
   },
 });
+apiClient.interceptors.request.use((config) => {
+  const root = resolveBaseRoot();
+  config.baseURL = root ? `${root}/api` : '/api';
+  return config;
+});
 
 // Separate client for the /health endpoint (no /api prefix)
-const healthClient = axios.create({
-  baseURL: import.meta.env.VITE_API_URL || '',
+const healthClient = axios.create();
+healthClient.interceptors.request.use((config) => {
+  config.baseURL = resolveBaseRoot();
+  return config;
 });
 
 export const api = {

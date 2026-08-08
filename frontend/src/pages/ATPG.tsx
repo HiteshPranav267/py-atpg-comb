@@ -6,9 +6,9 @@ import { api } from '@/services/api';
 import { useAppStore } from '@/store';
 
 export default function ATPG() {
-  const { activeCircuit, activeCircuitFile, activeAtpgReport, setActiveAtpgReport } = useAppStore();
-  const [patterns, setPatterns] = useState(3000);
-  const [useLlm, setUseLlm] = useState(true);
+  const { activeCircuit, activeCircuitFile, activeAtpgReport, setActiveAtpgReport, defaultPatterns, defaultUseLlm } = useAppStore();
+  const [patterns, setPatterns] = useState(defaultPatterns);
+  const [useLlm, setUseLlm] = useState(defaultUseLlm);
 
   const runMutation = useMutation({
     mutationFn: api.runAtpg,

@@ -90,7 +90,7 @@ export default function Circuits() {
         }}
       >
         {/* Left Pane - Hierarchy (Placeholder) */}
-        <div className="bg-[#181818] overflow-y-auto p-4 flex flex-col">
+        <div className="bg-card overflow-y-auto p-4 flex flex-col">
           <h3 className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-4">Hierarchy</h3>
           {activeCircuit ? (
             <div className="space-y-2 font-mono text-sm">

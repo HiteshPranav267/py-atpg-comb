@@ -8,6 +8,11 @@ import { useAppStore } from '@/store';
 
 export function AppLayout() {
   const setBackendStatus = useAppStore(state => state.setBackendStatus);
+  const theme = useAppStore(state => state.theme);
+
+  useEffect(() => {
+    document.documentElement.classList.toggle('dark', theme === 'dark');
+  }, [theme]);
 
   useEffect(() => {
     // Basic health check to set status
@@ -29,7 +34,7 @@ export function AppLayout() {
       <TopNav />
       <div className="flex flex-1 overflow-hidden">
         <Sidebar />
-        <main className="flex-1 overflow-auto bg-[#131313]">
+        <main className="flex-1 overflow-auto bg-background">
           <Outlet />
         </main>
       </div>

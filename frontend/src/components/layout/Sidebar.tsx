@@ -29,9 +29,12 @@ export function Sidebar() {
 
   return (
     <aside className="w-64 bg-card border-r border-border h-full flex flex-col">
-      <div className="p-4 border-b border-border">
-        <h1 className="text-xl font-bold text-primary">Project Alpha</h1>
-        <p className="text-sm text-muted-foreground font-mono mt-1">Circuit: 74LS181</p>
+      <div className="p-4 border-b border-border flex items-center gap-3">
+        <img src="/pyatpg.png" alt="PyATPG" className="w-10 h-10 rounded-full shrink-0" />
+        <div>
+          <h1 className="text-lg font-bold text-primary leading-tight">PyATPG</h1>
+          <p className="text-xs text-muted-foreground leading-tight">Trojan Localization</p>
+        </div>
       </div>
       <nav className="flex-1 py-4">
         <ul className="space-y-1 px-2">

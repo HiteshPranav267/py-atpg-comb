@@ -33,6 +33,16 @@ interface AppState {
   // Status Bar State
   backendStatus: 'CONNECTED' | 'DISCONNECTED' | 'BUSY';
   setBackendStatus: (status: 'CONNECTED' | 'DISCONNECTED' | 'BUSY') => void;
+
+  // Settings (persisted)
+  theme: 'light' | 'dark';
+  toggleTheme: () => void;
+  defaultPatterns: number;
+  setDefaultPatterns: (n: number) => void;
+  defaultUseLlm: boolean;
+  setDefaultUseLlm: (v: boolean) => void;
+  apiBaseUrlOverride: string | null;
+  setApiBaseUrlOverride: (url: string | null) => void;
 }
 
 export const useAppStore = create<AppState>()(
@@ -71,10 +81,25 @@ export const useAppStore = create<AppState>()(
 
       backendStatus: 'DISCONNECTED',
       setBackendStatus: (status) => set({ backendStatus: status }),
+
+      theme: 'dark',
+      toggleTheme: () => set((state) => ({ theme: state.theme === 'dark' ? 'light' : 'dark' })),
+      defaultPatterns: 3000,
+      setDefaultPatterns: (n) => set({ defaultPatterns: n }),
+      defaultUseLlm: true,
+      setDefaultUseLlm: (v) => set({ defaultUseLlm: v }),
+      apiBaseUrlOverride: null,
+      setApiBaseUrlOverride: (url) => set({ apiBaseUrlOverride: url }),
     }),
     {
       name: 'pyatpg-app-store',
-      partialize: (state) => ({ benchmarkHistory: state.benchmarkHistory }),
+      partialize: (state) => ({
+        benchmarkHistory: state.benchmarkHistory,
+        theme: state.theme,
+        defaultPatterns: state.defaultPatterns,
+        defaultUseLlm: state.defaultUseLlm,
+        apiBaseUrlOverride: state.apiBaseUrlOverride,
+      }),
     }
   )
 );

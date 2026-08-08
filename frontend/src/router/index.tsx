@@ -10,6 +10,7 @@ import Ranking from '@/pages/Ranking';
 import Benchmark from '@/pages/Benchmark';
 import Results from '@/pages/Results';
 import Reports from '@/pages/Reports';
+import Help from '@/pages/Help';
 
 export const router = createBrowserRouter([
   {
@@ -25,6 +26,7 @@ export const router = createBrowserRouter([
       { path: '/benchmark', element: <Benchmark /> },
       { path: '/results', element: <Results /> },
       { path: '/reports', element: <Reports /> },
+      { path: '/help', element: <Help /> },
     ],
   },
 ]);
