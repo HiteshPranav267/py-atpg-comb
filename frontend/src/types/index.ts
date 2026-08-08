@@ -90,6 +90,14 @@ export interface CircuitMetadata {
   levels: number;
 }
 
+export interface TrojanGenerateResult {
+  blob: Blob;
+  filename: string;
+  circuit: string;
+  variantsGenerated: number;
+  strategy: string;
+}
+
 export interface CoverageResult {
   coverage_pct: number;
   test_patterns: number;

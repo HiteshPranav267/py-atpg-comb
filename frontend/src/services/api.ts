@@ -7,7 +7,8 @@ import type {
   BenchmarkStartRequest,
   BenchmarkStatusResponse,
   BenchmarkResultResponse,
-  AtpgReport
+  AtpgReport,
+  TrojanGenerateResult
 } from '@/types';
 import { useAppStore } from '@/store';
 
@@ -76,15 +77,27 @@ export const api = {
   },
 
   // Trojan
-  generateTrojanDataset: async (params: { file: File; variants?: number; strategy?: string }): Promise<any> => {
+  generateTrojanDataset: async (params: { file: File; variants?: number; strategy?: string }): Promise<TrojanGenerateResult> => {
     const formData = new FormData();
     formData.append('file', params.file);
     formData.append('variants', String(params.variants ?? 10));
     formData.append('strategy', params.strategy ?? 'random');
     const res = await apiClient.post('/trojan/generate', formData, {
-      headers: { 'Content-Type': 'multipart/form-data' }
+      headers: { 'Content-Type': 'multipart/form-data' },
+      responseType: 'blob',
     });
-    return res.data;
+
+    const disposition: string = res.headers['content-disposition'] || '';
+    const match = disposition.match(/filename="?([^"]+)"?/);
+    const filename = match ? match[1] : (params.variants === 1 ? 'trojan.v' : 'trojan_dataset.zip');
+
+    return {
+      blob: res.data as Blob,
+      filename,
+      circuit: res.headers['x-circuit-name'] || params.file.name,
+      variantsGenerated: parseInt(res.headers['x-variants-generated'] || '0', 10),
+      strategy: res.headers['x-strategy'] || params.strategy || 'random',
+    };
   },
 
   // Benchmark
