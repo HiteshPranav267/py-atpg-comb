@@ -1,3 +1,0 @@
-SOURCE=/home/cmos/capst_seq/test_scripts/s27.test_netlist.v
-TECHLIB=/home/cmos/capst_seq/saed90nm.v
-RUNDIR=/home/cmos/capst_seq/

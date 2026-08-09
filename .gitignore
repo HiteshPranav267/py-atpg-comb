@@ -38,3 +38,4 @@ ENV/
 *.sqlite
 results/
 outputs/
+security_report.json
