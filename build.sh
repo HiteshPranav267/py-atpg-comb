@@ -12,4 +12,16 @@ pip install -r requirements.txt
 cd Atalanta
 rm -f atalanta *.o
 make atalanta CFLAGS="-O -g -static"
+
+echo "--- atalanta binary check ---"
+file atalanta
+if ldd atalanta 2>&1 | grep -qi "not a dynamic executable"; then
+    echo "Confirmed: atalanta is statically linked."
+else
+    echo "FATAL: atalanta is NOT statically linked (static link silently fell back to dynamic)."
+    ldd atalanta
+    exit 1
+fi
+echo "-----------------------------"
+
 cd ..
