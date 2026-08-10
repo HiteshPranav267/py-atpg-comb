@@ -53,11 +53,11 @@ Because PyATPG relies on both a modern web interface and heavy Python/C backend 
 
 ### The Backend (Render.com)
 Render acts as a traditional Linux server.
-1. When you push to GitHub, Render detects the push and reads `requirements.txt`.
-2. It installs all Python dependencies in a fresh container.
+1. When you push to GitHub, Render detects the push and runs the Build Command: `bash build.sh`.
+2. `build.sh` installs `requirements.txt` and compiles `Atalanta/atalanta` from source in Render's own build container, so the binary's glibc requirement always matches whatever image actually runs it.
 3. It executes the Start Command: `python -m uvicorn pyatpg.api.app:app --host 0.0.0.0 --port $PORT`.
 4. It reads the `OPENAI_API_KEY` and `ANTHROPIC_API_KEY` from the Render environment variables dashboard (taking the place of your local `.env` file).
-5. The API is now live at `https://py-atpg-comb.onrender.com`.
+5. The API is now live at `https://py-atpg-comb-1.onrender.com`.
 
 ### The Frontend (Vercel.com)
 Vercel is optimized for static sites and serverless edge delivery.
@@ -69,6 +69,6 @@ Vercel is optimized for static sites and serverless edge delivery.
 ### How They Talk
 When a user visits your Vercel link and uploads a Verilog file:
 1. React Query intercepts the action and calls `api.uploadCircuit()` in `api.ts`.
-2. The file is packaged as `FormData` (multipart/form-data) and an HTTP POST request is fired across the internet to `https://py-atpg-comb.onrender.com/api/circuit/parse`.
+2. The file is packaged as `FormData` (multipart/form-data) and an HTTP POST request is fired across the internet to `https://py-atpg-comb-1.onrender.com/api/circuit/parse`.
 3. Render's FastAPI server receives the file, hands it to `circuit_service.py`, which invokes `verilog_parser.py`.
 4. The structural statistics are computed via `graph_analysis.py`, packed into a JSON dictionary, and returned as an HTTP 200 response to the user's browser.
