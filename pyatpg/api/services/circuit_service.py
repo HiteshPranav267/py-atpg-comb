@@ -1,6 +1,6 @@
 """Service layer for circuit operations."""
 from pyatpg.core.verilog_parser import VerilogParser
-from pyatpg.core.netlist import Circuit
+from pyatpg.core.netlist import Circuit, NetlistParser
 from pyatpg.core.graph_analysis import CircuitGraph
 from pyatpg.analysis.feature_extractor import FeatureExtractor
 from pyatpg.analysis.adapters import AtalantaAdapter, MetadataAdapter
@@ -12,8 +12,14 @@ class CircuitService:
     """Stateless service for parsing and analyzing circuits."""
 
     @staticmethod
+    def _get_parser(name: str):
+        if name.lower().endswith('.bench'):
+            return NetlistParser()
+        return VerilogParser()
+
+    @staticmethod
     def parse_verilog(text: str, name: str = "unknown") -> Dict[str, Any]:
-        parser = VerilogParser()
+        parser = CircuitService._get_parser(name)
         circuit = parser.parse(text)
         circuit.name = name
         cg = CircuitGraph(circuit)
@@ -30,7 +36,7 @@ class CircuitService:
 
     @staticmethod
     def parse_to_circuit(text: str, name: str = "unknown") -> Circuit:
-        parser = VerilogParser()
+        parser = CircuitService._get_parser(name)
         circuit = parser.parse(text)
         circuit.name = name
         return circuit

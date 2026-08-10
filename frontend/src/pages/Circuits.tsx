@@ -58,16 +58,16 @@ export default function Circuits() {
             type="file" 
             ref={fileInputRef} 
             onChange={handleFileUpload}
-            className="hidden" 
-            accept=".v,.verilog"
+            className="hidden"
+            accept=".v,.verilog,.bench"
           />
           <button 
             onClick={() => fileInputRef.current?.click()}
             disabled={uploadMutation.isPending}
             className="flex items-center gap-2 bg-secondary hover:bg-secondary/80 text-foreground px-4 py-1.5 rounded-md text-sm transition-colors border border-border disabled:opacity-50"
           >
-            <UploadCloud className="w-4 h-4" /> 
-            {uploadMutation.isPending ? 'Uploading...' : 'Upload Verilog'}
+            <UploadCloud className="w-4 h-4" />
+            {uploadMutation.isPending ? 'Uploading...' : 'Upload Circuit'}
           </button>
         </div>
       </div>
