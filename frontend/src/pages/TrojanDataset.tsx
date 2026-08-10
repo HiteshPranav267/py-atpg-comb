@@ -94,9 +94,7 @@ export default function TrojanDataset() {
           <div className="p-4 rounded-md border border-green-500/50 bg-green-500/10 text-green-400 text-sm">
             Downloaded <span className="font-mono font-bold">{result.filename}</span> — {result.variantsGenerated} variant
             {result.variantsGenerated !== 1 ? 's' : ''} of "{result.circuit}" using the {result.strategy} strategy.
-            {result.variantsGenerated > 1 && (
-              <> The zip also includes a clean (uninfected) copy for comparison.</>
-            )}
+            {' '}The zip also includes a clean (uninfected) copy, each as both Verilog (.v) and .bench, for comparison.
             <br />
             <span className="text-muted-foreground">
               A copy was also saved on the server under <span className="font-mono">datasets/{result.circuit}</span> — point the{' '}

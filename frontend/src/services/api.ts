@@ -89,7 +89,7 @@ export const api = {
 
     const disposition: string = res.headers['content-disposition'] || '';
     const match = disposition.match(/filename="?([^"]+)"?/);
-    const filename = match ? match[1] : (params.variants === 1 ? 'trojan.v' : 'trojan_dataset.zip');
+    const filename = match ? match[1] : 'trojan_dataset.zip';
 
     return {
       blob: res.data as Blob,

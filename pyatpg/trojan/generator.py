@@ -36,11 +36,15 @@ class TrojanDatasetGenerator:
         clean_dir = os.path.join(ds_dir, "clean")
         os.makedirs(clean_dir, exist_ok=True)
         
-        # Save clean version
+        # Save clean version (both Verilog and .bench formats)
         clean_verilog_path = os.path.join(clean_dir, "circuit.v")
         with open(clean_verilog_path, 'w') as f:
             f.write(base_circuit.to_verilog(module_name=circuit_name))
-            
+
+        clean_bench_path = os.path.join(clean_dir, "circuit.bench")
+        with open(clean_bench_path, 'w') as f:
+            f.write(base_circuit.to_bench())
+
         print(f"[TrojanDataset] Clean circuit exported to: {clean_verilog_path}")
         
         # Generate Trojans
@@ -58,11 +62,15 @@ class TrojanDatasetGenerator:
                 
                 metadata.circuit = circuit_name
                 
-                # Export Verilog
+                # Export Verilog and .bench
                 v_path = os.path.join(trojan_dir, "circuit.v")
                 with open(v_path, 'w') as f:
                     f.write(compromised.to_verilog(module_name=circuit_name))
-                    
+
+                bench_path = os.path.join(trojan_dir, "circuit.bench")
+                with open(bench_path, 'w') as f:
+                    f.write(compromised.to_bench())
+
                 # Export JSON
                 j_path = os.path.join(trojan_dir, "metadata.json")
                 metadata.save(j_path)
