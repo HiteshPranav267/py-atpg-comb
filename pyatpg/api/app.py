@@ -28,3 +28,13 @@ app.include_router(atpg.router)
 @app.get("/health")
 def health_check():
     return {"status": "healthy"}
+
+
+@app.get("/")
+def root():
+    return {
+        "name": "PyATPG API",
+        "status": "healthy",
+        "docs": "/docs",
+        "health": "/health",
+    }

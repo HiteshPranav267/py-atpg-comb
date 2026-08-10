@@ -13,7 +13,7 @@ import type {
 import { useAppStore } from '@/store';
 
 // Axios instance pointing to the FastAPI backend
-// VITE_API_URL should be the Render root URL e.g. https://py-atpg-comb-1.onrender.com
+// VITE_API_URL should be the Render root URL e.g. https://py-atpg-backend.onrender.com
 // All business routes live under /api, so we append it here.
 // A user-set override (Settings page) takes priority over the build-time value,
 // so the same build can be pointed at a local or deployed backend without rebuilding.
