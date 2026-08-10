@@ -39,6 +39,10 @@ export default function Circuits() {
     { name: 'Levels', value: activeCircuit.levels },
   ] : [];
 
+  const errorMsg = uploadMutation.isError
+    ? ((uploadMutation.error as any)?.response?.data?.detail || (uploadMutation.error as any)?.message || 'Upload failed')
+    : null;
+
   return (
     <div className="h-full flex flex-col">
       {/* Header */}
@@ -71,6 +75,12 @@ export default function Circuits() {
           </button>
         </div>
       </div>
+
+      {errorMsg && (
+        <div className="px-6 py-2 bg-red-500/10 border-b border-red-500/50 text-red-400 text-sm font-mono shrink-0">
+          Error: {errorMsg}
+        </div>
+      )}
 
       {/* Split Pane */}
       <Split 

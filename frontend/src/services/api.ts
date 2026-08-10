@@ -18,7 +18,8 @@ import { useAppStore } from '@/store';
 // A user-set override (Settings page) takes priority over the build-time value,
 // so the same build can be pointed at a local or deployed backend without rebuilding.
 function resolveBaseRoot(): string {
-  return useAppStore.getState().apiBaseUrlOverride || import.meta.env.VITE_API_URL || '';
+  const root = useAppStore.getState().apiBaseUrlOverride || import.meta.env.VITE_API_URL || '';
+  return root.replace(/\/+$/, '');
 }
 
 const apiClient = axios.create({
