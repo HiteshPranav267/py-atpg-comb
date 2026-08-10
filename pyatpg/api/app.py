@@ -14,6 +14,7 @@ app.add_middleware(
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["Content-Disposition", "X-Circuit-Name", "X-Variants-Generated", "X-Strategy"],
 )
 
 app.include_router(circuit.router)
