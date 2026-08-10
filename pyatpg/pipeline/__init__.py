@@ -7,7 +7,7 @@ import os
 class PyATPGPipeline:
     """Master orchestrator for the PyATPG pipeline."""
     
-    def __init__(self, api_key=None, output_dir="./modus_jobs/"):
+    def __init__(self, api_key=None, output_dir="./atalanta_jobs/"):
         self.phase1 = StructuralAnalyzer()
         self.phase2 = AIPrioritizer(api_key=api_key)
         self.phase3 = OracleExecutor(output_dir=output_dir)

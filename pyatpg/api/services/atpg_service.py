@@ -36,7 +36,7 @@ class AtpgService:
             summary=phase1_data['llm_summary'],
         )
 
-        executor = OracleExecutor(output_dir="./modus_jobs/")
+        executor = OracleExecutor(output_dir="./atalanta_jobs/")
         extract_dir, _stdout = executor.execute(
             circuit=circuit,
             circuit_source=circuit_source,

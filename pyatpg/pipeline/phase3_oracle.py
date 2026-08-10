@@ -1,4 +1,5 @@
 import os
+import platform
 import zipfile
 import subprocess
 from pyatpg.exporters.atalanta_exporter import AtlantaExporter
@@ -6,7 +7,7 @@ from pyatpg.exporters.atalanta_exporter import AtlantaExporter
 class OracleExecutor:
     """Phase 3: Oracle Execution (The Actuator)"""
     
-    def __init__(self, output_dir="./modus_jobs/"):
+    def __init__(self, output_dir="./atalanta_jobs/"):
         self.output_dir = output_dir
 
     def execute(self, circuit, circuit_source, circuit_name, flagged_gates):
@@ -36,12 +37,21 @@ class OracleExecutor:
         with zipfile.ZipFile(zip_path, 'r') as zf:
             zf.extractall(extract_dir)
 
-        run_script = os.path.join(extract_dir, 'run_atalanta.sh')
-        os.chmod(run_script, 0o755)
-        
-        result = subprocess.run(['bash', 'run_atalanta.sh'], cwd=extract_dir, capture_output=True, text=True)
+        # The exporter emits a .bat + Atalanta.exe on Windows and a .sh +
+        # atalanta ELF binary elsewhere, so invoke whichever it actually wrote.
+        # Pass an absolute script path -- cmd won't resolve a bare filename
+        # from cwd, and it keeps the bash side independent of PATH quirks.
+        if platform.system() == "Windows":
+            script_path = os.path.abspath(os.path.join(extract_dir, 'run_atalanta.bat'))
+            command = ['cmd', '/c', script_path]
+        else:
+            script_path = os.path.abspath(os.path.join(extract_dir, 'run_atalanta.sh'))
+            os.chmod(script_path, 0o755)
+            command = ['bash', script_path]
+
+        result = subprocess.run(command, cwd=extract_dir, capture_output=True, text=True)
         if result.returncode != 0:
-            raise RuntimeError(f"Error executing Atalanta:\n{result.stderr}")
+            raise RuntimeError(f"Error executing Atalanta:\n{result.stderr or result.stdout}")
             
         print(result.stdout)
         print(f"[Success] Local Execution complete. Logs saved to: {extract_dir}")

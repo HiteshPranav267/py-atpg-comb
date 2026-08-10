@@ -5,7 +5,7 @@ import hashlib
 class CircuitMemory:
     """
     Persistent memory for circuit analysis results.
-    Stores results in a JSON file to skip redundant LLM/Modus runs.
+    Stores results in a JSON file to skip redundant LLM/Atalanta runs.
     """
     def __init__(self, storage_path=None):
         if storage_path is None:

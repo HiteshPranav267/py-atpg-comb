@@ -446,6 +446,6 @@ class CircuitGraph:
             f"YOUR TASK: You are the Prioritizer. Analyze these structural and dynamic features "
             f"using few-shot reasoning from your knowledge of Hardware Trojans (like those in Trust-Hub). "
             f"Identify gates that exhibit 'Stealth' through low observability or anomalous topology. "
-            f"Your output targets the Cadence Modus Oracle tool for high-effort pattern generation."
+            f"Your output targets the Atalanta ATPG tool for high-effort pattern generation."
         )
         return summary

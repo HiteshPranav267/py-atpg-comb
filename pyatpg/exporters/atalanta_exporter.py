@@ -46,24 +46,26 @@ class AtlantaExporter:
             ]
         )
 
-        # Determine the executable name
-        if platform.system() == "Windows":
-            atalanta_executable = "Atalanta.exe"
-        else:
-            atalanta_executable = "atalanta"
-
-        # Generate platform-appropriate script
+        # Generate platform-appropriate script. Both variants abort on a failed
+        # Atalanta invocation -- without that, a crashed run leaves empty logs
+        # that the parser happily reads as 0% coverage.
         if platform.system() == "Windows":
             self._bash_script = f"""@echo off
 setlocal
 
 echo [PyATPG] Starting Atalanta Job for {self.circuit_name}
 
+REM %~dp0 is this script's own directory -- Windows won't resolve a bare
+REM Atalanta.exe from the working directory.
+cd /d "%~dp0"
+
 REM First generate a baseline
-Atalanta.exe -t {self.circuit_name}_baseline.vec {self.circuit_name}.bench > baseline_atalanta.log
+"%~dp0Atalanta.exe" -t {self.circuit_name}_baseline.vec {self.circuit_name}.bench > baseline_atalanta.log
+if errorlevel 1 exit /b 1
 
 REM Now run targeted faults
-Atalanta.exe -f {self.circuit_name}.faults -t {self.circuit_name}.vec -U {self.circuit_name}.ufaults {self.circuit_name}.bench > targeted_atalanta.log
+"%~dp0Atalanta.exe" -f {self.circuit_name}.faults -t {self.circuit_name}.vec -U {self.circuit_name}.ufaults {self.circuit_name}.bench > targeted_atalanta.log
+if errorlevel 1 exit /b 1
 
 echo [PyATPG] Done.
 """

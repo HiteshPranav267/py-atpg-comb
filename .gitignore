@@ -39,3 +39,8 @@ ENV/
 results/
 outputs/
 security_report.json
+
+# Generated ATPG job bundles and trojan datasets
+atalanta_jobs/
+modus_jobs/
+datasets/

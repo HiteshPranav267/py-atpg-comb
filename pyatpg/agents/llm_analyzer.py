@@ -15,7 +15,7 @@ import re
 SYSTEM_PROMPT = """You are a Hardware Security Expert acting as the 'Prioritization Brain' for an Oracle-Guided Hardware Trojan Detection framework.
 
 YOUR OBJECTIVE:
-Your goal is to pinpoint a small, targeted list of suspicious gates to be analyzed by the Cadence Modus ATPG tool. By using your few-shot reasoning capabilities, you identify structural 'Stealth' that standard heuristics might miss. 
+Your goal is to pinpoint a small, targeted list of suspicious gates to be analyzed by the Atalanta ATPG tool. By using your few-shot reasoning capabilities, you identify structural 'Stealth' that standard heuristics might miss.
 
 CONTEXTUAL CLUES (What to look for):
 1. **Structural Stealth**: Nodes with high SCOAP costs (CC/CO) are difficult to control and observe.

@@ -144,13 +144,13 @@ def dispatch_job():
         if circuit_name.endswith('_mod'):
             circuit_name = circuit_name[:-4]
             
-        extract_dir = os.path.join('./modus_jobs/', f"{circuit_name}_atalanta_job")
+        extract_dir = os.path.join('./atalanta_jobs/', f"{circuit_name}_atalanta_job")
         state['local_dir'] = extract_dir
         
         def run_in_background():
             from pyatpg.pipeline.phase3_oracle import OracleExecutor
             try:
-                executor = OracleExecutor(output_dir='./modus_jobs/')
+                executor = OracleExecutor(output_dir='./atalanta_jobs/')
                 executor.execute(
                     circuit=state['circuit'],
                     circuit_source=state['raw_text'],
