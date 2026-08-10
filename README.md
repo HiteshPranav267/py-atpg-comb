@@ -217,7 +217,7 @@ Insertion strategies: `RandomStrategy`, `LowScoapStrategy`, `RareNodeStrategy`.
 
 ## Deployment (research platform)
 
-- **Backend** — Render.com, built from `requirements.txt`, started via `uvicorn pyatpg.api.app:app --host 0.0.0.0 --port $PORT`. Reads `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / `GEMINI_API_KEY` from Render environment variables.
+- **Backend** — Render.com, built via `bash build.sh` (installs `requirements.txt` and compiles `Atalanta/atalanta` from source against Render's own build image — a prebuilt binary drifts out of sync with the runtime image's glibc), started via `uvicorn pyatpg.api.app:app --host 0.0.0.0 --port $PORT`. Reads `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / `GEMINI_API_KEY` from Render environment variables.
 - **Frontend** — Vercel.com, root directory `frontend`, built via `npm run build`. Bakes `VITE_API_URL` (the Render backend URL) into the static build.
 
 See [project_architecture.md](project_architecture.md) for the full request-flow writeup.
