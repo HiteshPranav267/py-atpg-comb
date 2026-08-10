@@ -33,6 +33,7 @@ class AtlantaExporter:
         # Generate bash script
         # Assuming Atalanta is globally available or relative to the extract dir
         self._bash_script = f"""#!/bin/bash
+set -e
 echo "[PyATPG] Starting Atalanta Job for {self.circuit_name}"
 chmod +x ./atalanta
 # First generate a baseline
