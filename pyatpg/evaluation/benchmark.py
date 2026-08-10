@@ -59,9 +59,15 @@ class BenchmarkRunner:
                 # 2. Load Ground Truth
                 ground_truth = MetadataAdapter.parse_json(meta_path)
 
-                # 3. Load ATPG (Stubbed for now, normally you'd run Atalanta or load logs)
-                # In a real benchmark, you might run ATPG here or assume it's pre-computed
-                atpg_result = AtalantaAdapter.parse_report("dummy.txt")
+                # 3. ATPG results, if a previous Atalanta run left a log beside
+                # the circuit. Benchmarking ranks gates on structural features,
+                # so this stays optional rather than being faked with zeros.
+                atpg_log = os.path.join(full_variant_dir, "atalanta.log")
+                atpg_result = (
+                    AtalantaAdapter.parse_report(atpg_log)
+                    if os.path.exists(atpg_log)
+                    else None
+                )
 
                 # 4. Extract FeatureSet
                 feature_set = self.extractor.extract(

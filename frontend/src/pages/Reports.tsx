@@ -56,8 +56,19 @@ export default function Reports() {
               <SummaryRow label="Extraction Time" value={activeFeatureSet ? `${activeFeatureSet.extraction_time_ms.toFixed(1)}ms` : '—'} />
               <SummaryRow label="Ranker Used" value={activeRanking?.ranker_name ?? 'Not run'} />
               <SummaryRow label="Gates Ranked" value={activeRanking ? String(activeRanking.ranked_gates.length) : '—'} />
-              <SummaryRow label="ATPG Run" value={activeAtpgReport ? 'Yes' : 'Not run'} />
-              <SummaryRow label="Trojan Candidates" value={activeAtpgReport ? String(activeAtpgReport.trojan_candidates.length) : '—'} />
+              <SummaryRow label="ATPG Mode" value={activeAtpgReport?.mode_label ?? 'Not run'} />
+              <SummaryRow
+                label="Fault Coverage"
+                value={(() => {
+                  if (!activeAtpgReport) return '—';
+                  const run =
+                    activeAtpgReport.runs.non_targeted ?? activeAtpgReport.runs.targeted;
+                  const coverage = run?.results.fault_coverage;
+                  return coverage === null || coverage === undefined
+                    ? 'Not reported by Atalanta'
+                    : `${coverage} %`;
+                })()}
+              />
               <SummaryRow label="Benchmark Runs (session)" value={String(benchmarkHistory.length)} />
             </div>
           </div>

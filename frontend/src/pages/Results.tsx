@@ -39,17 +39,26 @@ export default function Results() {
   }
 
   const featureLookup = new Map((activeFeatureSet?.gate_features || []).map((gf) => [gf.gate_id, gf]));
-  const heatmap = activeAtpgReport?.heatmap || {};
+
+  // Gates Atalanta listed in its undetected-fault report. A gate's absence
+  // means its faults were detected, so it is only meaningful once ATPG ran.
+  const undetectedGates = new Set<string>();
+  for (const run of Object.values(activeAtpgReport?.runs ?? {})) {
+    for (const fault of run?.faults ?? []) undetectedGates.add(fault.gate);
+  }
 
   const rows: ResultRow[] = activeRanking.ranked_gates.map((g) => {
     const gf = featureLookup.get(g.gate_id);
-    const h = heatmap[g.gate_id];
     return {
       rank: g.rank,
       gate_id: g.gate_id,
       score: g.score,
       reason: g.reason,
-      atpg_verdict: h?.verdict ?? 'NOT_RUN',
+      atpg_verdict: !activeAtpgReport
+        ? 'NOT_RUN'
+        : undetectedGates.has(g.gate_id)
+          ? 'UNDETECTED'
+          : 'DETECTED',
       toggle_rate: gf?.toggle_rate,
       cc0: gf?.cc0,
       cc1: gf?.cc1,
@@ -85,7 +94,7 @@ export default function Results() {
     }),
   ];
 
-  const trojanCount = rows.filter(r => r.atpg_verdict === 'TROJAN_CANDIDATE').length;
+  const undetectedCount = rows.filter(r => r.atpg_verdict === 'UNDETECTED').length;
 
   return (
     <div className="h-full flex flex-col">
@@ -107,7 +116,7 @@ export default function Results() {
         )}
         {activeAtpgReport && (
           <span className="text-xs text-muted-foreground">
-            {trojanCount} of {rows.length} ranked gates flagged as Trojan candidates by ATPG cross-reference
+            {undetectedCount} of {rows.length} ranked gates carry a fault Atalanta left undetected
           </span>
         )}
       </div>
@@ -121,15 +130,13 @@ export default function Results() {
   );
 }
 
+/** Reports what Atalanta measured for a gate; it makes no claim beyond that. */
 function VerdictBadge({ verdict }: { verdict: string }) {
-  if (verdict === 'TROJAN_CANDIDATE') {
-    return <span className="text-xs text-red-400 font-medium bg-red-500/10 px-2 py-1 rounded flex items-center gap-1 w-fit"><AlertTriangle className="w-3 h-3" /> Trojan Candidate</span>;
+  if (verdict === 'UNDETECTED') {
+    return <span className="text-xs text-yellow-500 font-medium bg-yellow-500/10 px-2 py-1 rounded flex items-center gap-1 w-fit" title="Atalanta listed at least one fault on this gate as undetected, redundant or aborted."><AlertTriangle className="w-3 h-3" /> Undetected fault</span>;
   }
-  if (verdict === 'CLEARED') {
-    return <span className="text-xs text-green-500 font-medium bg-green-500/10 px-2 py-1 rounded flex items-center gap-1 w-fit"><CheckCircle2 className="w-3 h-3" /> Cleared</span>;
+  if (verdict === 'DETECTED') {
+    return <span className="text-xs text-green-500 font-medium bg-green-500/10 px-2 py-1 rounded flex items-center gap-1 w-fit" title="This gate did not appear in Atalanta's undetected-fault report."><CheckCircle2 className="w-3 h-3" /> Faults detected</span>;
   }
-  if (verdict === 'NOT_RUN') {
-    return <span className="text-xs text-muted-foreground font-medium bg-secondary px-2 py-1 rounded w-fit">Not Run</span>;
-  }
-  return <span className="text-xs text-yellow-500 font-medium bg-yellow-500/10 px-2 py-1 rounded flex items-center gap-1 w-fit"><ShieldQuestion className="w-3 h-3" /> No Data</span>;
+  return <span className="text-xs text-muted-foreground font-medium bg-secondary px-2 py-1 rounded w-fit">ATPG not run</span>;
 }

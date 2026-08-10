@@ -98,48 +98,187 @@ export interface TrojanGenerateResult {
   strategy: string;
 }
 
-export interface CoverageResult {
-  coverage_pct: number;
-  test_patterns: number;
-  error?: string;
+// ---------------------------------------------------------------------------
+// ATPG / Atalanta
+//
+// Every numeric field is nullable. A null means Atalanta did not report that
+// value, and must render as "Not reported by Atalanta" -- never as 0.
+// ---------------------------------------------------------------------------
+
+export type AnalysisMode = 'targeted' | 'non_targeted' | 'compare';
+
+export interface AnalysisModeOption {
+  value: AnalysisMode;
+  label: string;
+  description: string;
 }
 
-export interface CoverageComparison {
-  targeted_coverage: number;
-  baseline_coverage: number;
-  coverage_diff: number;
-  targeted_patterns: number;
-  baseline_patterns: number;
-  pattern_reduction_pct: number;
-  speedup_factor: number;
+export interface AtalantaCircuitStructure {
+  name: string | null;
+  primary_inputs: number | null;
+  primary_outputs: number | null;
+  gates: number | null;
+  logic_depth: number | null;
 }
 
-export interface VerdictGate {
-  gate_id: string;
-  verdict: string;
-  reason: string;
+export interface AtpgParameters {
+  generation_mode: string | null;
+  random_pattern_limit: number | null;
+  backtrack_limit: number | null;
+  backtrack_limit_phase1: number | null;
+  backtrack_limit_phase2: number | null;
+  random_seed: number | null;
+  compaction_mode: string | null;
+  shuffling_compaction_limit: number | null;
+  shuffles: number | null;
 }
 
-export interface HeatmapEntry {
-  verdict: string;
-  color: string;
-  severity: string;
-  toggle_rate?: number | null;
-  co?: number | null;
-  centrality?: number | null;
+export interface AtpgResults {
+  patterns_before_compaction: number | null;
+  patterns_after_compaction: number | null;
+  fault_coverage: number | null;
+  collapsed_faults: number | null;
+  redundant_faults: number | null;
+  aborted_faults: number | null;
+  backtrackings: number | null;
+  detected_faults: number | null;
+}
+
+export interface TimingBreakdown {
+  initialization: number | null;
+  fault_simulation: number | null;
+  fan: number | null;
+  total: number | null;
+}
+
+export interface FaultEntry {
+  fault_name: string;
+  gate: string;
+  fault_type: string;
+  status: string;
+}
+
+export interface TestVector {
+  index: number;
+  inputs: string;
+  outputs: string;
+}
+
+export interface TestVectorSet {
+  primary_inputs: string[];
+  primary_outputs: string[];
+  vectors: TestVector[];
+  count: number;
+}
+
+export interface AtalantaRun {
+  label: string;
+  targeted: boolean;
+  tool: string;
+  version: string | null;
+  command: string[];
+  exit_code: number | null;
+  circuit: AtalantaCircuitStructure;
+  parameters: AtpgParameters;
+  results: AtpgResults;
+  timing: TimingBreakdown;
+  memory_mb: number | null;
+  faults: FaultEntry[];
+  test_vectors: TestVectorSet;
+  targeted_gates: string[];
+  raw_log: string;
+  raw_stderr: string;
+  artifacts: Record<string, string>;
+}
+
+export interface RunComparison {
+  targeted_coverage: number | null;
+  non_targeted_coverage: number | null;
+  coverage_delta: number | null;
+  targeted_patterns: number | null;
+  non_targeted_patterns: number | null;
+  pattern_reduction_pct: number | null;
+  targeted_runtime: number | null;
+  non_targeted_runtime: number | null;
+  notes: string[];
+}
+
+export interface AnalysisObservation {
+  title: string;
+  detail: string;
+  gates: string[];
+  confidence: string | null;
+}
+
+export interface SuspiciousRegion {
+  name: string;
+  gates: string[];
+  rationale: string;
+  confidence: string | null;
+}
+
+export interface CircuitAnalysis {
+  source: 'llm' | 'structural' | 'unavailable';
+  model: string | null;
+  architecture_summary: string;
+  observations: AnalysisObservation[];
+  suspicious_regions: SuspiciousRegion[];
+  reasoning: string[];
+  unavailable_reason: string | null;
+}
+
+export interface CorrelatedGate {
+  gate: string;
+  analysis_context: string[];
+  fault_names: string[];
+  atpg_status: string;
+  statement: string;
+}
+
+export interface CorrelationReport {
+  correlated: CorrelatedGate[];
+  analysis_gates_examined: number;
+  undetected_gates_examined: number;
+  summary: string;
+  caveats: string[];
+}
+
+export interface TargetingInfo {
+  strategy: string;
+  used_llm: boolean;
+  gates: string[];
+  gate_count: number;
+  notes: string[];
+}
+
+export interface AtpgCircuitOverview {
+  name: string;
+  filename: string;
+  format: string;
+  primary_inputs: number | null;
+  primary_outputs: number | null;
+  gates: number | null;
+  logic_depth: number | null;
+  total_nodes: number | null;
+  total_edges: number | null;
+  gate_types: Record<string, number>;
+  max_fan_in: number | null;
+  max_fan_out: number | null;
+  avg_fan_in: number | null;
+  avg_fan_out: number | null;
+  flip_flops: number | null;
+  is_dag: boolean | null;
 }
 
 export interface AtpgReport {
-  targeted_coverage: CoverageResult | null;
-  baseline_coverage: CoverageResult | null;
-  comparison: CoverageComparison | null;
-  trojan_candidates: VerdictGate[];
-  cleared_gates: VerdictGate[];
-  unknown_gates: VerdictGate[];
-  heatmap: Record<string, HeatmapEntry>;
-  circuit_stats: Record<string, any>;
-  circuit_name: string;
-  ai_suspects: string[];
-  used_llm: boolean;
-  note?: string;
+  job_id: string;
+  mode: AnalysisMode;
+  mode_label: string;
+  circuit: AtpgCircuitOverview;
+  runs: Partial<Record<'targeted' | 'non_targeted', AtalantaRun>>;
+  comparison: RunComparison | null;
+  targeting: TargetingInfo | Record<string, never>;
+  circuit_analysis: CircuitAnalysis | null;
+  correlation: CorrelationReport | null;
+  notes: string[];
 }

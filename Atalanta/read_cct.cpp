@@ -484,14 +484,18 @@ int readCircuit(FILE *fpCctFile, char strCctName[]) //read_circuit
 
 	for (i = g_iNoGate; i < iNetSize; i++)
 		g_net[i] = (GATEPTR)NULL;
+#ifdef DEBUG
 	fprintf(stderr, "before\n");
+#endif
 	if (g_iNoGate != iNoGate)
 	{
 		fprintf(stderr, "%d,%d\n", iNoGate, g_iNoGate);
 		fprintf(stderr, "Error in read_circuit\n");
 		return(-1);
 	}
+#ifdef DEBUG
 	fprintf(stderr, "after\n");
+#endif
 	/* Pass 3: Compute fanout list */
 	for (i = 0; i < g_iNoGate; i++)
 	{

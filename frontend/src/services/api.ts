@@ -8,6 +8,8 @@ import type {
   BenchmarkStatusResponse,
   BenchmarkResultResponse,
   AtpgReport,
+  AnalysisMode,
+  AnalysisModeOption,
   TrojanGenerateResult
 } from '@/types';
 import { useAppStore } from '@/store';
@@ -118,15 +120,34 @@ export const api = {
   },
 
   // ATPG (Atalanta)
-  runAtpg: async (params: { file: File; patterns?: number; use_llm?: boolean }): Promise<AtpgReport> => {
+  getAnalysisModes: async (): Promise<AnalysisModeOption[]> => {
+    const res = await apiClient.get('/atpg/modes');
+    return res.data;
+  },
+
+  runAtpg: async (params: {
+    file: File;
+    mode?: AnalysisMode;
+    patterns?: number;
+    use_llm?: boolean;
+  }): Promise<AtpgReport> => {
     const formData = new FormData();
     formData.append('file', params.file);
+    formData.append('mode', params.mode ?? 'compare');
     formData.append('patterns', String(params.patterns ?? 3000));
     formData.append('use_llm', String(params.use_llm ?? true));
     const res = await apiClient.post('/atpg/run', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
-      timeout: 120000,
+      // Two Atalanta runs plus toggle simulation on a large circuit.
+      timeout: 300000,
     });
     return res.data;
+  },
+
+  /** Absolute URL for a raw artifact, used directly as an anchor href. */
+  atpgArtifactUrl: (jobId: string, filename: string): string => {
+    const root = resolveBaseRoot();
+    const base = root ? `${root}/api` : '/api';
+    return `${base}/atpg/jobs/${encodeURIComponent(jobId)}/artifacts/${encodeURIComponent(filename)}`;
   }
 };

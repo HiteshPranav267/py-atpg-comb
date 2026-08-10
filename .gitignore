@@ -44,3 +44,7 @@ security_report.json
 atalanta_jobs/
 modus_jobs/
 datasets/
+
+# Atalanta build outputs (compiled from source by build.sh)
+Atalanta/atalanta
+Atalanta/*.o

@@ -561,7 +561,9 @@ int testgen(int iNoGate, int iNoPI, int iNoPO, int iMaxLevelAdd2, int iMaxBitSiz
 				printfault(g_fpLogFile, pLastUndetectedFault, 0);
 			}
 		}
+#ifdef DEBUG
 		fprintf(stderr, "iLastUndetectedFault=%d\n", iLastUndetectedFault);
+#endif
 		getTime(&lfMinutes, &lfSeconds, &lfRunTime1);
 
 

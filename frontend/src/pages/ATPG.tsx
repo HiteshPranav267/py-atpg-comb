@@ -1,14 +1,48 @@
-import { Zap, Play, Activity, AlertTriangle, CheckCircle2, ShieldQuestion } from 'lucide-react';
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { useMutation } from '@tanstack/react-query';
+import { Activity, AlertTriangle, Cpu, Play, Zap } from 'lucide-react';
+import { useMutation, useQuery } from '@tanstack/react-query';
 import { api } from '@/services/api';
 import { useAppStore } from '@/store';
+import type { AnalysisMode, AnalysisModeOption, AtpgReport } from '@/types';
+import { Section, Stat, Pill, KeyValue, metric } from '@/components/atpg/primitives';
+import { RunReport } from '@/components/atpg/RunReport';
+import {
+  CircuitAnalysisPanel,
+  ComparisonPanel,
+  CorrelationPanel,
+} from '@/components/atpg/AnalysisPanels';
+
+/** Fallback list if /atpg/modes is unreachable; labels match the backend. */
+const FALLBACK_MODES: AnalysisModeOption[] = [
+  {
+    value: 'targeted',
+    label: 'LLM Heuristic (Targeted)',
+    description: 'Select gates, then run Atalanta against only those faults.',
+  },
+  {
+    value: 'non_targeted',
+    label: 'Atalanta (Non-Targeted)',
+    description: "Run Atalanta over the circuit's full collapsed fault list.",
+  },
+  { value: 'compare', label: 'Compare Both', description: 'Run both and compare them.' },
+];
+
+type RunKey = 'targeted' | 'non_targeted';
 
 export default function ATPG() {
-  const { activeCircuit, activeCircuitFile, activeAtpgReport, setActiveAtpgReport, defaultPatterns, defaultUseLlm } = useAppStore();
+  const { activeCircuit, activeCircuitFile, activeAtpgReport, setActiveAtpgReport, defaultPatterns } =
+    useAppStore();
+  const [mode, setMode] = useState<AnalysisMode>('compare');
   const [patterns, setPatterns] = useState(defaultPatterns);
-  const [useLlm, setUseLlm] = useState(defaultUseLlm);
+
+  const { data: modes = FALLBACK_MODES } = useQuery({
+    queryKey: ['atpg-modes'],
+    queryFn: api.getAnalysisModes,
+    staleTime: Infinity,
+    retry: false,
+    placeholderData: FALLBACK_MODES,
+  });
 
   const runMutation = useMutation({
     mutationFn: api.runAtpg,
@@ -17,51 +51,83 @@ export default function ATPG() {
 
   const handleRun = () => {
     if (activeCircuitFile) {
-      runMutation.mutate({ file: activeCircuitFile, patterns, use_llm: useLlm });
+      runMutation.mutate({ file: activeCircuitFile, mode, patterns, use_llm: true });
     }
   };
 
   const report = activeAtpgReport;
+  const selected = modes.find((m) => m.value === mode);
+  const errorMsg = runMutation.isError
+    ? (runMutation.error as any)?.response?.data?.detail ||
+      (runMutation.error as any)?.message ||
+      'ATPG run failed'
+    : null;
 
   return (
-    <div className="p-8 max-w-4xl mx-auto w-full">
-      <div className="flex items-center gap-4 mb-8">
+    <div className="p-8 max-w-6xl mx-auto w-full flex flex-col gap-6">
+      <div className="flex items-center gap-4">
         <Zap className="w-8 h-8 text-primary" />
-        <h1 className="text-3xl font-bold tracking-tight">ATPG Engine (ATALANTA)</h1>
+        <div>
+          <h1 className="text-3xl font-bold tracking-tight">ATPG Engine</h1>
+          <p className="text-sm text-muted-foreground">
+            Test pattern generation by Atalanta 2.0. Every metric shown is read from the tool's
+            own output.
+          </p>
+        </div>
       </div>
 
-      <div className="bg-card border border-border p-6 rounded-lg shadow-sm flex flex-col gap-6">
-        <div className="flex items-center justify-between border-b border-border pb-4">
-          <div>
-            <h3 className="font-semibold text-lg">Active Circuit</h3>
-            <p className="text-muted-foreground text-sm font-mono mt-1">
-              {activeCircuit
-                ? activeCircuit.name
-                : <>No circuit loaded. Please <Link to="/circuits" className="text-primary hover:underline">load a circuit</Link> first.</>}
-            </p>
-          </div>
+      <div className="bg-card border border-border p-6 rounded-lg flex flex-col gap-6">
+        <div className="border-b border-border pb-4">
+          <h3 className="font-semibold">Active circuit</h3>
+          <p className="text-muted-foreground text-sm font-mono mt-1">
+            {activeCircuit ? (
+              activeCircuit.name
+            ) : (
+              <>
+                No circuit loaded.{' '}
+                <Link to="/circuits" className="text-primary hover:underline">
+                  Load a circuit
+                </Link>{' '}
+                first.
+              </>
+            )}
+          </p>
         </div>
 
-        <div className="grid grid-cols-2 gap-6">
+        <div className="grid md:grid-cols-2 gap-6">
           <div>
-            <label className="block text-sm font-medium mb-2">Toggle Simulation Patterns</label>
-            <input
-              type="number"
-              value={patterns}
-              onChange={(e) => setPatterns(parseInt(e.target.value) || 0)}
-              className="w-full bg-background border border-border rounded px-3 py-2 focus:border-primary focus:outline-none"
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium mb-2">Gate Prioritization</label>
+            <label className="block text-sm font-medium mb-2">Analysis mode</label>
             <select
-              value={useLlm ? 'llm' : 'heuristic'}
-              onChange={(e) => setUseLlm(e.target.value === 'llm')}
+              value={mode}
+              onChange={(e) => setMode(e.target.value as AnalysisMode)}
               className="w-full bg-background border border-border rounded px-3 py-2 focus:border-primary focus:outline-none"
             >
-              <option value="llm">Gemini (LLM few-shot)</option>
-              <option value="heuristic">Offline heuristic (no API key)</option>
+              {modes.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
             </select>
+            {selected && (
+              <p className="text-xs text-muted-foreground mt-2 leading-relaxed">
+                {selected.description}
+              </p>
+            )}
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium mb-2">Toggle simulation patterns</label>
+            <input
+              type="number"
+              min={1}
+              value={patterns}
+              onChange={(e) => setPatterns(Math.max(1, parseInt(e.target.value, 10) || 1))}
+              className="w-full bg-background border border-border rounded px-3 py-2 focus:border-primary focus:outline-none"
+            />
+            <p className="text-xs text-muted-foreground mt-2 leading-relaxed">
+              Used for structural toggle-rate profiling only. Atalanta chooses its own pattern
+              counts.
+            </p>
           </div>
         </div>
 
@@ -70,93 +136,156 @@ export default function ATPG() {
           disabled={!activeCircuitFile || runMutation.isPending}
           className="flex items-center justify-center gap-2 bg-primary hover:bg-primary/90 text-primary-foreground px-4 py-2 rounded-md font-medium transition-colors disabled:opacity-50"
         >
-          {runMutation.isPending
-            ? <Activity className="w-4 h-4 animate-spin" />
-            : <Play className="w-4 h-4 fill-current" />}
-          {runMutation.isPending ? 'Running (Atalanta + AI prioritizer)...' : 'Run ATALANTA'}
+          {runMutation.isPending ? (
+            <Activity className="w-4 h-4 animate-spin" />
+          ) : (
+            <Play className="w-4 h-4 fill-current" />
+          )}
+          {runMutation.isPending ? 'Running Atalanta...' : 'Run analysis'}
         </button>
 
-        {runMutation.isError && (
-          <div className="p-4 rounded-md border border-red-500/50 bg-red-500/10 text-red-400 text-sm font-mono flex items-center gap-2">
-            <AlertTriangle className="w-4 h-4 shrink-0" />
-            {(runMutation.error as any)?.response?.data?.detail || (runMutation.error as any)?.message || 'ATPG run failed'}
+        {errorMsg && (
+          <div className="p-4 rounded-md border border-red-500/50 bg-red-500/10 text-red-400 text-sm font-mono flex items-start gap-2">
+            <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+            <span className="whitespace-pre-wrap">{errorMsg}</span>
           </div>
         )}
       </div>
 
-      {report && (
-        <div className="mt-6 flex flex-col gap-6">
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <Stat label="Baseline Coverage" value={report.baseline_coverage ? `${report.baseline_coverage.coverage_pct}%` : '—'} />
-            <Stat label="Baseline Patterns" value={report.baseline_coverage ? String(report.baseline_coverage.test_patterns) : '—'} />
-            <Stat label="Targeted Coverage" value={report.targeted_coverage ? `${report.targeted_coverage.coverage_pct}%` : 'N/A'} />
-            <Stat label="Pattern Reduction" value={report.comparison ? `${report.comparison.pattern_reduction_pct}%` : 'N/A'} />
-          </div>
+      {report && <ReportView report={report} />}
+    </div>
+  );
+}
 
-          {report.note && (
-            <div className="p-4 rounded-md border border-yellow-500/40 bg-yellow-500/10 text-yellow-500 text-sm">
-              {report.note}
-            </div>
-          )}
+function ReportView({ report }: { report: AtpgReport }) {
+  const runKeys = Object.keys(report.runs) as RunKey[];
+  const [activeRun, setActiveRun] = useState<RunKey>(
+    runKeys.includes('non_targeted') ? 'non_targeted' : runKeys[0]
+  );
+  const current = report.runs[activeRun] ?? report.runs[runKeys[0]];
 
-          <div className="bg-card border border-border rounded-lg p-6">
-            <h3 className="font-semibold text-lg mb-1">AI-Flagged Suspects ({report.ai_suspects.length})</h3>
-            <p className="text-xs text-muted-foreground mb-4">
-              {report.used_llm ? 'Prioritized via Gemini few-shot reasoning' : 'Prioritized via offline SCOAP/toggle heuristic'}
-            </p>
-            {report.ai_suspects.length === 0 ? (
-              <p className="text-sm text-muted-foreground">No suspicious gates flagged for this circuit.</p>
-            ) : (
-              <div className="space-y-2">
-                {report.ai_suspects.map((gid) => {
-                  const h = report.heatmap[gid];
-                  return (
-                    <div key={gid} className="flex items-center justify-between border-b border-border pb-2 last:border-0">
-                      <span className="font-mono text-sm text-primary">{gid}</span>
-                      <VerdictBadge verdict={h?.verdict ?? 'NO_DATA'} />
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
+  return (
+    <div className="flex flex-col gap-6">
+      <CircuitOverview report={report} />
 
-          {report.trojan_candidates.length > 0 && (
-            <div className="bg-card border border-red-500/40 rounded-lg p-6">
-              <h3 className="font-semibold text-lg mb-4 text-red-400 flex items-center gap-2">
-                <AlertTriangle className="w-5 h-5" /> Trojan Candidates
-              </h3>
-              <div className="space-y-3">
-                {report.trojan_candidates.map((c) => (
-                  <div key={c.gate_id} className="text-sm">
-                    <span className="font-mono text-red-400 font-bold">{c.gate_id}</span>
-                    <span className="text-muted-foreground ml-2">{c.reason}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
+      {report.comparison && <ComparisonPanel comparison={report.comparison} />}
+
+      {runKeys.length > 1 && (
+        <div className="flex gap-2 border-b border-border">
+          {runKeys.map((key) => {
+            const run = report.runs[key];
+            if (!run) return null;
+            const active = key === activeRun;
+            return (
+              <button
+                key={key}
+                onClick={() => setActiveRun(key)}
+                className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${
+                  active
+                    ? 'border-primary text-primary'
+                    : 'border-transparent text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                {run.label}
+              </button>
+            );
+          })}
         </div>
       )}
+
+      {current && <RunReport run={current} jobId={report.job_id} />}
+
+      {report.circuit_analysis && <CircuitAnalysisPanel analysis={report.circuit_analysis} />}
+      {report.correlation && <CorrelationPanel correlation={report.correlation} />}
     </div>
   );
 }
 
-function Stat({ label, value }: { label: string; value: string }) {
+function CircuitOverview({ report }: { report: AtpgReport }) {
+  const c = report.circuit;
+  const targeting = 'gate_count' in report.targeting ? report.targeting : null;
+
   return (
-    <div className="border border-border bg-card p-4 rounded-lg flex flex-col gap-1">
-      <span className="text-xs text-muted-foreground font-medium">{label}</span>
-      <span className="text-xl font-bold">{value}</span>
-    </div>
-  );
-}
+    <Section
+      title="Circuit overview"
+      subtitle={
+        <>
+          Parsed from <span className="font-mono">{c.filename}</span> ({c.format}). Job{' '}
+          <span className="font-mono">{report.job_id}</span>.
+        </>
+      }
+      actions={
+        <div className="flex items-center gap-2">
+          <Cpu className="w-4 h-4 text-muted-foreground" />
+          <Pill tone="info">{report.mode_label}</Pill>
+        </div>
+      }
+    >
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <Stat label="Primary inputs" value={c.primary_inputs} />
+        <Stat label="Primary outputs" value={c.primary_outputs} />
+        <Stat label="Gates" value={c.gates} />
+        <Stat label="Logic depth" value={c.logic_depth} />
+      </div>
 
-function VerdictBadge({ verdict }: { verdict: string }) {
-  if (verdict === 'TROJAN_CANDIDATE') {
-    return <span className="text-xs text-red-400 font-medium bg-red-500/10 px-2 py-1 rounded flex items-center gap-1"><AlertTriangle className="w-3 h-3" /> Trojan Candidate</span>;
-  }
-  if (verdict === 'CLEARED') {
-    return <span className="text-xs text-green-500 font-medium bg-green-500/10 px-2 py-1 rounded flex items-center gap-1"><CheckCircle2 className="w-3 h-3" /> Cleared</span>;
-  }
-  return <span className="text-xs text-yellow-500 font-medium bg-yellow-500/10 px-2 py-1 rounded flex items-center gap-1"><ShieldQuestion className="w-3 h-3" /> No Data</span>;
+      <div className="grid md:grid-cols-2 gap-x-8 mt-5">
+        <KeyValue
+          rows={[
+            ['Total nodes', metric(c.total_nodes)],
+            ['Total edges', metric(c.total_edges)],
+            ['Max fan-in', metric(c.max_fan_in)],
+            ['Max fan-out', metric(c.max_fan_out)],
+            ['Average fan-in', metric(c.avg_fan_in)],
+            ['Average fan-out', metric(c.avg_fan_out)],
+          ]}
+        />
+        <div>
+          <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3">
+            Gate types
+          </h4>
+          <div className="flex flex-wrap gap-2">
+            {Object.entries(c.gate_types ?? {}).map(([type, count]) => (
+              <span
+                key={type}
+                className="text-xs px-2 py-1 rounded border border-border bg-secondary font-mono"
+              >
+                {type} <span className="text-primary">{count}</span>
+              </span>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {targeting && (
+        <div className="mt-5 pt-4 border-t border-border">
+          <div className="flex items-center gap-2 mb-2">
+            <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+              Fault targeting
+            </h4>
+            <Pill tone={targeting.used_llm ? 'info' : 'neutral'}>
+              {targeting.used_llm ? 'LLM selection' : 'Structural heuristic'}
+            </Pill>
+          </div>
+          <p className="text-sm text-muted-foreground">
+            {targeting.gate_count} gate(s) selected for the targeted fault list.
+          </p>
+          <div className="flex flex-wrap gap-1.5 mt-3">
+            {targeting.gates.map((gate) => (
+              <span
+                key={gate}
+                className="font-mono text-[11px] px-1.5 py-0.5 rounded bg-secondary text-primary"
+              >
+                {gate}
+              </span>
+            ))}
+          </div>
+          {targeting.notes.map((note) => (
+            <p key={note} className="text-xs text-yellow-500 mt-2 leading-relaxed">
+              {note}
+            </p>
+          ))}
+        </div>
+      )}
+    </Section>
+  );
 }

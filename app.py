@@ -10,8 +10,6 @@ from pyatpg.core.netlist import NetlistParser
 from pyatpg.core.verilog_parser import VerilogParser
 from pyatpg.core.graph_analysis import CircuitGraph
 from pyatpg.agents.llm_analyzer import LLMAnalyzer
-from pyatpg.exporters.atalanta_exporter import AtlantaExporter
-from pyatpg.exporters.atalanta_log_parser import AtlantaLogParser
 from pyatpg.core.memory import CircuitMemory
 
 app = Flask(__name__)
@@ -144,28 +142,34 @@ def dispatch_job():
         if circuit_name.endswith('_mod'):
             circuit_name = circuit_name[:-4]
             
-        extract_dir = os.path.join('./atalanta_jobs/', f"{circuit_name}_atalanta_job")
-        state['local_dir'] = extract_dir
-        
         def run_in_background():
-            from pyatpg.pipeline.phase3_oracle import OracleExecutor
+            from pyatpg.atpg import AtalantaRunner, JobWorkspace, build_fault_lines
+
             try:
-                executor = OracleExecutor(output_dir='./atalanta_jobs/')
-                executor.execute(
-                    circuit=state['circuit'],
-                    circuit_source=state['raw_text'],
-                    circuit_name=circuit_name,
-                    flagged_gates=[s['gate_id'] for s in (state['suspects'] or [])]
+                workspace = JobWorkspace.create(circuit_name)
+                state['local_dir'] = str(workspace.directory)
+                gates = [s['gate_id'] for s in (state['suspects'] or [])]
+                runner = AtalantaRunner()
+                run = runner.run(
+                    workspace,
+                    state['circuit'].to_bench(),
+                    label='Atalanta',
+                    targeted_faults=build_fault_lines(gates) if gates else None,
+                    targeted_gates=gates,
                 )
-                socketio.emit('terminal_output', '\n[PyATPG] Local Atalanta job completed.\n')
+                coverage = run.results.fault_coverage
+                socketio.emit(
+                    'terminal_output',
+                    f"\n[PyATPG] Atalanta finished. Fault coverage: "
+                    f"{'not reported' if coverage is None else f'{coverage} %'}\n",
+                )
             except Exception as e:
                 socketio.emit('terminal_output', f'\n[PyATPG] Job Failed: {str(e)}\n')
 
         socketio.start_background_task(run_in_background)
-        
+
         return jsonify({
             'status': 'success',
-            'remote_dir': extract_dir,
             'msg': 'Job dispatched. Atalanta is running locally.'
         })
     except Exception as e:

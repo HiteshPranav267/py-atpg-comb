@@ -1,84 +1,145 @@
+"""Command-line entry point for running an Atalanta ATPG analysis."""
 import argparse
-import sys
 import json
-from pyatpg.pipeline import PyATPGPipeline
-from pyatpg.pipeline.phase4_validation import Validator # For print_report reuse
+import sys
+from dataclasses import asdict
 
-def print_report(report):
-    """Print a formatted security audit report to the terminal."""
-    trojans = report.get('trojan_candidates', [])
-    cleared = report.get('cleared_gates', [])
-    unknown = report.get('unknown_gates', [])
-    comparison = report.get('comparison', {})
+from pyatpg.atpg import AnalysisMode, AtpgAnalysisService
 
-    print("\n" + "=" * 60)
-    print("  PYATPG (ATALANTA) SECURITY AUDIT REPORT")
-    print("=" * 60)
+#: Printed in place of any metric Atalanta did not report.
+UNREPORTED = "Not reported by Atalanta"
 
+
+def _fmt(value, suffix=""):
+    return UNREPORTED if value is None else f"{value}{suffix}"
+
+
+def _print_run(run: dict) -> None:
+    results = run["results"]
+    timing = run["timing"]
+    circuit = run["circuit"]
+
+    print(f"\n  {'-' * 62}")
+    print(f"  {run['label']}")
+    print(f"  {'-' * 62}")
+    print(f"    Circuit (as read by Atalanta) : {_fmt(circuit['name'])}")
+    print(f"      Primary inputs / outputs    : {_fmt(circuit['primary_inputs'])} / {_fmt(circuit['primary_outputs'])}")
+    print(f"      Gates / logic depth         : {_fmt(circuit['gates'])} / {_fmt(circuit['logic_depth'])}")
+    print(f"    Fault coverage                : {_fmt(results['fault_coverage'], ' %')}")
+    print(f"    Patterns before compaction    : {_fmt(results['patterns_before_compaction'])}")
+    print(f"    Patterns after compaction     : {_fmt(results['patterns_after_compaction'])}")
+    print(f"    Collapsed faults              : {_fmt(results['collapsed_faults'])}")
+    print(f"    Detected faults               : {_fmt(results['detected_faults'])}")
+    print(f"    Redundant faults              : {_fmt(results['redundant_faults'])}")
+    print(f"    Aborted faults                : {_fmt(results['aborted_faults'])}")
+    print(f"    Backtrackings                 : {_fmt(results['backtrackings'])}")
+    print(f"    Memory used                   : {_fmt(run['memory_mb'], ' MB')}")
+    print(f"    CPU total                     : {_fmt(timing['total'], ' s')}")
+    print(f"    Test vectors generated        : {run['test_vectors']['count']}")
+    print(f"    Undetected faults listed      : {len(run['faults'])}")
+
+
+def print_report(analysis: dict) -> None:
+    print("\n" + "=" * 66)
+    print("  ATALANTA ATPG ANALYSIS")
+    print("=" * 66)
+    print(f"  Mode    : {analysis['mode_label']}")
+    print(f"  Job id  : {analysis['job_id']}")
+
+    circuit = analysis["circuit"]
+    print(f"\n  Circuit : {circuit['name']} ({circuit['format']})")
+    print(f"    Inputs {circuit['primary_inputs']} | Outputs {circuit['primary_outputs']} "
+          f"| Gates {circuit['gates']} | Depth {circuit['logic_depth']}")
+
+    for run in analysis["runs"].values():
+        _print_run(run)
+
+    comparison = analysis.get("comparison")
     if comparison:
-        print(f"\n  Coverage (Targeted): {comparison.get('targeted_coverage', '--')}%")
-        print(f"  Coverage (Baseline): {comparison.get('baseline_coverage', '--')}%")
-        diff = comparison.get('coverage_diff')
-        if diff is not None:
-            arrow = "▲" if diff >= 0 else "▼"
-            print(f"  Delta:               {arrow} {abs(diff)}%")
-        patterns = comparison.get('pattern_reduction_pct')
-        if patterns is not None:
-            print(f"  Pattern Reduction:   {patterns}% fewer vectors")
-        speedup = comparison.get('speedup_factor')
-        if speedup is not None:
-            print(f"  Speedup Factor:      {speedup}x")
+        print(f"\n  {'-' * 62}")
+        print("  Comparison")
+        print(f"  {'-' * 62}")
+        print(f"    Targeted coverage      : {_fmt(comparison['targeted_coverage'], ' %')}")
+        print(f"    Non-targeted coverage  : {_fmt(comparison['non_targeted_coverage'], ' %')}")
+        print(f"    Coverage delta         : {_fmt(comparison['coverage_delta'], ' pts')}")
+        print(f"    Pattern reduction      : {_fmt(comparison['pattern_reduction_pct'], ' %')}")
+        for note in comparison["notes"]:
+            print(f"    Note: {note}")
 
-    print(f"\n  {'─' * 56}")
-    print(f"  TROJAN CANDIDATES: {len(trojans)}")
-    print(f"  {'─' * 56}")
-    for t in trojans:
-        print(f"  ⛔  {t['gate_id']:20s}  →  {t['reason']}")
+    circuit_analysis = analysis.get("circuit_analysis")
+    if circuit_analysis:
+        origin = "language model" if circuit_analysis["source"] == "llm" else "computed structural metrics"
+        print(f"\n  {'-' * 62}")
+        print(f"  Circuit analysis (from {origin})")
+        print(f"  {'-' * 62}")
+        if circuit_analysis["architecture_summary"]:
+            print(f"    {circuit_analysis['architecture_summary']}")
+        for observation in circuit_analysis["observations"]:
+            gates = ", ".join(observation["gates"][:8]) or "-"
+            print(f"\n    * {observation['title']}")
+            print(f"      {observation['detail']}")
+            print(f"      Gates: {gates}")
 
-    print(f"\n  {'─' * 56}")
-    print(f"  CLEARED GATES:     {len(cleared)}")
-    print(f"  {'─' * 56}")
-    for c in cleared:
-        print(f"  ✅  {c['gate_id']:20s}  →  {c['reason']}")
+    correlation = analysis.get("correlation")
+    if correlation:
+        print(f"\n  {'-' * 62}")
+        print("  Correlated insights")
+        print(f"  {'-' * 62}")
+        print(f"    {correlation['summary']}")
+        for item in correlation["correlated"]:
+            print(f"    * {item['statement']}")
 
-    if unknown:
-        print(f"\n  {'─' * 56}")
-        print(f"  NO DATA:           {len(unknown)}")
-        print(f"  {'─' * 56}")
-        for u in unknown:
-            print(f"  ⚠️   {u['gate_id']:20s}  →  {u['reason']}")
+    print("\n" + "=" * 66 + "\n")
 
-    print("\n" + "=" * 60)
-    if trojans:
-        print(f"  🚨 VERDICT: {len(trojans)} HARDWARE TROJAN CANDIDATE(S) IDENTIFIED")
-    else:
-        print("  ✅ VERDICT: NO HARDWARE TROJANS DETECTED")
-    print("=" * 60 + "\n")
 
 def main():
-    parser = argparse.ArgumentParser(description="PyATPG Full Pipeline (Atalanta Local Version)")
-    parser.add_argument("netlist", help="Path to the .v or .bench netlist file")
-    parser.add_argument("--api-key", help="Gemini API Key (offline heuristic if omitted)")
-    parser.add_argument("--patterns", type=int, default=3000,
-                        help="Number of toggle-rate simulation patterns")
-    parser.add_argument("--output", "-o", default="security_report.json",
-                        help="Path to save the final JSON report")
+    parser = argparse.ArgumentParser(
+        description="Run an Atalanta ATPG analysis over a combinational netlist."
+    )
+    parser.add_argument("netlist", help="Path to the .v, .verilog or .bench netlist")
+    parser.add_argument(
+        "--mode",
+        choices=[m.value for m in AnalysisMode],
+        default=AnalysisMode.COMPARE.value,
+        help="Which run(s) to perform (default: compare)",
+    )
+    parser.add_argument("--api-key", help="Gemini API key; structural analysis is used without one")
+    parser.add_argument(
+        "--patterns",
+        type=int,
+        default=3000,
+        help="Random patterns used for toggle-rate profiling (does not affect Atalanta)",
+    )
+    parser.add_argument("--output", "-o", default="atpg_report.json", help="Where to write the JSON report")
     args = parser.parse_args()
 
-    pipeline = PyATPGPipeline(api_key=args.api_key)
-    
     try:
-        report = pipeline.run(args.netlist, patterns=args.patterns)
-    except Exception as e:
-        print(f"❌ Pipeline Execution Failed: {str(e)}")
+        with open(args.netlist, "r", encoding="utf-8") as handle:
+            source_text = handle.read()
+    except OSError as exc:
+        print(f"Could not read {args.netlist}: {exc}")
         sys.exit(1)
-        
-    print_report(report)
-    
-    with open(args.output, 'w') as f:
-        json.dump(report, f, indent=2, default=str)
-        
-    print(f"✅ Full Pipeline Complete. Report saved to {args.output}")
+
+    service = AtpgAnalysisService(api_key=args.api_key)
+    try:
+        analysis = service.run(
+            source_text=source_text,
+            filename=args.netlist,
+            mode=AnalysisMode(args.mode),
+            toggle_patterns=args.patterns,
+            use_llm=bool(args.api_key),
+        )
+    except Exception as exc:  # noqa: BLE001 - surface the real reason and stop
+        print(f"Analysis failed: {exc}")
+        sys.exit(1)
+
+    payload = analysis.to_dict()
+    print_report(payload)
+
+    with open(args.output, "w", encoding="utf-8") as handle:
+        json.dump(payload, handle, indent=2, default=str)
+    print(f"Report written to {args.output}")
+
 
 if __name__ == "__main__":
     main()

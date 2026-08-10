@@ -570,7 +570,9 @@ int main(int argc, char *argv[]) //for windows
 	lfInitTime = lfTime - lfTimePre;
 	lfTimePre = lfTime;
 	lfSimTime1 = 0.0;
+#ifdef DEBUG
 	fprintf(stderr, "end initialazition\n");
+#endif
 	//add some codes to print the names of inputs
 	/*   FILE *fp_input;
 	   fp_input=fopen("s38417tc.input","w");

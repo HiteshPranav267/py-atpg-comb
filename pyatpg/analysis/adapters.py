@@ -1,24 +1,35 @@
 import json
 import os
+from pathlib import Path
 from typing import Dict, Any
 from .models import ATPGResult, GroundTruth
 
 class AtalantaAdapter:
+    """Adapts a real Atalanta log into the evaluation layer's ATPGResult."""
+
     @staticmethod
     def parse_report(report_path: str) -> ATPGResult:
+        """Read an Atalanta stdout log written by a real run.
+
+        Delegates to the same parsers the ATPG pipeline uses, so there is one
+        implementation of "what Atalanta said" rather than two that can drift.
+
+        Raises:
+            FileNotFoundError: if the log does not exist. Previously this
+                returned zeroed results, which is indistinguishable from a
+                genuine 0% coverage run.
         """
-        Parses an Atalanta .txt report.
-        For now, this serves as a stub returning mock data,
-        but it illustrates the decoupling principle.
-        """
-        # In a real implementation, you would parse the Atalanta .rep file to extract:
-        # 1. Total coverage
-        # 2. Total patterns
-        # 3. Per-fault status mapping
+        from pyatpg.atpg.parsing import parse_summary_report
+
+        path = Path(report_path)
+        if not path.is_file():
+            raise FileNotFoundError(f"Atalanta log not found: {report_path}")
+
+        _, _, results, _, _ = parse_summary_report(path.read_text(encoding="utf-8", errors="replace"))
         return ATPGResult(
-            global_coverage=0.0,
-            total_patterns=0,
-            gate_statuses={}
+            global_coverage=results.fault_coverage,
+            total_patterns=results.patterns_after_compaction,
+            gate_statuses={},
         )
 
 class MetadataAdapter:

@@ -38,15 +38,30 @@ Verilog / .bench Netlist
   RankingResult
 ```
 
-### Security-audit pipeline (`pyatpg/pipeline`, used by the desktop app & CLI)
+### ATPG analysis (`pyatpg/atpg`, used by the API & CLI)
 
 ```
-Phase 1 — StructuralAnalyzer   parse + SCOAP/toggle profiling
-Phase 2 — AIPrioritizer        LLM/heuristic gate suspicion ranking (pyatpg/agents)
-Phase 3 — OracleExecutor       AtlantaExporter → run targeted vs. baseline ATPG
-                                (locally, or remotely over SSH via RemoteRunner)
-Phase 4 — Validator            fault-coverage delta → Trojan candidates / cleared gates
+structural.py       parse Verilog/BENCH + SCOAP/toggle profiling
+targeting.py        choose gates for the targeted fault list (LLM or structural heuristic)
+runner.py           execute Atalanta in an isolated job workspace
+parsing.py          read the summary, test vectors and undetected-fault report
+circuit_analyst.py  interpretive circuit analysis (LLM or computed structural)
+correlation.py      overlap between analysis gates and undetected faults
+service.py          orchestration
 ```
+
+Three analysis modes:
+
+| Mode | What runs |
+| ---- | --------- |
+| **LLM Heuristic (Targeted)** | Gates selected by the LLM (or the structural heuristic without an API key), then Atalanta over only those faults |
+| **Atalanta (Non-Targeted)**  | Atalanta over the circuit's full collapsed fault list |
+| **Compare Both**             | Both runs, plus a comparison |
+
+Every ATPG metric shown — fault coverage, pattern counts, collapsed/redundant/aborted
+faults, backtrackings, CPU time — is parsed from Atalanta's own output. A metric Atalanta
+did not report is surfaced as *"Not reported by Atalanta"*, never as `0`. The LLM layer is
+interpretive only and contributes no measurements.
 
 Combinational circuits (no flip-flops) run through ATALANTA directly on `.bench` netlists. Circuits with scan flip-flops are still supported end-to-end by the parser/graph layer (see `benchmarks/*_scan.v`, `test_scan.py`).
 
@@ -87,8 +102,7 @@ py-atpg-comb/
 │   ├── trojan/             # Trojan insertion engine, triggers/payloads, dataset generator
 │   ├── ranking/            # GateRanker interface, heuristic rankers, LLM provider abstraction
 │   ├── agents/             # LLMAnalyzer (AI prioritizer) + RemoteRunner (SSH job dispatch)
-│   ├── exporters/          # AtlantaExporter (.bench/.flt/script generation) + log parser
-│   ├── pipeline/            # 4-phase audit pipeline: structural → AI → oracle → validation
+│   ├── atpg/               # Atalanta integration: runner, parsers, targeting, analysis
 │   ├── evaluation/         # Evaluator, BenchmarkRunner, metrics
 │   ├── api/                # FastAPI app, routes, services, schemas (research platform)
 │   └── cli.py               # `python -m pyatpg` terminal audit report
@@ -99,9 +113,9 @@ py-atpg-comb/
 ├── build_app.py, pyatpg.spec # PyInstaller packaging for the standalone desktop build
 ├── list_ssh.py, download_ssh.py # One-off scripts for pulling benchmark netlists from the lab server
 ├── generate_test.py, get_s35932.py, test_scan.py, test_s35932.py # Ad-hoc scan/trojan experiment scripts
-├── tests/                   # Unit & integration tests (analysis, ranking, pipeline, LLM ranking)
+├── tests/                   # Unit tests + real Atalanta output fixtures (tests/fixtures)
 ├── benchmarks/              # ISCAS85/89 benchmark circuits (.v / .bench)
-├── Atalanta/                # ATALANTA ATPG tool (compiled binary + source)
+├── Atalanta/                # ATALANTA 2.0 C++ source (compiled by build.sh at deploy time)
 └── reference/               # Additional reference benchmark circuits
 ```
 
@@ -169,7 +183,9 @@ python build_app.py   # runs PyInstaller against pyatpg.spec → dist/pyatpg/
 | `GET`  | `/api/benchmark/status/{id}`   | Poll benchmark job status                         |
 | `GET`  | `/api/benchmark/result/{id}`   | Retrieve completed benchmark results              |
 | `POST` | `/api/trojan/generate`         | Generate a Trojan dataset from a base circuit     |
-| `POST` | `/api/atpg/run`                | Run the full structural → AI → ATALANTA → validation pipeline on an uploaded circuit |
+| `GET`  | `/api/atpg/modes`              | List the selectable analysis modes                |
+| `POST` | `/api/atpg/run`                | Run an Atalanta ATPG analysis on an uploaded circuit |
+| `GET`  | `/api/atpg/jobs/{id}/artifacts/{file}` | Download a raw Atalanta artifact (BENCH, fault list, vectors, log) |
 
 Interactive docs available at `http://127.0.0.1:8000/docs`.
 
