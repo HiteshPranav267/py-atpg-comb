@@ -43,6 +43,13 @@ interface AppState {
   setDefaultUseLlm: (v: boolean) => void;
   apiBaseUrlOverride: string | null;
   setApiBaseUrlOverride: (url: string | null) => void;
+  /**
+   * Optional LLM credential sent with each request, so a key can be changed
+   * without restarting the backend. Stored in this browser's localStorage;
+   * when null the backend falls back to its own environment variable.
+   */
+  llmApiKey: string | null;
+  setLlmApiKey: (key: string | null) => void;
 }
 
 export const useAppStore = create<AppState>()(
@@ -90,6 +97,8 @@ export const useAppStore = create<AppState>()(
       setDefaultUseLlm: (v) => set({ defaultUseLlm: v }),
       apiBaseUrlOverride: null,
       setApiBaseUrlOverride: (url) => set({ apiBaseUrlOverride: url }),
+      llmApiKey: null,
+      setLlmApiKey: (key) => set({ llmApiKey: key }),
     }),
     {
       name: 'pyatpg-app-store',
@@ -99,6 +108,7 @@ export const useAppStore = create<AppState>()(
         defaultPatterns: state.defaultPatterns,
         defaultUseLlm: state.defaultUseLlm,
         apiBaseUrlOverride: state.apiBaseUrlOverride,
+        llmApiKey: state.llmApiKey,
       }),
     }
   )

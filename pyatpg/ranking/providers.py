@@ -21,20 +21,26 @@ class LLMProvider(ABC):
 class GeminiProvider(LLMProvider):
     """Implementation of LLMProvider using Google Gemini SDK."""
 
-    def __init__(self, model_name: str = "gemini-flash-latest"):
+    def __init__(self, model_name: str = "gemini-flash-latest", api_key: str | None = None):
         self.model_name = model_name
         self._client = None
-        
+        #: Caller-supplied credential, used ahead of the environment so a key
+        #: can be changed per request without restarting the service.
+        self._api_key = (api_key or "").strip() or None
+
     def _get_client(self):
         try:
             from google import genai
         except ImportError:
             raise ImportError("Please install google-genai to use GeminiProvider")
-            
+
         if not self._client:
-            api_key = os.environ.get("GEMINI_API_KEY")
+            api_key = self._api_key or os.environ.get("GEMINI_API_KEY")
             if not api_key:
-                raise ValueError("GEMINI_API_KEY environment variable is not set.")
+                raise ValueError(
+                    "No Gemini API key available: none was supplied with the request "
+                    "and GEMINI_API_KEY is not set."
+                )
             self._client = genai.Client(api_key=api_key)
         return self._client
 

@@ -21,8 +21,31 @@ from .workspace import JobWorkspace, prune_old_jobs
 GEMINI_KEY_ENV_VAR = "GEMINI_API_KEY"
 
 
+#: Stand-in written over a credential before any text reaches a response.
+_REDACTED = "[redacted]"
+
+
 class NoTargetableGates(RuntimeError):
     """Targeting selected no gates, so a targeted run is not meaningful."""
+
+
+def _redact_secret(analysis: "AtpgAnalysis", secret: str) -> None:
+    """Remove a credential from every free-text field of a result."""
+
+    def scrub(value: str) -> str:
+        return value.replace(secret, _REDACTED) if secret in value else value
+
+    analysis.notes = [scrub(note) for note in analysis.notes]
+    if analysis.targeting.get("notes"):
+        analysis.targeting["notes"] = [scrub(n) for n in analysis.targeting["notes"]]
+    if analysis.circuit_analysis is not None:
+        analysis.circuit_analysis.reasoning = [
+            scrub(r) for r in analysis.circuit_analysis.reasoning
+        ]
+        if analysis.circuit_analysis.unavailable_reason:
+            analysis.circuit_analysis.unavailable_reason = scrub(
+                analysis.circuit_analysis.unavailable_reason
+            )
 
 
 @dataclass
@@ -67,10 +90,20 @@ class AtpgAnalysisService:
         self.runner = runner or AtalantaRunner()
         self._explicit_api_key = api_key
 
-    def _api_key(self, use_llm: bool) -> str | None:
+    def _api_key(self, use_llm: bool, request_key: str | None = None) -> str | None:
+        """Resolve the credential for this request.
+
+        A key supplied with the request wins, so it can be changed without
+        restarting the service; otherwise the deployment's environment
+        variable is used. Never logged or echoed back in a response.
+        """
         if not use_llm:
             return None
-        return self._explicit_api_key or os.environ.get(GEMINI_KEY_ENV_VAR) or None
+        candidates = (request_key, self._explicit_api_key, os.environ.get(GEMINI_KEY_ENV_VAR))
+        for candidate in candidates:
+            if candidate and candidate.strip():
+                return candidate.strip()
+        return None
 
     def run(
         self,
@@ -79,6 +112,7 @@ class AtpgAnalysisService:
         mode: AnalysisMode = AnalysisMode.COMPARE,
         toggle_patterns: int = 3000,
         use_llm: bool = True,
+        api_key: str | None = None,
     ) -> AtpgAnalysis:
         """Execute an analysis.
 
@@ -92,6 +126,8 @@ class AtpgAnalysisService:
             use_llm: whether to consult the model for targeting and analysis.
                 Both layers fall back to deterministic structural methods
                 when this is False or no key is configured.
+            api_key: credential for this request only, taking precedence over
+                the deployment's environment variable.
         """
         prune_old_jobs()
 
@@ -103,7 +139,7 @@ class AtpgAnalysisService:
             )
 
         profile = profile_circuit(parsed, toggle_patterns=toggle_patterns)
-        api_key = self._api_key(use_llm)
+        api_key = self._api_key(use_llm, request_key=api_key)
         workspace = JobWorkspace.create(parsed.name)
         bench_text = parsed.to_bench()
 
@@ -173,6 +209,12 @@ class AtpgAnalysisService:
         analysis.correlation = correlate(
             analysis.circuit_analysis, list(analysis.runs.values())
         )
+
+        # Provider errors are surfaced verbatim to explain a fallback. Scrub
+        # the credential from them centrally, so no provider that happens to
+        # echo the key back can put it in a response.
+        if api_key:
+            _redact_secret(analysis, api_key)
         return analysis
 
     @staticmethod

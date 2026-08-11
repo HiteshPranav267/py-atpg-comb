@@ -18,12 +18,24 @@ class RankingService:
         return list(_RANKER_REGISTRY.keys())
         
     @staticmethod
-    def get_ranker(name: str) -> GateRanker:
+    def get_ranker(name: str, api_key: str | None = None) -> GateRanker:
+        """Instantiate a ranker by name.
+
+        LLM-backed rankers receive the request's credential so a key can be
+        supplied per call rather than only through the environment.
+        """
         if name not in _RANKER_REGISTRY:
             raise ValueError(f"Unknown ranker: {name}")
-        return _RANKER_REGISTRY[name]()
-        
+        ranker_cls = _RANKER_REGISTRY[name]
+        if ranker_cls is LLMRanker and api_key:
+            from pyatpg.ranking.providers import GeminiProvider
+
+            return LLMRanker(provider=GeminiProvider(api_key=api_key))
+        return ranker_cls()
+
     @staticmethod
-    def rank(feature_set: FeatureSet, ranker_name: str) -> RankingResult:
-        ranker = RankingService.get_ranker(ranker_name)
+    def rank(
+        feature_set: FeatureSet, ranker_name: str, api_key: str | None = None
+    ) -> RankingResult:
+        ranker = RankingService.get_ranker(ranker_name, api_key=api_key)
         return ranker.rank(feature_set)

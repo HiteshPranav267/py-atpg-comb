@@ -50,6 +50,9 @@ class RankingResultSchema(BaseModel):
 class RankingRequestSchema(BaseModel):
     feature_set: FeatureSetSchema
     ranker_name: str
+    #: Optional per-request credential for LLM-backed rankers. Applies to this
+    #: call only and is never persisted or echoed back.
+    api_key: str | None = None
 
 
 class EvaluationResultSchema(BaseModel):

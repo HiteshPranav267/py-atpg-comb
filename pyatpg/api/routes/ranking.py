@@ -52,7 +52,7 @@ def run_ranking(req: RankingRequestSchema):
             extraction_time_ms=req.feature_set.extraction_time_ms,
         )
 
-        result = RankingService.rank(fs, req.ranker_name)
+        result = RankingService.rank(fs, req.ranker_name, api_key=req.api_key)
 
         return RankingResultSchema(
             circuit_name=result.circuit_name,

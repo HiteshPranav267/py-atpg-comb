@@ -55,8 +55,14 @@ async def run_atpg(
     mode: str = Form(AnalysisMode.COMPARE.value),
     patterns: int = Form(3000),
     use_llm: bool = Form(True),
+    api_key: str = Form(""),
 ) -> Dict[str, Any]:
-    """Run an Atalanta ATPG analysis over an uploaded circuit."""
+    """Run an Atalanta ATPG analysis over an uploaded circuit.
+
+    `api_key` is optional and applies to this request only, letting a
+    credential be changed without restarting the service. It is never
+    logged, stored with the job, or returned in the response.
+    """
     try:
         selected_mode = AnalysisMode(mode)
     except ValueError:
@@ -79,6 +85,7 @@ async def run_atpg(
             mode=selected_mode,
             toggle_patterns=patterns,
             use_llm=use_llm,
+            api_key=api_key or None,
         )
     except (ValueError, NoTargetableGates) as exc:
         raise HTTPException(status_code=400, detail=str(exc))

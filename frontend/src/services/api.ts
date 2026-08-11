@@ -24,6 +24,15 @@ function resolveBaseRoot(): string {
   return root.replace(/\/+$/, '');
 }
 
+/**
+ * The LLM key saved in this browser, if any. Returning undefined lets the
+ * backend fall back to its own environment variable rather than being sent
+ * an empty string.
+ */
+function llmApiKey(): string | undefined {
+  return useAppStore.getState().llmApiKey?.trim() || undefined;
+}
+
 const apiClient = axios.create({
   headers: {
     'Content-Type': 'application/json',
@@ -75,7 +84,7 @@ export const api = {
   },
 
   runRanking: async (req: RankingRequest): Promise<RankingResult> => {
-    const res = await apiClient.post('/ranking/run', req);
+    const res = await apiClient.post('/ranking/run', { ...req, api_key: llmApiKey() });
     return res.data;
   },
 
@@ -136,6 +145,8 @@ export const api = {
     formData.append('mode', params.mode ?? 'compare');
     formData.append('patterns', String(params.patterns ?? 3000));
     formData.append('use_llm', String(params.use_llm ?? true));
+    const key = llmApiKey();
+    if (key) formData.append('api_key', key);
     const res = await apiClient.post('/atpg/run', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
       // Two Atalanta runs plus toggle simulation on a large circuit.

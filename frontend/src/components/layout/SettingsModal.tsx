@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { X, Trash2, RotateCcw } from 'lucide-react';
+import { X, Trash2, RotateCcw, Eye, EyeOff } from 'lucide-react';
 import { useAppStore } from '@/store';
 
 export function SettingsModal({ onClose }: { onClose: () => void }) {
@@ -7,10 +7,20 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
     defaultPatterns, setDefaultPatterns,
     defaultUseLlm, setDefaultUseLlm,
     apiBaseUrlOverride, setApiBaseUrlOverride,
+    llmApiKey, setLlmApiKey,
   } = useAppStore();
 
   const [urlDraft, setUrlDraft] = useState(apiBaseUrlOverride ?? '');
+  const [keyDraft, setKeyDraft] = useState(llmApiKey ?? '');
+  const [keyVisible, setKeyVisible] = useState(false);
+  const [keySaved, setKeySaved] = useState(false);
   const [cleared, setCleared] = useState(false);
+
+  const handleSaveKey = () => {
+    setLlmApiKey(keyDraft.trim() || null);
+    setKeySaved(true);
+    setTimeout(() => setKeySaved(false), 2000);
+  };
 
   // Distinguished so the UI can say which of the two a URL came from: a stale
   // build-time value looks identical to a saved override otherwise.
@@ -115,6 +125,58 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
                 </>
               ) : (
                 <>no build default set — requests go to this site's own origin under /api.</>
+              )}
+            </p>
+          </section>
+
+          <section className="flex flex-col gap-2">
+            <h3 className="text-sm font-semibold">LLM API Key</h3>
+            <p className="text-xs text-muted-foreground">
+              Used for LLM-based gate targeting, circuit analysis and the LLM ranker. Applies
+              immediately, without redeploying the backend. Leave blank to use the key
+              configured on the server.
+            </p>
+            <div className="flex gap-2">
+              <input
+                type={keyVisible ? 'text' : 'password'}
+                value={keyDraft}
+                onChange={(e) => setKeyDraft(e.target.value)}
+                placeholder="AIza..."
+                autoComplete="off"
+                spellCheck={false}
+                className="flex-1 bg-background border border-border rounded px-3 py-1.5 text-sm font-mono focus:border-primary focus:outline-none"
+              />
+              <button
+                onClick={() => setKeyVisible((v) => !v)}
+                title={keyVisible ? 'Hide' : 'Show'}
+                className="text-muted-foreground hover:text-foreground px-2"
+              >
+                {keyVisible ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+              </button>
+              <button
+                onClick={handleSaveKey}
+                className="bg-primary text-primary-foreground px-3 py-1.5 rounded text-sm font-medium hover:bg-primary/90"
+              >
+                {keySaved ? 'Saved' : 'Save'}
+              </button>
+              {llmApiKey && (
+                <button
+                  onClick={() => { setKeyDraft(''); setLlmApiKey(null); }}
+                  title="Remove the stored key"
+                  className="text-muted-foreground hover:text-foreground px-2"
+                >
+                  <RotateCcw className="w-4 h-4" />
+                </button>
+              )}
+            </div>
+            <p className="text-xs text-muted-foreground">
+              {llmApiKey ? (
+                <>
+                  A key is stored in this browser and sent with each request. Note it is kept in
+                  this browser's local storage in plain text — clear it on a shared machine.
+                </>
+              ) : (
+                <>No key stored here; requests use whatever the server has configured.</>
               )}
             </p>
           </section>
