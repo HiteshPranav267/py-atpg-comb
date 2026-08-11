@@ -15,16 +15,21 @@ rm -f atalanta ./*.o
 make atalanta CFLAGS="-O -g -static"
 
 echo "--- Atalanta build verification ---"
-file atalanta
+file atalanta || true
 
 # -static can silently fall back to dynamic linking when a static libc is
 # unavailable, which would reintroduce the glibc coupling. Fail the build
 # rather than discover it on the first request.
-if ldd atalanta 2>&1 | grep -qi "not a dynamic executable"; then
+#
+# ldd exits non-zero precisely when the binary is NOT dynamic, which is the
+# outcome we want, so its status is captured rather than piped: under
+# `set -o pipefail` a successful static build would otherwise abort here.
+ldd_output="$(ldd atalanta 2>&1 || true)"
+if printf '%s' "$ldd_output" | grep -qi "not a dynamic executable"; then
     echo "OK: statically linked."
 else
     echo "FATAL: atalanta is not statically linked; it would depend on the runtime image's glibc."
-    ldd atalanta || true
+    printf '%s\n' "$ldd_output"
     exit 1
 fi
 
