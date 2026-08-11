@@ -138,7 +138,7 @@ pip install -r requirements.txt
 
 ```bash
 # Backend
-uvicorn pyatpg.api.app:app --reload
+python -m uvicorn pyatpg.api.app:app --reload
 # → http://127.0.0.1:8000  (docs at /docs)
 
 # Frontend (separate terminal)
