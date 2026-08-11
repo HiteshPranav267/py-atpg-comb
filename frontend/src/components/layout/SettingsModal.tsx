@@ -12,7 +12,10 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
   const [urlDraft, setUrlDraft] = useState(apiBaseUrlOverride ?? '');
   const [cleared, setCleared] = useState(false);
 
-  const effectiveBase = apiBaseUrlOverride || import.meta.env.VITE_API_URL || '(same-origin, proxied via /api)';
+  // Distinguished so the UI can say which of the two a URL came from: a stale
+  // build-time value looks identical to a saved override otherwise.
+  const buildTimeBase: string | undefined = import.meta.env.VITE_API_URL;
+  const effectiveBase = apiBaseUrlOverride || buildTimeBase || '(same-origin, proxied via /api)';
 
   const handleSaveUrl = () => {
     const trimmed = urlDraft.trim().replace(/\/$/, '');
@@ -100,6 +103,20 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
               )}
             </div>
             <p className="text-xs text-muted-foreground font-mono mt-1">Currently: {effectiveBase}</p>
+            <p className="text-xs text-muted-foreground mt-1">
+              Source:{' '}
+              {apiBaseUrlOverride ? (
+                <>saved in this browser — clearing it falls back to the build default below.</>
+              ) : buildTimeBase ? (
+                <>
+                  baked in when the frontend was built (<span className="font-mono">VITE_API_URL</span>).
+                  Changing it requires updating that variable and redeploying the frontend; a
+                  value entered above only overrides it in this browser.
+                </>
+              ) : (
+                <>no build default set — requests go to this site's own origin under /api.</>
+              )}
+            </p>
           </section>
 
           <section className="flex flex-col gap-2">
