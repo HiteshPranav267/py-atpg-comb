@@ -60,6 +60,7 @@
 	#pragma comment(lib, "psapi.lib")
 #else
 	#include <sys/times.h>
+	#include <sys/resource.h>
 #endif
 #include <time.h>
 #include <stdlib.h>
@@ -744,43 +745,49 @@ void getTime(double *usertime, double *systemtime, double *total)
 	*usertime = *total;
 	*systemtime = *total;
 #else
-	struct tms timesbuffer;
-	time_t totaltime;
-	time_t utime;
-	time_t stime;
-	
-	times(&timesbuffer);
-	utime = timesbuffer.tms_utime;
-	stime = timesbuffer.tms_stime;
-	totaltime = timesbuffer.tms_utime + timesbuffer.tms_stime; /* In 60th seconds */
-	*usertime = (double) utime / 60.0;
-	*systemtime = (double) stime / 60.0;
-	*total = (double) totaltime / 60.0;
+	/* times() reports whole clock ticks. Linux ticks at 100Hz, so any run
+	   shorter than 10ms truncated to 0 and every CPU time printed as 0.000;
+	   the divisor of 60 also assumed the historic 60Hz tick rate rather than
+	   sysconf(_SC_CLK_TCK). getrusage gives the same cumulative process CPU
+	   time with microsecond resolution. */
+	struct rusage usage;
+
+	getrusage(RUSAGE_SELF, &usage);
+	*usertime = (double) usage.ru_utime.tv_sec + (double) usage.ru_utime.tv_usec / 1000000.0;
+	*systemtime = (double) usage.ru_stime.tv_sec + (double) usage.ru_stime.tv_usec / 1000000.0;
+	*total = *usertime + *systemtime;
 #endif // WIN32
 }
 
 double getMemory()
 {
-	double fMaxUse;
+	double fMaxUse = 0.0;
 
 #ifdef WIN32
-	//½ø³Ì¾ä±ú
+	//ï¿½ï¿½ï¿½Ì¾ï¿½ï¿½
 	HANDLE hProcess = GetCurrentProcess();
 	//HANDLE hProcess = OpenProcess(PROCESS_QUERY_INFORMATION|PROCESS_VM_READ, FALSE, dwProcessId);
 	if (NULL != hProcess)
 	{
-		//ÄÚ´æÇé¿ö
+		//ï¿½Ú´ï¿½ï¿½ï¿½ï¿½
 		PROCESS_MEMORY_COUNTERS pmc;
 		if (GetProcessMemoryInfo(hProcess, &pmc, sizeof(pmc)))
 		{
 			//double fCurUse = double(pmc.PeakWorkingSetSize / (1024.0*1024.0));
 			fMaxUse = (double) (pmc.WorkingSetSize / (1024.0 * 1024.0));
-			//TRACE("[info] Ö÷³ÌÐòÄÚ´æÊ¹ÓÃÇé¿ö£¬µ±Ç°ËùÓÃÄÚ´æ£º%.4fM£¬×î´óÔøÓÃ£º%.4fM\r\n", fCurUse, fMaxUse);
+			//TRACE("[info] ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ú´ï¿½Ê¹ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ç°ï¿½ï¿½ï¿½ï¿½ï¿½Ú´æ£º%.4fMï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ã£ï¿½%.4fM\r\n", fCurUse, fMaxUse);
 		}
 		CloseHandle(hProcess);
 	}
 	return fMaxUse;
 #else
+	/* This branch previously returned fMaxUse uninitialised, which is
+	   undefined behaviour and printed as 0.000 MB. ru_maxrss is the peak
+	   resident set size, in kilobytes on Linux. */
+	struct rusage usage;
+
+	getrusage(RUSAGE_SELF, &usage);
+	fMaxUse = (double) usage.ru_maxrss / 1024.0;
 	return fMaxUse;
 #endif // WIN32
 }
