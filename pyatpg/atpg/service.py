@@ -139,6 +139,12 @@ class AtpgAnalysisService:
             )
 
         profile = profile_circuit(parsed, toggle_patterns=toggle_patterns)
+        if not profile.statistics.get("is_dag", True):
+            raise ValueError(
+                "This tool analyses combinational circuits; the netlist contains a "
+                "combinational feedback loop (it is not a DAG). Atalanta cannot "
+                "levelize or generate patterns for it."
+            )
         api_key = self._api_key(use_llm, request_key=api_key)
         workspace = JobWorkspace.create(parsed.name)
         bench_text = parsed.to_bench()
