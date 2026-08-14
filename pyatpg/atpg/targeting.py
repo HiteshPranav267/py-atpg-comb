@@ -19,9 +19,22 @@ except ImportError:  # pragma: no cover
 #: Transient Gemini failures worth retrying.
 _RETRYABLE_MARKERS = ("503", "UNAVAILABLE", "429", "RESOURCE_EXHAUSTED", "500", "INTERNAL")
 
-#: Cap on how many gates the targeted fault list may contain. Atalanta is
-#: fast, but an unbounded list defeats the point of targeting.
+#: Cap on how many gates the targeted fault list may contain, used verbatim
+#: when a caller passes an explicit ``max_gates``. Automatic selection (the
+#: default) instead scales with circuit size -- see ``_scaled_max_gates`` --
+#: because a fixed cap becomes a shrinking fraction of the circuit's faults
+#: as the circuit grows, dragging the targeted run's own fault coverage down
+#: for reasons unrelated to how well the gates were chosen.
 MAX_TARGET_GATES = 30
+
+#: Share of profiled gates the automatic cap targets.
+_TARGET_GATE_FRACTION = 0.25
+
+#: Floor and ceiling around that fraction, so tiny circuits still get a
+#: meaningful fault list and huge circuits don't turn a "targeted" run into
+#: a full one.
+_MIN_TARGET_GATES = 15
+_MAX_TARGET_GATES_CEILING = 200
 
 #: Structural thresholds for the offline selector. These mirror the
 #: Trust-Hub style heuristics: rarely-toggling, multi-input, hard-to-observe.
@@ -47,19 +60,28 @@ class FaultTargetSelector:
     configured, so the targeted mode works without credentials.
     """
 
-    def __init__(self, api_key: str | None = None, max_gates: int = MAX_TARGET_GATES):
+    def __init__(self, api_key: str | None = None, max_gates: int | None = None):
+        #: None means "scale with circuit size" (the default); an explicit
+        #: value pins the cap regardless of how many gates are profiled.
         self.max_gates = max_gates
         self.api_key = api_key
         if api_key and genai is None:
             self.api_key = None
 
+    def _effective_max_gates(self, profiles: list[dict[str, Any]]) -> int:
+        if self.max_gates is not None:
+            return self.max_gates
+        scaled = round(len(profiles) * _TARGET_GATE_FRACTION)
+        return max(_MIN_TARGET_GATES, min(_MAX_TARGET_GATES_CEILING, scaled))
+
     def select(self, profiles: list[dict[str, Any]], summary: str = "") -> TargetSelection:
+        max_gates = self._effective_max_gates(profiles)
         if self.api_key:
             try:
-                gates = self._select_with_llm(profiles, summary)
+                gates = self._select_with_llm(profiles, summary, max_gates)
                 valid = self._keep_known_gates(gates, profiles)
                 selection = TargetSelection(
-                    gates=valid[: self.max_gates],
+                    gates=valid[:max_gates],
                     strategy="llm",
                     used_llm=True,
                 )
@@ -73,17 +95,18 @@ class FaultTargetSelector:
                         "Model returned no usable gate ids; fell back to the "
                         "structural heuristic."
                     )
-                    return self._structural_selection(profiles, selection.notes)
+                    return self._structural_selection(profiles, max_gates, selection.notes)
                 return selection
             except Exception as exc:  # noqa: BLE001 - degrade, don't fail the run
                 return self._structural_selection(
                     profiles,
+                    max_gates,
                     [f"LLM targeting unavailable ({exc}); used the structural heuristic."],
                 )
-        return self._structural_selection(profiles, [])
+        return self._structural_selection(profiles, max_gates, [])
 
     def _structural_selection(
-        self, profiles: list[dict[str, Any]], notes: list[str]
+        self, profiles: list[dict[str, Any]], max_gates: int, notes: list[str]
     ) -> TargetSelection:
         ranked = [
             p
@@ -99,7 +122,7 @@ class FaultTargetSelector:
             )
         )
         return TargetSelection(
-            gates=[p["gate_id"] for p in ranked[: self.max_gates]],
+            gates=[p["gate_id"] for p in ranked[:max_gates]],
             strategy="structural-heuristic",
             used_llm=False,
             notes=notes,
@@ -133,7 +156,9 @@ class FaultTargetSelector:
                 kept.append(clean)
         return kept
 
-    def _select_with_llm(self, profiles: list[dict[str, Any]], summary: str) -> list[str]:
+    def _select_with_llm(
+        self, profiles: list[dict[str, Any]], summary: str, max_gates: int
+    ) -> list[str]:
         client = genai.Client(api_key=self.api_key)
 
         ordered = sorted(
@@ -151,7 +176,7 @@ You are assisting with test-pattern generation for a combinational circuit.
 Select the gates whose stuck-at faults are most worth targeting explicitly:
 rarely-toggling, high fan-in, or hard to observe (high SCOAP CO).
 
-Return at most {self.max_gates} gate ids, comma-separated, nothing else.
+Return at most {max_gates} gate ids, comma-separated, nothing else.
 
 Gate profiles:
 {profile_block}

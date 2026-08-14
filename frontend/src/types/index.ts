@@ -195,6 +195,7 @@ export interface RunComparison {
   targeted_coverage: number | null;
   non_targeted_coverage: number | null;
   coverage_delta: number | null;
+  targeted_circuit_wide_coverage: number | null;
   targeted_patterns: number | null;
   non_targeted_patterns: number | null;
   pattern_reduction_pct: number | null;

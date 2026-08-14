@@ -170,6 +170,7 @@ class RunComparison:
     targeted_coverage: float | None = None
     non_targeted_coverage: float | None = None
     coverage_delta: float | None = None
+    targeted_circuit_wide_coverage: float | None = None
     targeted_patterns: int | None = None
     non_targeted_patterns: int | None = None
     pattern_reduction_pct: float | None = None
@@ -199,13 +200,29 @@ def build_comparison(targeted: AtalantaRun, non_targeted: AtalantaRun) -> RunCom
     if t_pat is not None and n_pat is not None and n_pat > 0:
         comparison.pattern_reduction_pct = round(((n_pat - t_pat) / n_pat) * 100, 2)
 
+    # t_cov alone can't be read against n_cov: it's detected/collapsed over
+    # only the targeted gates' faults, while n_cov is over the whole circuit.
+    # Re-express the targeted run's detections as a share of the circuit's
+    # full collapsed fault list, so it can be read alongside n_cov honestly
+    # (it will typically be small -- targeting a handful of gates was never
+    # meant to approach full-circuit coverage on its own).
+    t_detected = targeted.results.detected_faults
+    n_collapsed = non_targeted.results.collapsed_faults
+    if t_detected is not None and n_collapsed:
+        comparison.targeted_circuit_wide_coverage = round(
+            (t_detected / n_collapsed) * 100, 3
+        )
+
     # The two runs target different fault sets, so coverage percentages are
     # not measuring the same denominator. Say so rather than letting the
     # numbers imply a like-for-like improvement.
     comparison.notes.append(
         "Coverage percentages are relative to each run's own fault list: the "
         "targeted run collapses only faults on selected gates, the "
-        "non-targeted run collapses the whole circuit. Compare them as "
-        "different experiments, not as a single improving metric."
+        "non-targeted run collapses the whole circuit. Compare targeted_coverage "
+        "and non_targeted_coverage as different experiments, not as a single "
+        "improving metric. targeted_circuit_wide_coverage instead expresses the "
+        "targeted run's detections as a share of the whole circuit's collapsed "
+        "faults, for an apples-to-apples comparison against non_targeted_coverage."
     )
     return comparison

@@ -26,6 +26,10 @@ export function ComparisonPanel({ comparison }: { comparison: RunComparison }) {
           label="Pattern reduction"
           value={metric(comparison.pattern_reduction_pct, { suffix: ' %' })}
         />
+        <Stat
+          label="Targeted, whole-circuit share"
+          value={metric(comparison.targeted_circuit_wide_coverage, { suffix: ' %' })}
+        />
       </div>
 
       <div className="mt-4">
