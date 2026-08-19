@@ -23,7 +23,12 @@ _ARTIFACT_MEDIA_TYPE = "text/plain; charset=utf-8"
 
 @router.get("/modes")
 def list_modes() -> list[Dict[str, str]]:
-    """The selectable analysis modes and their display labels."""
+    """The selectable analysis modes and their display labels.
+
+    These modes apply to combinational circuits (run through Atalanta). A
+    circuit with flip-flops bypasses mode selection entirely -- POST /run
+    routes it to the native sequential ATPG engine automatically.
+    """
     return [
         {
             "value": mode.value,
@@ -57,7 +62,13 @@ async def run_atpg(
     use_llm: bool = Form(True),
     api_key: str = Form(""),
 ) -> Dict[str, Any]:
-    """Run an Atalanta ATPG analysis over an uploaded circuit.
+    """Run an ATPG analysis over an uploaded circuit.
+
+    Combinational circuits run through Atalanta; circuits with flip-flops
+    are routed automatically to the native sequential (time-frame-expansion)
+    engine -- the response's `sequential` field is populated instead of
+    `runs`/`comparison`/`targeting` in that case. `mode`/`patterns` only
+    apply to the combinational path.
 
     `api_key` is optional and applies to this request only, letting a
     credential be changed without restarting the service. It is never

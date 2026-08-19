@@ -21,6 +21,8 @@ class CircuitGraph:
         # Cached analysis results
         self._levels = None
         self._scoap = None
+        self._topo = None
+        self._topo_computed = False  # distinguishes "not yet computed" from "no valid order"
 
     # ------------------------------------------------------------------ build
     def _build(self):
@@ -84,16 +86,50 @@ class CircuitGraph:
     def _as_set(collection):
         return set(str(x) for x in collection)
 
+    # ---------------------------------------------------- schedulable order
+    def _topo_order(self):
+        """Topological order that treats DFF/SDFF nodes as sources.
+
+        A flip-flop's D->Q edge represents a clock-edge state transition,
+        not a same-cycle combinational dependency. Left in, it turns
+        ordinary register feedback (state feeds logic that drives that same
+        register's own D input -- true of nearly every real sequential
+        circuit) into a graph cycle, which silently breaks
+        ``nx.topological_sort`` here and made compute_levels()/
+        compute_scoap() fall back to meaningless values (all-zero levels;
+        an arbitrary, non-topological SCOAP pass) for any such circuit. This
+        mirrors the fix in ``pyatpg.seq.timeframe.is_combinational_part_acyclic``.
+        """
+        if self._topo_computed:
+            return self._topo
+        trimmed = self.G.copy()
+        for node, data in self.G.nodes(data=True):
+            if data.get('node_type') in ('DFF', 'SDFF'):
+                for pred in list(trimmed.predecessors(node)):
+                    trimmed.remove_edge(pred, node)
+        try:
+            self._topo = list(nx.topological_sort(trimmed))
+        except nx.NetworkXUnfeasible:
+            self._topo = None  # a real (non-clocked) combinational cycle remains
+        self._topo_computed = True
+        return self._topo
+
+    def is_schedulable(self):
+        """True if every gate can be levelized once flip-flops are treated
+        as free state sources -- i.e. no asynchronous feedback loop."""
+        return self._topo_order() is not None
+
     # --------------------------------------------------------------- levels
     def compute_levels(self):
         if self._levels:
             return self._levels
         levels = {}
-        try:
-            for node in nx.topological_sort(self.G):
+        topo = self._topo_order()
+        if topo is not None:
+            for node in topo:
                 preds = list(self.G.predecessors(node))
                 levels[node] = (max(levels.get(p, 0) for p in preds) + 1) if preds else 0
-        except nx.NetworkXUnfeasible:
+        else:
             for node in self.G.nodes:
                 levels[node] = 0
         self._levels = levels
@@ -107,10 +143,7 @@ class CircuitGraph:
         cc0, cc1, co = {}, {}, {}
 
         # -- forward pass (controllability) --
-        try:
-            topo = list(nx.topological_sort(self.G))
-        except nx.NetworkXUnfeasible:
-            topo = list(self.G.nodes)
+        topo = self._topo_order() or list(self.G.nodes)
 
         for node in topo:
             data = self.G.nodes[node]
@@ -325,7 +358,12 @@ class CircuitGraph:
             'max_fan_out': max(fan_outs) if fan_outs else 0,
             'avg_fan_in': round(sum(fan_ins) / len(fan_ins), 2) if fan_ins else 0,
             'avg_fan_out': round(sum(fan_outs) / len(fan_outs), 2) if fan_outs else 0,
-            'is_dag': nx.is_directed_acyclic_graph(self.G),
+            # Whether every gate is schedulable within one time frame, i.e.
+            # no asynchronous feedback loop -- NOT nx.is_directed_acyclic_graph
+            # on the raw graph, which counts ordinary register feedback
+            # (present in almost every real sequential circuit) as a cycle.
+            # See CircuitGraph._topo_order.
+            'is_dag': self.is_schedulable(),
         }
 
     # ------------------------------------------------ per-gate features

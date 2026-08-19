@@ -1,12 +1,12 @@
 # PyATPG — Hardware Trojan Localization Framework
 
-> A modular Python framework for Hardware Trojan localization using ATPG testability metrics, structural circuit analysis, heuristic & LLM-based gate ranking — shipped as both a research benchmarking platform (FastAPI + React) and a standalone security-audit desktop app (Flask + pywebview) built on the ATALANTA ATPG engine.
+> A modular Python framework for Hardware Trojan localization using ATPG testability metrics, structural circuit analysis, heuristic & LLM-based gate ranking — shipped as both a research benchmarking platform (FastAPI + React) and a standalone security-audit desktop app (Flask + pywebview). Combinational circuits run through the ATALANTA ATPG engine; circuits with flip-flops run through a native sequential ATPG engine (time-frame expansion + PODEM + deterministic multi-cycle fault simulation), both with optional context-reduced LLM assistance.
 
 ---
 
 ## Overview
 
-PyATPG identifies Hardware Trojans inside gate-level Verilog/`.bench` netlists. It combines classic EDA testability analysis (SCOAP, toggle simulation) with a pluggable ranking engine (deterministic heuristics, statistical methods, LLM-based reasoning), and can drive ATALANTA — either locally or on a remote lab server over SSH — to generate targeted test patterns for suspect gates.
+PyATPG identifies Hardware Trojans inside gate-level Verilog/`.bench` netlists, **combinational or sequential**. It combines classic EDA testability analysis (SCOAP, toggle simulation) with a pluggable ranking engine (deterministic heuristics, statistical methods, LLM-based reasoning), and generates targeted test patterns for suspect gates — via ATALANTA (locally or on a remote lab server over SSH) for combinational circuits, and via a native sequential ATPG engine (`pyatpg/seq`) for circuits with flip-flops, since ATALANTA cannot levelize state-holding logic.
 
 The repo currently contains **two applications** built on the same `pyatpg` core:
 
@@ -38,19 +38,26 @@ Verilog / .bench Netlist
   RankingResult
 ```
 
-### ATPG analysis (`pyatpg/atpg`, used by the API & CLI)
+### ATPG analysis (`pyatpg/atpg` + `pyatpg/seq`, used by the API & CLI)
+
+`AtpgAnalysisService.run()` (`pyatpg/atpg/service.py`) is the single entry point for both
+paths — it routes automatically based on whether the parsed circuit has flip-flops:
 
 ```
-structural.py       parse Verilog/BENCH + SCOAP/toggle profiling
-targeting.py        choose gates for the targeted fault list (LLM or structural heuristic)
-runner.py           execute Atalanta in an isolated job workspace
-parsing.py          read the summary, test vectors and undetected-fault report
-circuit_analyst.py  interpretive circuit analysis (LLM or computed structural)
-correlation.py      overlap between analysis gates and undetected faults
-service.py          orchestration
+Combinational (no flip-flops)          Sequential (has flip-flops)
+──────────────────────────────         ─────────────────────────────────
+pyatpg/atpg/                           pyatpg/seq/
+  structural.py   parse + SCOAP/toggle   timeframe.py   time-frame expansion (iterative array)
+  targeting.py    LLM/heuristic gates    dalgebra.py    5-value (0,1,X,D,D') logic
+  runner.py       run Atalanta           podem.py       PODEM search over the unrolled netlist
+  parsing.py      read Atalanta output   simulator.py   deterministic multi-cycle fault sim (source of truth)
+  circuit_analyst.py  LLM/structural     faultsim.py    checkpoint fault list + coverage calculation
+  correlation.py  gates vs. faults       generator.py   random-fill / mutation candidates
+                                         engine.py      orchestrates candidates -> minimal test-sequence set
+                                         service.py     orchestration (mirrors atpg/service.py)
 ```
 
-Three analysis modes:
+Combinational analysis modes:
 
 | Mode | What runs |
 | ---- | --------- |
@@ -63,7 +70,15 @@ faults, backtrackings, CPU time — is parsed from Atalanta's own output. A metr
 did not report is surfaced as *"Not reported by Atalanta"*, never as `0`. The LLM layer is
 interpretive only and contributes no measurements.
 
-Combinational circuits (no flip-flops) run through ATALANTA directly on `.bench` netlists. Circuits with scan flip-flops are still supported end-to-end by the parser/graph layer (see `benchmarks/*_scan.v`, `test_scan.py`).
+**Sequential circuits** (any flip-flop, scan or not) never reach Atalanta — it is a purely
+combinational engine and cannot levelize state-holding logic. They are routed to `pyatpg/seq`
+instead, which unrolls the circuit into time frames, searches for input sequences that
+activate and propagate each stuck-at fault (PODEM), and — critically — verifies every
+candidate against a real, reset-driven, multi-cycle deterministic simulator before counting
+it as detected. That simulator, never PODEM and never the LLM layer, is the sole source of
+fault coverage. A circuit is only rejected if it has an asynchronous feedback loop not broken
+by a clocked flip-flop (see `is_combinational_part_acyclic`), which neither engine can handle.
+See [`pyatpg/llm/`](#llm-assisted-sequential-atpg) below for the optional LLM-assisted phase.
 
 ---
 
@@ -76,6 +91,8 @@ Combinational circuits (no flip-flops) run through ATALANTA directly on `.bench`
 | **SCOAP**               | Controllability (CC0/CC1) & Observability (CO) metrics                    |
 | **Toggle Analysis**     | Simulated toggle rate per gate                                            |
 | **ATPG Integration**    | ATALANTA wrapper — targeted vs. baseline fault coverage, redundancy info |
+| **Sequential ATPG**     | Native engine (`pyatpg/seq`) for circuits with flip-flops — time-frame expansion, PODEM, deterministic multi-cycle fault simulation, minimal test-sequence generation |
+| **Context-Reduced LLM** | Two-stage LLM-1 (cached circuit summary) / LLM-2 (compact per-call fault-prioritization context) layer for sequential ATPG, with token/call usage tracking (`pyatpg/llm`) |
 | **Remote Execution**    | SSH job dispatch to a lab server (upload → run ATALANTA → pull results) |
 | **Feature Extraction**  | Unified `FeatureSet` from structural + ATPG features                    |
 | **Trojan Dataset**      | Automated Trojan insertion (`pyatpg/trojan`) with pluggable strategies  |
@@ -102,7 +119,9 @@ py-atpg-comb/
 │   ├── trojan/             # Trojan insertion engine, triggers/payloads, dataset generator
 │   ├── ranking/            # GateRanker interface, heuristic rankers, LLM provider abstraction
 │   ├── agents/             # LLMAnalyzer (AI prioritizer) + RemoteRunner (SSH job dispatch)
-│   ├── atpg/               # Atalanta integration: runner, parsers, targeting, analysis
+│   ├── atpg/               # Atalanta integration (combinational): runner, parsers, targeting, analysis
+│   ├── seq/                # Sequential ATPG engine: time-frame expansion, PODEM, deterministic fault sim
+│   ├── llm/                # Context-reduced LLM-1/LLM-2 layer for sequential ATPG
 │   ├── evaluation/         # Evaluator, BenchmarkRunner, metrics
 │   ├── api/                # FastAPI app, routes, services, schemas (research platform)
 │   └── cli.py               # `python -m pyatpg` terminal audit report
@@ -159,7 +178,8 @@ python app.py         # same app in your default browser
 ### Option C — CLI audit report
 
 ```bash
-python -m pyatpg benchmarks/c432.v
+python -m pyatpg benchmarks/c432.v    # combinational -> Atalanta
+python -m pyatpg benchmarks/s27.bench # sequential (has flip-flops) -> pyatpg/seq automatically
 ```
 
 ### Option D — Standalone executable
@@ -183,13 +203,24 @@ python build_app.py   # runs PyInstaller against pyatpg.spec → dist/pyatpg/
 | `GET`  | `/api/benchmark/status/{id}`   | Poll benchmark job status                         |
 | `GET`  | `/api/benchmark/result/{id}`   | Retrieve completed benchmark results              |
 | `POST` | `/api/trojan/generate`         | Generate a Trojan dataset from a base circuit     |
-| `GET`  | `/api/atpg/modes`              | List the selectable analysis modes                |
-| `POST` | `/api/atpg/run`                | Run an Atalanta ATPG analysis on an uploaded circuit |
-| `GET`  | `/api/atpg/jobs/{id}/artifacts/{file}` | Download a raw Atalanta artifact (BENCH, fault list, vectors, log) |
+| `GET`  | `/api/atpg/modes`              | List the selectable analysis modes (combinational)   |
+| `POST` | `/api/atpg/run`                | Run an ATPG analysis on an uploaded circuit — routes to Atalanta or the sequential engine automatically based on whether it has flip-flops |
+| `GET`  | `/api/atpg/jobs/{id}/artifacts/{file}` | Download a raw Atalanta artifact (BENCH, fault list, vectors, log) — combinational runs only |
 
 Interactive docs available at `http://127.0.0.1:8000/docs`.
 
-The desktop app (`app.py`) exposes its own parallel Flask routes (`/api/circuit/load`, `/api/circuit/analyze`, `/api/jobs/dispatch`, `/api/jobs/status`, `/api/circuit/graph`) plus Socket.IO events for live job progress, and can dispatch ATALANTA runs either locally or to a remote lab server over SSH.
+The desktop app (`app.py`) exposes its own parallel Flask routes (`/api/circuit/load`, `/api/circuit/analyze`, `/api/jobs/dispatch`, `/api/jobs/status`, `/api/circuit/graph`) plus Socket.IO events for live job progress, and can dispatch ATALANTA (combinational) or the sequential engine (circuits with flip-flops) either locally or to a remote lab server over SSH.
+
+---
+
+## LLM-Assisted Sequential ATPG
+
+`pyatpg/seq` works standalone with no LLM at all (`use_llm=False`, or simply no API key configured — it degrades to deterministic random-fill + PODEM with no loss of correctness, just less help on the hardest faults). When an API key is available, `pyatpg/llm` adds two LLM stages on top of it, both deliberately built around **context reduction** so a run doesn't cost more tokens than it has to:
+
+- **LLM-1** (`circuit_context.py`) runs once per circuit, reads only the structural stats already computed elsewhere (SCOAP, fan-in/out, gate mix, depth — never the raw Verilog), and produces a short summary that's cached to disk keyed by the circuit's content hash. A repeat run against the same netlist costs zero LLM calls.
+- **LLM-2** (`vector_generator.py`) is consulted only when the deterministic phases (random-fill, then PODEM) still leave faults undetected. It never receives the full fault list, the full circuit, or the full simulation history — `store.py` retrieves only the current top-k hardest-to-detect faults, their immediate graph neighborhood, and history entries that touched those same nodes (`LocalContextStore.compact_fault_context`). The model's response is validated against the batch it was given before being trusted, and its output only reorders which fault to attempt next — the deterministic simulator in `pyatpg/seq/simulator.py` is the only thing that can ever mark a fault detected or report coverage.
+- **Token/call accounting** (`token_tracker.py`) records every prompt/response size and cache hit, surfaced in the API response's `sequential.llm_usage` field, so the context-reduction strategy's savings are measurable rather than assumed.
+- The `SequentialAtpgEngine` never imports `pyatpg/llm` — an LLM-2 ranker is injected as a plain callable (`candidate_ranker`), so prompts stay independent of the ATPG engine and the engine's own test suite (`tests/test_sequential_atpg.py`) needs no API key.
 
 ---
 
@@ -242,7 +273,7 @@ See [project_architecture.md](project_architecture.md) for the full request-flow
 
 ## Tech Stack
 
-**Core:** Python · NetworkX · ATALANTA
+**Core:** Python · NetworkX · ATALANTA (combinational ATPG) · native sequential ATPG engine (`pyatpg/seq`)
 **Research API:** FastAPI · Pydantic · Uvicorn
 **Research Frontend:** React 19 · TypeScript · Vite · TailwindCSS · TanStack Query/Table · Zustand · Recharts
 **Desktop Audit App:** Flask · Flask-SocketIO · pywebview · PyInstaller

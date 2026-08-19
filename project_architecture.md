@@ -6,7 +6,7 @@ This document serves as the master blueprint for the PyATPG framework. It outlin
 
 ## 1. High-Level Overview
 
-PyATPG is a structural feature-driven framework for pre-silicon Hardware Trojan detection in combinational circuits. It extracts gate-level features (SCOAP testability, toggle rates, topological centrality) and utilizes heuristics and Large Language Models (LLMs) to prioritize suspicious gates. Finally, it uses Atalanta ATPG to generate test vectors targeting those specific high-risk gates.
+PyATPG is a structural feature-driven framework for pre-silicon Hardware Trojan detection in both combinational and sequential circuits. It extracts gate-level features (SCOAP testability, toggle rates, topological centrality) and utilizes heuristics and Large Language Models (LLMs) to prioritize suspicious gates. It then generates test patterns targeting those specific high-risk gates: Atalanta ATPG for combinational circuits, and a native sequential engine (`pyatpg/seq`, time-frame expansion + PODEM + a deterministic multi-cycle fault simulator) for circuits with flip-flops.
 
 ### Tech Stack
 - **Frontend:** React, TypeScript, Vite, TailwindCSS (Hosted on Vercel)
@@ -34,6 +34,12 @@ The backend is completely stateless and designed as a REST API using FastAPI.
 
 * **`agents/` & `ranking/` (AI & Heuristics)**
   * Contains the logic for the `GateRanker` interface. This includes baseline heuristic rankers (ScoapRanker, RareNodeRanker) as well as the `LLMAnalyzer`/`LLMRanker` which connects to OpenAI/Anthropic APIs via the keys in your `.env` file to semantically rank hardware Trojans.
+
+* **`seq/` (Sequential ATPG Engine)**
+  * Native Python engine for circuits with flip-flops, since Atalanta is combinational-only. `timeframe.py` unrolls the circuit into an iterative array (time-frame expansion); `dalgebra.py` supplies 5-value (0/1/X/D/D') logic; `podem.py` is a PODEM search over the unrolled netlist; `simulator.py` is a deterministic, reset-driven, multi-cycle functional/fault simulator — the sole source of truth for detection and coverage; `engine.py` orchestrates candidate generation (PODEM + random-fill + mutation, optionally LLM-prioritized) into a minimal test-sequence set; `service.py` mirrors `atpg/service.py`'s orchestration shape. `atpg/service.py` routes any circuit with flip-flops here automatically instead of rejecting it.
+
+* **`llm/` (Context-Reduced LLM Layer for Sequential ATPG)**
+  * Two-stage, provider-agnostic LLM support built around context reduction: `circuit_context.py` (LLM-1) produces a short, cached, once-per-circuit summary; `vector_generator.py` (LLM-2) prioritizes which hard-to-detect faults to attempt next, but only ever receives a compact retrieval-built context (top-k difficult faults, their local graph neighborhood, relevant history) via `store.py` — never the full circuit, fault list, or vector history. `token_tracker.py` records API calls and estimated token usage. The `seq` engine never imports this package directly; an LLM-2 ranker is injected as a plain callable, keeping prompts independent of the ATPG engine.
 
 * **Root Level Files**
   * `Atalanta/`: Directory containing the compiled C binary for Atalanta ATPG.

@@ -1,4 +1,9 @@
-"""Command-line entry point for running an Atalanta ATPG analysis."""
+"""Command-line entry point for running an ATPG analysis.
+
+Combinational circuits run through Atalanta; circuits with flip-flops are
+routed automatically to the native sequential (time-frame-expansion) engine
+in ``pyatpg.seq`` -- see ``AtpgAnalysisService.run``.
+"""
 import argparse
 import json
 import sys
@@ -39,17 +44,45 @@ def _print_run(run: dict) -> None:
     print(f"    Undetected faults listed      : {len(run['faults'])}")
 
 
+def _print_sequential(sequential: dict) -> None:
+    results = sequential["analysis"]["results"]
+    print(f"\n  {'-' * 62}")
+    print("  Sequential ATPG (time-frame-expansion engine, no Atalanta)")
+    print(f"  {'-' * 62}")
+    print(f"    Fault coverage                : {_fmt(results['fault_coverage'], ' %')}")
+    print(f"    Detected / total faults       : {_fmt(results['detected_faults'])} / {_fmt(results['total_faults'])}")
+    print(f"    Test sequences generated      : {_fmt(results['sequence_count'])}")
+    print(f"    Total clock cycles            : {_fmt(results['total_clock_cycles'])}")
+    print(f"    Longest sequence (cycles)     : {_fmt(results['max_sequence_length'])}")
+    usage = sequential.get("llm_usage") or {}
+    if usage.get("enabled"):
+        print(f"    LLM-assisted (LLM-1 + LLM-2)  : {usage.get('api_calls', 0)} call(s), "
+              f"~{usage.get('total_tokens_est', 0)} tokens")
+    for note in sequential["analysis"].get("notes", []):
+        print(f"    Note: {note}")
+
+
 def print_report(analysis: dict) -> None:
+    is_sequential = analysis.get("sequential") is not None
     print("\n" + "=" * 66)
-    print("  ATALANTA ATPG ANALYSIS")
+    print("  SEQUENTIAL ATPG ANALYSIS" if is_sequential else "  ATALANTA ATPG ANALYSIS")
     print("=" * 66)
-    print(f"  Mode    : {analysis['mode_label']}")
+    mode_label = "Time-frame-expansion engine (sequential)" if is_sequential else analysis["mode_label"]
+    print(f"  Mode    : {mode_label}")
     print(f"  Job id  : {analysis['job_id']}")
 
     circuit = analysis["circuit"]
+    depth = circuit.get("logic_depth", circuit.get("max_level"))
     print(f"\n  Circuit : {circuit['name']} ({circuit['format']})")
     print(f"    Inputs {circuit['primary_inputs']} | Outputs {circuit['primary_outputs']} "
-          f"| Gates {circuit['gates']} | Depth {circuit['logic_depth']}")
+          f"| Gates {circuit['gates']} | Flip-flops {circuit.get('flip_flops', 0)} | Depth {depth}")
+
+    if is_sequential:
+        _print_sequential(analysis["sequential"])
+        for note in analysis.get("notes", []):
+            print(f"\n  Note: {note}")
+        print("\n" + "=" * 66 + "\n")
+        return
 
     for run in analysis["runs"].values():
         _print_run(run)
@@ -94,9 +127,13 @@ def print_report(analysis: dict) -> None:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Run an Atalanta ATPG analysis over a combinational netlist."
+        description=(
+            "Run an ATPG analysis over a netlist. Combinational circuits run through "
+            "Atalanta; circuits with flip-flops are analysed by the native sequential "
+            "(time-frame-expansion) engine automatically -- no flag needed."
+        )
     )
-    parser.add_argument("netlist", help="Path to the .v, .verilog or .bench netlist")
+    parser.add_argument("netlist", help="Path to the .v, .verilog or .bench netlist (combinational or sequential)")
     parser.add_argument(
         "--mode",
         choices=[m.value for m in AnalysisMode],

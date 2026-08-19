@@ -70,8 +70,9 @@ export default function ATPG() {
         <div>
           <h1 className="text-3xl font-bold tracking-tight">ATPG Engine</h1>
           <p className="text-sm text-muted-foreground">
-            Test pattern generation by Atalanta 2.0. Every metric shown is read from the tool's
-            own output.
+            Test pattern generation — Atalanta 2.0 for combinational circuits, a native sequential
+            (time-frame-expansion) engine for circuits with flip-flops. Every metric shown is read
+            from the engine's own output.
           </p>
         </div>
       </div>

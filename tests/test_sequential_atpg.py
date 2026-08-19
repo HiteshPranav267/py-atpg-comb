@@ -58,6 +58,27 @@ def test_dalgebra_unknown_is_not_a_fault_effect():
 
 
 # -------------------------------------------------------------- timeframe
+def test_circuit_graph_levels_and_scoap_ignore_register_feedback():
+    """The same false-cycle problem also silently broke CircuitGraph's own
+    compute_levels()/compute_scoap() for any sequential circuit with
+    register feedback: nx.topological_sort(self.G) raised NetworkXUnfeasible,
+    so levels fell back to all-zero and SCOAP fell back to an arbitrary
+    (non-topological) node order, corrupting cc0/cc1/co for every gate."""
+    from pyatpg.core.graph_analysis import CircuitGraph
+
+    circuit = NetlistParser().parse((BENCHMARKS / "s27.bench").read_text())
+    graph = CircuitGraph(circuit)
+    stats = graph.get_stats()
+    assert stats["is_dag"] is True
+    assert stats["max_level"] > 0  # was silently 0 before the fix
+
+    cc0, cc1, co = graph.compute_scoap()
+    # G17 = NOT(G11) is the sole PO -- observability of the circuit's only
+    # output must be 0 (trivially observable), not some arbitrary fallback.
+    assert co["G17"] == 0
+    assert cc1["G17"] >= 1
+
+
 def test_register_feedback_is_not_a_combinational_cycle():
     """s27 has ordinary feedback through its flip-flops (G5/G6/G7 feed logic
     that drives their own D inputs) -- CircuitGraph.get_stats()['is_dag']
