@@ -99,10 +99,10 @@ export interface TrojanGenerateResult {
 }
 
 // ---------------------------------------------------------------------------
-// ATPG / Atalanta
+// ATPG
 //
-// Every numeric field is nullable. A null means Atalanta did not report that
-// value, and must render as "Not reported by Atalanta" -- never as 0.
+// Every numeric field is nullable. A null means the ATPG tool did not report
+// that value, and must render as "Not reported by the ATPG tool" -- never as 0.
 // ---------------------------------------------------------------------------
 
 export type AnalysisMode = 'targeted' | 'non_targeted' | 'compare';
@@ -113,7 +113,7 @@ export interface AnalysisModeOption {
   description: string;
 }
 
-export interface AtalantaCircuitStructure {
+export interface AtpgCircuitStructure {
   name: string | null;
   primary_inputs: number | null;
   primary_outputs: number | null;
@@ -171,14 +171,14 @@ export interface TestVectorSet {
   count: number;
 }
 
-export interface AtalantaRun {
+export interface AtpgRun {
   label: string;
   targeted: boolean;
   tool: string;
   version: string | null;
   command: string[];
   exit_code: number | null;
-  circuit: AtalantaCircuitStructure;
+  circuit: AtpgCircuitStructure;
   parameters: AtpgParameters;
   results: AtpgResults;
   timing: TimingBreakdown;
@@ -276,7 +276,7 @@ export interface AtpgReport {
   mode: AnalysisMode;
   mode_label: string;
   circuit: AtpgCircuitOverview;
-  runs: Partial<Record<'targeted' | 'non_targeted', AtalantaRun>>;
+  runs: Partial<Record<'targeted' | 'non_targeted', AtpgRun>>;
   comparison: RunComparison | null;
   targeting: TargetingInfo | Record<string, never>;
   circuit_analysis: CircuitAnalysis | null;

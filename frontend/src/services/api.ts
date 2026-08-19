@@ -128,7 +128,7 @@ export const api = {
     return res.data;
   },
 
-  // ATPG (Atalanta)
+  // ATPG
   getAnalysisModes: async (): Promise<AnalysisModeOption[]> => {
     const res = await apiClient.get('/atpg/modes');
     return res.data;
@@ -149,7 +149,7 @@ export const api = {
     if (key) formData.append('api_key', key);
     const res = await apiClient.post('/atpg/run', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
-      // Two Atalanta runs plus toggle simulation on a large circuit.
+      // Two ATPG runs plus toggle simulation on a large circuit.
       timeout: 300000,
     });
     return res.data;

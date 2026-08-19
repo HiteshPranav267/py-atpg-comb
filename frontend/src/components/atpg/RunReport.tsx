@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Download } from 'lucide-react';
-import type { AtalantaRun } from '@/types';
+import type { AtpgRun } from '@/types';
 import { api } from '@/services/api';
 import { KeyValue, Paginator, Pill, Section, Stat, metric } from './primitives';
 
@@ -12,11 +12,11 @@ const ARTIFACT_LABELS: Record<string, string> = {
   fault_list: 'Fault list',
   test_vectors: 'Test vectors',
   undetected_faults: 'Undetected faults',
-  log: 'Atalanta log',
-  stderr: 'Atalanta stderr',
+  log: 'ATPG tool log',
+  stderr: 'ATPG tool stderr',
 };
 
-export function RunReport({ run, jobId }: { run: AtalantaRun; jobId: string }) {
+export function RunReport({ run, jobId }: { run: AtpgRun; jobId: string }) {
   return (
     <div className="flex flex-col gap-6">
       <AtpgSummary run={run} />
@@ -30,14 +30,14 @@ export function RunReport({ run, jobId }: { run: AtalantaRun; jobId: string }) {
   );
 }
 
-function AtpgSummary({ run }: { run: AtalantaRun }) {
+function AtpgSummary({ run }: { run: AtpgRun }) {
   const r = run.results;
   return (
     <Section
       title="ATPG summary"
       subtitle={
         <>
-          Read directly from {run.tool} {run.version ?? ''} output. Values Atalanta did not
+          Read directly from {run.tool} {run.version ?? ''} output. Values the tool did not
           report are marked rather than defaulted to zero.
         </>
       }
@@ -65,12 +65,12 @@ function AtpgSummary({ run }: { run: AtalantaRun }) {
   );
 }
 
-function CircuitAsRead({ run }: { run: AtalantaRun }) {
+function CircuitAsRead({ run }: { run: AtpgRun }) {
   const c = run.circuit;
   return (
     <Section
-      title="Circuit structure (as read by Atalanta)"
-      subtitle="Atalanta's own view of the netlist, kept separate from our parser's view so any discrepancy stays visible."
+      title="Circuit structure (as read by the ATPG tool)"
+      subtitle="The ATPG tool's own view of the netlist, kept separate from our parser's view so any discrepancy stays visible."
     >
       <KeyValue
         rows={[
@@ -85,10 +85,10 @@ function CircuitAsRead({ run }: { run: AtalantaRun }) {
   );
 }
 
-function RunParameters({ run }: { run: AtalantaRun }) {
+function RunParameters({ run }: { run: AtpgRun }) {
   const p = run.parameters;
   return (
-    <Section title="ATPG parameters" subtitle="The settings this Atalanta run actually used.">
+    <Section title="ATPG parameters" subtitle="The settings this run actually used.">
       <KeyValue
         rows={[
           ['Generation mode', metric(p.generation_mode)],
@@ -109,7 +109,7 @@ function RunParameters({ run }: { run: AtalantaRun }) {
   );
 }
 
-function FaultTable({ run }: { run: AtalantaRun }) {
+function FaultTable({ run }: { run: AtpgRun }) {
   const [page, setPage] = useState(0);
   const faults = run.faults;
   const pageCount = Math.ceil(faults.length / ROWS_PER_PAGE);
@@ -118,11 +118,11 @@ function FaultTable({ run }: { run: AtalantaRun }) {
   return (
     <Section
       title={`Fault analysis (${faults.length.toLocaleString()} undetected)`}
-      subtitle="Atalanta's -U report lists only faults it could not detect. A gate's absence means its faults were detected."
+      subtitle="The tool's undetected-fault report lists only faults it could not detect. A gate's absence means its faults were detected."
     >
       {faults.length === 0 ? (
         <p className="text-sm text-muted-foreground">
-          Atalanta detected every fault in this run's fault list — the undetected-fault report is empty.
+          The ATPG tool detected every fault in this run's fault list — the undetected-fault report is empty.
         </p>
       ) : (
         <>
@@ -157,7 +157,7 @@ function FaultTable({ run }: { run: AtalantaRun }) {
   );
 }
 
-function VectorTable({ run }: { run: AtalantaRun }) {
+function VectorTable({ run }: { run: AtpgRun }) {
   const [page, setPage] = useState(0);
   const vectors = run.test_vectors.vectors;
   const pageCount = Math.ceil(vectors.length / ROWS_PER_PAGE);
@@ -199,12 +199,12 @@ function VectorTable({ run }: { run: AtalantaRun }) {
   );
 }
 
-function Artifacts({ run, jobId }: { run: AtalantaRun; jobId: string }) {
+function Artifacts({ run, jobId }: { run: AtpgRun; jobId: string }) {
   const entries = Object.entries(run.artifacts);
   return (
     <Section
       title="Artifacts"
-      subtitle="Raw files exactly as Atalanta wrote them. Nothing is regenerated for download."
+      subtitle="Raw files exactly as the ATPG tool wrote them. Nothing is regenerated for download."
     >
       {entries.length === 0 ? (
         <p className="text-sm text-muted-foreground">No artifacts were retained for this run.</p>
@@ -228,11 +228,11 @@ function Artifacts({ run, jobId }: { run: AtalantaRun; jobId: string }) {
   );
 }
 
-function RawOutput({ run }: { run: AtalantaRun }) {
+function RawOutput({ run }: { run: AtpgRun }) {
   const [open, setOpen] = useState(false);
   return (
     <Section
-      title="Raw Atalanta output"
+      title="Raw ATPG tool output"
       subtitle="The unparsed stdout this report was derived from."
       actions={
         <button

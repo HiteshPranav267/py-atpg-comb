@@ -119,9 +119,9 @@ export default function Help() {
                 to="/atpg"
                 cta="Run ATPG"
               >
-                Automatically writes test inputs targeting the flagged gates and runs them for real — Atalanta
-                for combinational circuits, a native sequential engine for circuits with flip-flops — to confirm
-                or clear each suspicion.
+                Automatically writes test inputs targeting the flagged gates and runs them for real, using
+                the right ATPG engine for the circuit — combinational or sequential — to confirm or clear
+                each suspicion.
               </OverviewCard>
               <OverviewCard
                 icon={Target}
@@ -304,11 +304,11 @@ export default function Help() {
                 — Feature Analysis, ATPG, and Trojan Dataset all reuse that same upload automatically.
               </FaqItem>
               <FaqItem q="Does ATPG support sequential circuits (with flip-flops)?">
-                Yes. Combinational circuits run through Atalanta as before. A circuit with flip-flops is
-                routed automatically to a native sequential ATPG engine — time-frame expansion, PODEM search
-                across clock cycles, and a deterministic multi-cycle fault simulator — with no extra steps
-                on your end. It's only rejected if it has an asynchronous feedback loop that isn't broken
-                by a clocked flip-flop, which neither engine can levelize.
+                Yes. Combinational circuits run through the standard ATPG tool as before. A circuit with
+                flip-flops is routed automatically to a native sequential ATPG engine — time-frame expansion,
+                PODEM search across clock cycles, and a deterministic multi-cycle fault simulator — with no
+                extra steps on your end. It's only rejected if it has an asynchronous feedback loop that isn't
+                broken by a clocked flip-flop, which neither engine can levelize.
               </FaqItem>
               <FaqItem q="Ranking says 'Please extract features first!' — why?">
                 Ranking scores gates using the measurements from the Feature Analysis step, so it needs that step
@@ -362,11 +362,11 @@ export default function Help() {
                 <div>
                   <h4 className="font-semibold text-foreground mb-1">ATPG verification pipeline</h4>
                   <p>
-                    Runs the Atalanta ATPG engine twice: a baseline pass (full fault list, no restrictions) and a
+                    Runs the ATPG tool twice: a baseline pass (full fault list, no restrictions) and a
                     targeted pass restricted to faults on AI/heuristic-flagged gates. The targeted run's
                     undetected-fault report is cross-referenced against the flagged gate list — a flagged gate
                     absent from the undetected-fault report had all its faults detected (Cleared); a gate present
-                    in it resisted detection (Trojan Candidate). Circuits with flip-flops skip Atalanta entirely
+                    in it resisted detection (Trojan Candidate). Circuits with flip-flops skip that tool entirely
                     and use a native sequential engine instead — time-frame expansion, PODEM search across clock
                     cycles, and a deterministic multi-cycle fault simulator — reporting the same kind of
                     detected/undetected-fault outcome over multi-cycle test sequences rather than single vectors.

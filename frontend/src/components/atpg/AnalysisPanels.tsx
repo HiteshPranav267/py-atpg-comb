@@ -6,7 +6,7 @@ export function ComparisonPanel({ comparison }: { comparison: RunComparison }) {
   return (
     <Section
       title="Targeted vs non-targeted"
-      subtitle="Both sets of numbers come from separate Atalanta runs on the same netlist."
+      subtitle="Both sets of numbers come from separate ATPG runs on the same netlist."
       actions={<GitCompareArrows className="w-4 h-4 text-muted-foreground" />}
     >
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -159,7 +159,7 @@ export function CorrelationPanel({ correlation }: { correlation: CorrelationRepo
   return (
     <Section
       title="Correlated insights"
-      subtitle="Where the circuit analysis and Atalanta's fault results happen to point at the same gate."
+      subtitle="Where the circuit analysis and the ATPG tool's fault results happen to point at the same gate."
       actions={<Link2 className="w-4 h-4 text-muted-foreground" />}
     >
       <p className="text-sm leading-relaxed">{correlation.summary}</p>

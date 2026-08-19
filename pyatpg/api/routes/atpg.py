@@ -39,11 +39,11 @@ def list_modes() -> list[Dict[str, str]]:
             (
                 AnalysisMode.TARGETED,
                 "Select gates with the LLM (or the structural heuristic when no key is "
-                "configured) and run Atalanta against only those faults.",
+                "configured) and run the ATPG tool against only those faults.",
             ),
             (
                 AnalysisMode.NON_TARGETED,
-                "Run Atalanta over the circuit's full collapsed fault list, with no "
+                "Run the ATPG tool over the circuit's full collapsed fault list, with no "
                 "gate selection applied.",
             ),
             (

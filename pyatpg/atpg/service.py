@@ -154,8 +154,8 @@ class AtpgAnalysisService:
         profile = profile_circuit(parsed, toggle_patterns=toggle_patterns)
         if not profile.statistics.get("is_dag", True):
             raise ValueError(
-                "This tool analyses combinational circuits; the netlist contains a "
-                "combinational feedback loop (it is not a DAG). Atalanta cannot "
+                "This netlist contains a combinational feedback loop (it is not a "
+                "DAG) with no flip-flop breaking it, so the ATPG tool cannot "
                 "levelize or generate patterns for it."
             )
         api_key = self._api_key(use_llm, request_key=api_key)
@@ -272,8 +272,8 @@ class AtpgAnalysisService:
                 llm_usage=result.llm_usage,
             ),
             notes=[
-                "Sequential circuit: routed to the native time-frame-expansion "
-                "engine (pyatpg.seq) instead of Atalanta, which is combinational-only."
+                "Sequential circuit: routed to the native time-frame-expansion ATPG "
+                "engine for circuits with flip-flops."
             ],
         )
         if resolved_key:

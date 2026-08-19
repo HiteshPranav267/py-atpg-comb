@@ -89,7 +89,7 @@ def correlate(analysis: CircuitAnalysis, runs: list[AtalantaRun]) -> Correlation
                 atpg_status=status,
                 statement=(
                     f"Gate {gate} was flagged as structurally interesting under "
-                    f"\"{context_text}\", and Atalanta separately reported "
+                    f"\"{context_text}\", and the ATPG tool separately reported "
                     f"{len(entry['faults'])} fault(s) on it as {status}. These two "
                     "observations are correlated; neither establishes the other."
                 ),
@@ -100,7 +100,7 @@ def correlate(analysis: CircuitAnalysis, runs: list[AtalantaRun]) -> Correlation
         report.summary = "The circuit analysis referenced no specific gates, so there was nothing to correlate."
     elif not fault_index:
         report.summary = (
-            f"Atalanta detected every fault it targeted, so none of the "
+            f"The ATPG tool detected every fault it targeted, so none of the "
             f"{len(analysis_gates)} gate(s) raised by the analysis correspond to an "
             "undetected fault."
         )
@@ -121,7 +121,7 @@ def correlate(analysis: CircuitAnalysis, runs: list[AtalantaRun]) -> Correlation
         "confirm, any ATPG outcome.",
         "An undetected or aborted fault may simply mean the backtrack limit was reached, "
         "or that the fault is genuinely redundant.",
-        "Fault coverage and every other ATPG metric come from Atalanta; the analysis layer "
-        "contributes no measurements.",
+        "Fault coverage and every other ATPG metric come from the ATPG tool; the analysis "
+        "layer contributes no measurements.",
     ]
     return report

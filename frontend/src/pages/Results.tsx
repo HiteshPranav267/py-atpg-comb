@@ -40,7 +40,7 @@ export default function Results() {
 
   const featureLookup = new Map((activeFeatureSet?.gate_features || []).map((gf) => [gf.gate_id, gf]));
 
-  // Gates Atalanta listed in its undetected-fault report. A gate's absence
+  // Gates the ATPG tool listed in its undetected-fault report. A gate's absence
   // means its faults were detected, so it is only meaningful once ATPG ran.
   const undetectedGates = new Set<string>();
   for (const run of Object.values(activeAtpgReport?.runs ?? {})) {
@@ -116,7 +116,7 @@ export default function Results() {
         )}
         {activeAtpgReport && (
           <span className="text-xs text-muted-foreground">
-            {undetectedCount} of {rows.length} ranked gates carry a fault Atalanta left undetected
+            {undetectedCount} of {rows.length} ranked gates carry a fault the ATPG tool left undetected
           </span>
         )}
       </div>
@@ -130,13 +130,13 @@ export default function Results() {
   );
 }
 
-/** Reports what Atalanta measured for a gate; it makes no claim beyond that. */
+/** Reports what the ATPG tool measured for a gate; it makes no claim beyond that. */
 function VerdictBadge({ verdict }: { verdict: string }) {
   if (verdict === 'UNDETECTED') {
-    return <span className="text-xs text-yellow-500 font-medium bg-yellow-500/10 px-2 py-1 rounded flex items-center gap-1 w-fit" title="Atalanta listed at least one fault on this gate as undetected, redundant or aborted."><AlertTriangle className="w-3 h-3" /> Undetected fault</span>;
+    return <span className="text-xs text-yellow-500 font-medium bg-yellow-500/10 px-2 py-1 rounded flex items-center gap-1 w-fit" title="The ATPG tool listed at least one fault on this gate as undetected, redundant or aborted."><AlertTriangle className="w-3 h-3" /> Undetected fault</span>;
   }
   if (verdict === 'DETECTED') {
-    return <span className="text-xs text-green-500 font-medium bg-green-500/10 px-2 py-1 rounded flex items-center gap-1 w-fit" title="This gate did not appear in Atalanta's undetected-fault report."><CheckCircle2 className="w-3 h-3" /> Faults detected</span>;
+    return <span className="text-xs text-green-500 font-medium bg-green-500/10 px-2 py-1 rounded flex items-center gap-1 w-fit" title="This gate did not appear in the ATPG tool's undetected-fault report."><CheckCircle2 className="w-3 h-3" /> Faults detected</span>;
   }
   return <span className="text-xs text-muted-foreground font-medium bg-secondary px-2 py-1 rounded w-fit">ATPG not run</span>;
 }

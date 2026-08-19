@@ -91,7 +91,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 
                 document.getElementById('btn-export').classList.remove('hidden');
                 document.getElementById('btn-dispatch').classList.remove('hidden');
-                document.getElementById('btn-dispatch').textContent = 'Dispatch Atalanta (Local)';
+                document.getElementById('btn-dispatch').textContent = 'Dispatch ATPG (Local)';
             } else {
                 log('error', data.msg);
             }
@@ -101,7 +101,7 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     document.getElementById('btn-dispatch').addEventListener('click', async () => {
-        log('system', 'Packaging Atalanta Job Bundle and running locally...');
+        log('system', 'Packaging ATPG Job Bundle and running locally...');
         try {
             const res = await fetch('/api/jobs/dispatch', { method: 'POST' });
             const data = await res.json();
@@ -130,7 +130,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
 
                 if (data.job_status === 'COMPLETED') {
-                    log('system', 'Local Atalanta ATPG finished.');
+                    log('system', 'Local ATPG run finished.');
                     clearInterval(jobStatusTimer);
                     jobStatusTimer = null;
                 } else if (data.job_status === 'failed') {

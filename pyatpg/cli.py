@@ -1,8 +1,8 @@
 """Command-line entry point for running an ATPG analysis.
 
-Combinational circuits run through Atalanta; circuits with flip-flops are
-routed automatically to the native sequential (time-frame-expansion) engine
-in ``pyatpg.seq`` -- see ``AtpgAnalysisService.run``.
+Circuits with flip-flops are routed automatically to the native sequential
+(time-frame-expansion) engine in ``pyatpg.seq`` -- see
+``AtpgAnalysisService.run``.
 """
 import argparse
 import json
@@ -11,8 +11,8 @@ from dataclasses import asdict
 
 from pyatpg.atpg import AnalysisMode, AtpgAnalysisService
 
-#: Printed in place of any metric Atalanta did not report.
-UNREPORTED = "Not reported by Atalanta"
+#: Printed in place of any metric the ATPG tool did not report.
+UNREPORTED = "Not reported by the ATPG tool"
 
 
 def _fmt(value, suffix=""):
@@ -27,7 +27,7 @@ def _print_run(run: dict) -> None:
     print(f"\n  {'-' * 62}")
     print(f"  {run['label']}")
     print(f"  {'-' * 62}")
-    print(f"    Circuit (as read by Atalanta) : {_fmt(circuit['name'])}")
+    print(f"    Circuit (as read by the ATPG tool) : {_fmt(circuit['name'])}")
     print(f"      Primary inputs / outputs    : {_fmt(circuit['primary_inputs'])} / {_fmt(circuit['primary_outputs'])}")
     print(f"      Gates / logic depth         : {_fmt(circuit['gates'])} / {_fmt(circuit['logic_depth'])}")
     print(f"    Fault coverage                : {_fmt(results['fault_coverage'], ' %')}")
@@ -47,7 +47,7 @@ def _print_run(run: dict) -> None:
 def _print_sequential(sequential: dict) -> None:
     results = sequential["analysis"]["results"]
     print(f"\n  {'-' * 62}")
-    print("  Sequential ATPG (time-frame-expansion engine, no Atalanta)")
+    print("  Sequential ATPG (time-frame-expansion engine)")
     print(f"  {'-' * 62}")
     print(f"    Fault coverage                : {_fmt(results['fault_coverage'], ' %')}")
     print(f"    Detected / total faults       : {_fmt(results['detected_faults'])} / {_fmt(results['total_faults'])}")
@@ -65,7 +65,7 @@ def _print_sequential(sequential: dict) -> None:
 def print_report(analysis: dict) -> None:
     is_sequential = analysis.get("sequential") is not None
     print("\n" + "=" * 66)
-    print("  SEQUENTIAL ATPG ANALYSIS" if is_sequential else "  ATALANTA ATPG ANALYSIS")
+    print("  SEQUENTIAL ATPG ANALYSIS" if is_sequential else "  ATPG ANALYSIS")
     print("=" * 66)
     mode_label = "Time-frame-expansion engine (sequential)" if is_sequential else analysis["mode_label"]
     print(f"  Mode    : {mode_label}")
@@ -128,9 +128,9 @@ def print_report(analysis: dict) -> None:
 def main():
     parser = argparse.ArgumentParser(
         description=(
-            "Run an ATPG analysis over a netlist. Combinational circuits run through "
-            "Atalanta; circuits with flip-flops are analysed by the native sequential "
-            "(time-frame-expansion) engine automatically -- no flag needed."
+            "Run an ATPG analysis over a netlist. Circuits with flip-flops are analysed "
+            "by the native sequential (time-frame-expansion) engine automatically -- "
+            "no flag needed."
         )
     )
     parser.add_argument("netlist", help="Path to the .v, .verilog or .bench netlist (combinational or sequential)")
@@ -145,7 +145,7 @@ def main():
         "--patterns",
         type=int,
         default=3000,
-        help="Random patterns used for toggle-rate profiling (does not affect Atalanta)",
+        help="Random patterns used for toggle-rate profiling (does not affect the ATPG tool)",
     )
     parser.add_argument("--output", "-o", default="atpg_report.json", help="Where to write the JSON report")
     args = parser.parse_args()

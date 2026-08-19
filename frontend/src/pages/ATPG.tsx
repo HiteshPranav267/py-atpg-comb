@@ -18,12 +18,12 @@ const FALLBACK_MODES: AnalysisModeOption[] = [
   {
     value: 'targeted',
     label: 'LLM Heuristic (Targeted)',
-    description: 'Select gates, then run Atalanta against only those faults.',
+    description: 'Select gates, then run the ATPG tool against only those faults.',
   },
   {
     value: 'non_targeted',
-    label: 'Atalanta (Non-Targeted)',
-    description: "Run Atalanta over the circuit's full collapsed fault list.",
+    label: 'ATPG Tool (Non-Targeted)',
+    description: "Run the ATPG tool over the circuit's full collapsed fault list.",
   },
   { value: 'compare', label: 'Compare Both', description: 'Run both and compare them.' },
 ];
@@ -70,9 +70,9 @@ export default function ATPG() {
         <div>
           <h1 className="text-3xl font-bold tracking-tight">ATPG Engine</h1>
           <p className="text-sm text-muted-foreground">
-            Test pattern generation — Atalanta 2.0 for combinational circuits, a native sequential
-            (time-frame-expansion) engine for circuits with flip-flops. Every metric shown is read
-            from the engine's own output.
+            Test pattern generation for combinational and sequential circuits alike — the right
+            engine is selected automatically based on whether the circuit has flip-flops. Every
+            metric shown is read from the engine's own output.
           </p>
         </div>
       </div>
@@ -126,8 +126,8 @@ export default function ATPG() {
               className="w-full bg-background border border-border rounded px-3 py-2 focus:border-primary focus:outline-none"
             />
             <p className="text-xs text-muted-foreground mt-2 leading-relaxed">
-              Used for structural toggle-rate profiling only. Atalanta chooses its own pattern
-              counts.
+              Used for structural toggle-rate profiling only. The ATPG tool chooses its own
+              pattern counts.
             </p>
           </div>
         </div>
@@ -142,7 +142,7 @@ export default function ATPG() {
           ) : (
             <Play className="w-4 h-4 fill-current" />
           )}
-          {runMutation.isPending ? 'Running Atalanta...' : 'Run analysis'}
+          {runMutation.isPending ? 'Running ATPG...' : 'Run analysis'}
         </button>
 
         {errorMsg && (

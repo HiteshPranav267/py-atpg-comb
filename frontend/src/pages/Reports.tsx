@@ -65,7 +65,7 @@ export default function Reports() {
                     activeAtpgReport.runs.non_targeted ?? activeAtpgReport.runs.targeted;
                   const coverage = run?.results.fault_coverage;
                   return coverage === null || coverage === undefined
-                    ? 'Not reported by Atalanta'
+                    ? 'Not reported by the ATPG tool'
                     : `${coverage} %`;
                 })()}
               />

@@ -26,7 +26,7 @@ class AnalysisMode(str, Enum):
     def label(self) -> str:
         return {
             AnalysisMode.TARGETED: "LLM Heuristic (Targeted)",
-            AnalysisMode.NON_TARGETED: "Atalanta (Non-Targeted)",
+            AnalysisMode.NON_TARGETED: "ATPG Tool (Non-Targeted)",
             AnalysisMode.COMPARE: "Compare Both",
         }[self]
 
@@ -140,7 +140,7 @@ class AtalantaRun:
 
     label: str
     targeted: bool
-    tool: str = "Atalanta"
+    tool: str = "ATPG Tool"
     version: str | None = None
     command: list[str] = field(default_factory=list)
     exit_code: int | None = None

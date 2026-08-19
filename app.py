@@ -164,14 +164,14 @@ def dispatch_job():
                     run = runner.run(
                         workspace,
                         state['circuit'].to_bench(),
-                        label='Atalanta',
+                        label='ATPG Tool',
                         targeted_faults=build_fault_lines(gates) if gates else None,
                         targeted_gates=gates,
                     )
                     coverage = run.results.fault_coverage
                     socketio.emit(
                         'terminal_output',
-                        f"\n[PyATPG] Atalanta finished. Fault coverage: "
+                        f"\n[PyATPG] ATPG tool finished. Fault coverage: "
                         f"{'not reported' if coverage is None else f'{coverage} %'}\n",
                     )
                 except Exception as e:
@@ -183,7 +183,7 @@ def dispatch_job():
                     socketio.emit(
                         'terminal_output',
                         '\n[PyATPG] Sequential circuit: running the time-frame-expansion '
-                        'engine (no Atalanta involved).\n',
+                        'ATPG engine.\n',
                     )
                     service = SequentialAtpgService()
                     result = service.run(
@@ -206,7 +206,7 @@ def dispatch_job():
 
         return jsonify({
             'status': 'success',
-            'msg': 'Job dispatched. Atalanta is running locally.' if is_combinational
+            'msg': 'Job dispatched. ATPG tool is running locally.' if is_combinational
                    else 'Job dispatched. Sequential ATPG engine is running locally.'
         })
     except Exception as e:

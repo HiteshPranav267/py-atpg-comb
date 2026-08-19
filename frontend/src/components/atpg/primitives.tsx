@@ -1,10 +1,10 @@
 import type { ReactNode } from 'react';
 
-/** Shown wherever Atalanta did not report a value. Never substitute 0. */
-export const UNREPORTED = 'Not reported by Atalanta';
+/** Shown wherever the ATPG tool did not report a value. Never substitute 0. */
+export const UNREPORTED = 'Not reported by the ATPG tool';
 
 /**
- * Render a metric that Atalanta may not have produced.
+ * Render a metric that the ATPG tool may not have produced.
  * `null`/`undefined` becomes the explicit "not reported" marker so a missing
  * measurement can never be mistaken for a real zero.
  */
@@ -41,7 +41,7 @@ export function Stat({
           missing ? 'text-xs text-muted-foreground font-normal leading-snug' : 'text-xl',
           !missing && emphasis ? 'text-primary' : '',
         ].join(' ')}
-        title={missing ? 'Atalanta did not report this value for this run.' : undefined}
+        title={missing ? 'The ATPG tool did not report this value for this run.' : undefined}
       >
         {text}
       </span>
