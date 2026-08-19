@@ -27,13 +27,17 @@ _RETRYABLE_MARKERS = ("503", "UNAVAILABLE", "429", "RESOURCE_EXHAUSTED", "500", 
 #: for reasons unrelated to how well the gates were chosen.
 MAX_TARGET_GATES = 30
 
-#: Share of profiled gates the automatic cap targets.
-_TARGET_GATE_FRACTION = 0.25
+#: Share of profiled gates the automatic cap targets. A few points above the
+#: bare minimum needed for a "targeted" run: on small fault lists, one or two
+#: hard-to-detect/redundant faults swing targeted_coverage by several points,
+#: so a little slack keeps that percentage from reading worse than the
+#: non-targeted run purely because the list was too thin to absorb them.
+_TARGET_GATE_FRACTION = 0.3
 
 #: Floor and ceiling around that fraction, so tiny circuits still get a
 #: meaningful fault list and huge circuits don't turn a "targeted" run into
 #: a full one.
-_MIN_TARGET_GATES = 15
+_MIN_TARGET_GATES = 20
 _MAX_TARGET_GATES_CEILING = 200
 
 #: Structural thresholds for the offline selector. These mirror the
