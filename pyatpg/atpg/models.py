@@ -164,6 +164,23 @@ class AtalantaRun:
 
 
 @dataclass
+class SequentialSummary:
+    """Sequential-run payload embedded in an AtpgAnalysis.
+
+    Kept as a plain dict-producing wrapper rather than importing
+    ``pyatpg.seq`` types here, so this module (used by the combinational
+    path too) never depends on the sequential engine.
+    """
+
+    circuit: dict[str, Any]
+    analysis: dict[str, Any]
+    llm_usage: dict[str, Any]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"circuit": self.circuit, "analysis": self.analysis, "llm_usage": self.llm_usage}
+
+
+@dataclass
 class RunComparison:
     """Targeted vs non-targeted, computed only from values both runs reported."""
 

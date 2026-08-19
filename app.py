@@ -60,11 +60,18 @@ def load_circuit():
         state['raw_text'] = text
         state['profiles'] = cg.to_llm_feature_profiles()
         state['is_combinational'] = len(circuit.flipflops) == 0
-        
-        if not state['is_combinational']:
-            return jsonify({'status': 'error', 'msg': 'Error: py-atpg (Atalanta) only supports combinational circuits. Please use pyatpg-git for sequential circuits.'}), 400
 
         stats = cg.get_stats()
+        if not state['is_combinational']:
+            from pyatpg.seq.timeframe import is_combinational_part_acyclic
+            if not is_combinational_part_acyclic(circuit):
+                return jsonify({
+                    'status': 'error',
+                    'msg': 'This circuit has a combinational feedback loop not broken by a '
+                           'flip-flop; sequential ATPG here assumes every feedback path passes '
+                           'through a clocked flip-flop.',
+                }), 400
+
         return jsonify({
             'status': 'success',
             'summary': {
@@ -73,8 +80,9 @@ def load_circuit():
                 'gates': stats['gates'],
                 'inputs': stats['primary_inputs'],
                 'outputs': stats['primary_outputs'],
-                'is_combinational': True,
-                'atpg_backend': 'atalanta'
+                'is_combinational': state['is_combinational'],
+                'atpg_backend': 'atalanta' if state['is_combinational'] else 'pyatpg-seq',
+                'flip_flops': stats.get('flip_flops', 0),
             }
         })
     except Exception as e:
@@ -142,35 +150,64 @@ def dispatch_job():
         if circuit_name.endswith('_mod'):
             circuit_name = circuit_name[:-4]
             
-        def run_in_background():
-            from pyatpg.atpg import AtalantaRunner, JobWorkspace, build_fault_lines
+        is_combinational = state['is_combinational']
 
-            try:
-                workspace = JobWorkspace.create(circuit_name)
-                state['local_dir'] = str(workspace.directory)
-                gates = [s['gate_id'] for s in (state['suspects'] or [])]
-                runner = AtalantaRunner()
-                run = runner.run(
-                    workspace,
-                    state['circuit'].to_bench(),
-                    label='Atalanta',
-                    targeted_faults=build_fault_lines(gates) if gates else None,
-                    targeted_gates=gates,
-                )
-                coverage = run.results.fault_coverage
-                socketio.emit(
-                    'terminal_output',
-                    f"\n[PyATPG] Atalanta finished. Fault coverage: "
-                    f"{'not reported' if coverage is None else f'{coverage} %'}\n",
-                )
-            except Exception as e:
-                socketio.emit('terminal_output', f'\n[PyATPG] Job Failed: {str(e)}\n')
+        def run_in_background():
+            if is_combinational:
+                from pyatpg.atpg import AtalantaRunner, JobWorkspace, build_fault_lines
+
+                try:
+                    workspace = JobWorkspace.create(circuit_name)
+                    state['local_dir'] = str(workspace.directory)
+                    gates = [s['gate_id'] for s in (state['suspects'] or [])]
+                    runner = AtalantaRunner()
+                    run = runner.run(
+                        workspace,
+                        state['circuit'].to_bench(),
+                        label='Atalanta',
+                        targeted_faults=build_fault_lines(gates) if gates else None,
+                        targeted_gates=gates,
+                    )
+                    coverage = run.results.fault_coverage
+                    socketio.emit(
+                        'terminal_output',
+                        f"\n[PyATPG] Atalanta finished. Fault coverage: "
+                        f"{'not reported' if coverage is None else f'{coverage} %'}\n",
+                    )
+                except Exception as e:
+                    socketio.emit('terminal_output', f'\n[PyATPG] Job Failed: {str(e)}\n')
+            else:
+                from pyatpg.seq.service import SequentialAtpgService
+
+                try:
+                    socketio.emit(
+                        'terminal_output',
+                        '\n[PyATPG] Sequential circuit: running the time-frame-expansion '
+                        'engine (no Atalanta involved).\n',
+                    )
+                    service = SequentialAtpgService()
+                    result = service.run(
+                        source_text=state['raw_text'],
+                        filename=state['name'],
+                        use_llm=False,
+                    )
+                    r = result.analysis.results
+                    socketio.emit(
+                        'terminal_output',
+                        f"\n[PyATPG] Sequential ATPG finished. Fault coverage: "
+                        f"{'not reported' if r.fault_coverage is None else f'{r.fault_coverage} %'} "
+                        f"({r.detected_faults}/{r.total_faults} faults, "
+                        f"{r.sequence_count} sequence(s), {r.total_clock_cycles} clock cycles).\n",
+                    )
+                except Exception as e:
+                    socketio.emit('terminal_output', f'\n[PyATPG] Job Failed: {str(e)}\n')
 
         socketio.start_background_task(run_in_background)
 
         return jsonify({
             'status': 'success',
-            'msg': 'Job dispatched. Atalanta is running locally.'
+            'msg': 'Job dispatched. Atalanta is running locally.' if is_combinational
+                   else 'Job dispatched. Sequential ATPG engine is running locally.'
         })
     except Exception as e:
         import traceback

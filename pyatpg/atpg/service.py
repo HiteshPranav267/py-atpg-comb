@@ -12,7 +12,7 @@ from typing import Any
 
 from .circuit_analyst import CircuitAnalysis, CircuitAnalyst
 from .correlation import CorrelationReport, correlate
-from .models import AnalysisMode, AtalantaRun, RunComparison, build_comparison
+from .models import AnalysisMode, AtalantaRun, RunComparison, SequentialSummary, build_comparison
 from .runner import AtalantaRunner, build_fault_lines
 from .structural import ParsedCircuit, parse_circuit, profile_circuit
 from .workspace import JobWorkspace, prune_old_jobs
@@ -46,6 +46,13 @@ def _redact_secret(analysis: "AtpgAnalysis", secret: str) -> None:
             analysis.circuit_analysis.unavailable_reason = scrub(
                 analysis.circuit_analysis.unavailable_reason
             )
+    if analysis.sequential is not None:
+        analysis.sequential.analysis["notes"] = [
+            scrub(n) for n in analysis.sequential.analysis.get("notes", [])
+        ]
+        summary = analysis.sequential.llm_usage.get("circuit_summary")
+        if isinstance(summary, str):
+            analysis.sequential.llm_usage["circuit_summary"] = scrub(summary)
 
 
 @dataclass
@@ -61,6 +68,10 @@ class AtpgAnalysis:
     circuit_analysis: CircuitAnalysis | None = None
     correlation: CorrelationReport | None = None
     notes: list[str] = field(default_factory=list)
+    #: Populated instead of `runs`/`targeting`/`circuit_analysis` when the
+    #: circuit has flip-flops -- Atalanta cannot levelize sequential logic,
+    #: so those circuits are routed to pyatpg.seq instead of rejected.
+    sequential: SequentialSummary | None = None
 
     def to_dict(self) -> dict[str, Any]:
         from dataclasses import asdict
@@ -76,6 +87,7 @@ class AtpgAnalysis:
             "circuit_analysis": self.circuit_analysis.to_dict() if self.circuit_analysis else None,
             "correlation": self.correlation.to_dict() if self.correlation else None,
             "notes": self.notes,
+            "sequential": self.sequential.to_dict() if self.sequential else None,
         }
 
 
@@ -132,11 +144,12 @@ class AtpgAnalysisService:
         prune_old_jobs()
 
         parsed = parse_circuit(source_text, filename)
+
         if parsed.circuit.flipflops:
-            raise ValueError(
-                "This tool analyses combinational circuits; the netlist contains "
-                f"{len(parsed.circuit.flipflops)} sequential element(s)."
-            )
+            # Atalanta is a purely combinational engine; it cannot levelize a
+            # netlist with state elements. Route to the native sequential
+            # engine (pyatpg.seq) instead of rejecting the circuit.
+            return self._run_sequential(parsed, source_text, filename, use_llm, api_key)
 
         profile = profile_circuit(parsed, toggle_patterns=toggle_patterns)
         if not profile.statistics.get("is_dag", True):
@@ -221,6 +234,50 @@ class AtpgAnalysisService:
         # echo the key back can put it in a response.
         if api_key:
             _redact_secret(analysis, api_key)
+        return analysis
+
+    def _run_sequential(
+        self,
+        parsed: ParsedCircuit,
+        source_text: str,
+        filename: str,
+        use_llm: bool,
+        api_key: str | None,
+    ) -> AtpgAnalysis:
+        """Sequential counterpart of ``run()``, delegating to pyatpg.seq.
+
+        Kept as a thin adapter so the response envelope (job_id, notes,
+        redaction) stays identical between the two paths even though the
+        underlying engines are unrelated.
+        """
+        from pyatpg.seq.service import SequentialAtpgService
+
+        workspace = JobWorkspace.create(parsed.name)
+        resolved_key = self._api_key(use_llm, request_key=api_key)
+        seq_service = SequentialAtpgService(api_key=self._explicit_api_key)
+        result = seq_service.run(
+            source_text=source_text,
+            filename=filename,
+            use_llm=use_llm,
+            api_key=api_key,
+        )
+
+        analysis = AtpgAnalysis(
+            job_id=workspace.job_id,
+            mode=AnalysisMode.NON_TARGETED,
+            circuit=result.circuit,
+            sequential=SequentialSummary(
+                circuit=result.circuit,
+                analysis=result.analysis.to_dict(),
+                llm_usage=result.llm_usage,
+            ),
+            notes=[
+                "Sequential circuit: routed to the native time-frame-expansion "
+                "engine (pyatpg.seq) instead of Atalanta, which is combinational-only."
+            ],
+        )
+        if resolved_key:
+            _redact_secret(analysis, resolved_key)
         return analysis
 
     @staticmethod
