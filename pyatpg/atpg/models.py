@@ -175,9 +175,17 @@ class SequentialSummary:
     circuit: dict[str, Any]
     analysis: dict[str, Any]
     llm_usage: dict[str, Any]
+    #: Populated instead of `analysis`/`llm_usage` when a comparison run was
+    #: performed (deterministic-only vs LLM-assisted, run back to back).
+    comparison: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return {"circuit": self.circuit, "analysis": self.analysis, "llm_usage": self.llm_usage}
+        return {
+            "circuit": self.circuit,
+            "analysis": self.analysis,
+            "llm_usage": self.llm_usage,
+            "comparison": self.comparison,
+        }
 
 
 @dataclass

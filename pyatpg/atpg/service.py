@@ -266,43 +266,67 @@ class AtpgAnalysisService:
             "Sequential circuit: routed to the native time-frame-expansion ATPG "
             "engine for circuits with flip-flops."
         ]
-        if use_llm and not mode.runs_targeted:
-            notes.append(
-                "LLM assistance skipped: mode is set to non-targeted "
-                "(deterministic-only ATPG). Switch to a targeted or compare mode "
-                "to enable it."
-            )
-        elif effective_use_llm and not resolved_key:
-            notes.append(
-                "LLM assistance requested but no API key is configured; ran "
-                "deterministic-only ATPG. Add a key in Settings to enable it."
-            )
-
         seq_service = SequentialAtpgService(api_key=self._explicit_api_key)
-        result = seq_service.run(
-            source_text=source_text,
-            filename=filename,
-            use_llm=effective_use_llm,
-            api_key=api_key,
-        )
-        llm2_calls = result.llm_usage.get("by_stage", {}).get("llm2", {}).get("calls", 0)
-        if effective_use_llm and resolved_key and result.llm_usage.get("enabled") and not llm2_calls:
-            notes.append(
-                "LLM-1 summarised the circuit, but LLM-2 fault prioritization was "
-                "never consulted: deterministic search (random-fill + PODEM) already "
-                "reached every fault it could detect, so there was nothing left for "
-                "it to help with."
+
+        if mode is AnalysisMode.COMPARE and use_llm and resolved_key:
+            # A real deterministic-only-vs-LLM-assisted comparison: two full
+            # runs, same seed, so the difference is attributable to the LLM.
+            comp = seq_service.run_comparison(
+                source_text=source_text, filename=filename, api_key=api_key
             )
+            notes.extend(comp.comparison.notes)
+            sequential = SequentialSummary(
+                circuit=comp.circuit,
+                analysis=comp.comparison.llm_assisted.to_dict(),
+                llm_usage=comp.llm_usage,
+                comparison=comp.comparison.to_dict(),
+            )
+            circuit_payload = comp.circuit
+        else:
+            if mode is AnalysisMode.COMPARE and use_llm and not resolved_key:
+                notes.append(
+                    "Compare mode requested but no API key is configured, so there is "
+                    "nothing to compare against; ran deterministic-only ATPG. Add a "
+                    "key in Settings for a deterministic-vs-LLM-assisted comparison."
+                )
+            elif use_llm and not mode.runs_targeted:
+                notes.append(
+                    "LLM assistance skipped: mode is set to non-targeted "
+                    "(deterministic-only ATPG). Switch to a targeted or compare mode "
+                    "to enable it."
+                )
+            elif effective_use_llm and not resolved_key:
+                notes.append(
+                    "LLM assistance requested but no API key is configured; ran "
+                    "deterministic-only ATPG. Add a key in Settings to enable it."
+                )
+
+            result = seq_service.run(
+                source_text=source_text,
+                filename=filename,
+                use_llm=effective_use_llm,
+                api_key=api_key,
+            )
+            llm2_calls = result.llm_usage.get("by_stage", {}).get("llm2", {}).get("calls", 0)
+            if effective_use_llm and resolved_key and result.llm_usage.get("enabled") and not llm2_calls:
+                notes.append(
+                    "LLM-1 summarised the circuit, but LLM-2 fault prioritization was "
+                    "never consulted: deterministic search (random-fill + PODEM) already "
+                    "reached every fault it could detect, so there was nothing left for "
+                    "it to help with."
+                )
+            sequential = SequentialSummary(
+                circuit=result.circuit,
+                analysis=result.analysis.to_dict(),
+                llm_usage=result.llm_usage,
+            )
+            circuit_payload = result.circuit
 
         analysis = AtpgAnalysis(
             job_id=workspace.job_id,
             mode=mode,
-            circuit=result.circuit,
-            sequential=SequentialSummary(
-                circuit=result.circuit,
-                analysis=result.analysis.to_dict(),
-                llm_usage=result.llm_usage,
-            ),
+            circuit=circuit_payload,
+            sequential=sequential,
             notes=notes,
         )
         if resolved_key:

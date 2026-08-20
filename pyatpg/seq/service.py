@@ -9,21 +9,36 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from typing import Any
 
 from pyatpg.atpg.structural import ParsedCircuit, StructuralProfile, parse_circuit, profile_circuit
 
 from .engine import EngineConfig, SequentialAtpgEngine
-from .models import SequentialAnalysis
+from .models import SequentialAnalysis, SequentialComparison, build_sequential_comparison
 from .timeframe import is_combinational_part_acyclic
 
 #: Same env var the combinational service uses, so one credential configures both.
 GEMINI_KEY_ENV_VAR = "GEMINI_API_KEY"
+
+#: A fixed seed for comparison runs, so random-fill/PODEM search identical
+#: candidates first in both the baseline and LLM-assisted run -- only the
+#: LLM-2-assisted phase (and the deeper local search it unlocks) can differ.
+_COMPARISON_SEED = 1234
 
 
 @dataclass
 class SequentialAnalysisResult:
     circuit: dict
     analysis: SequentialAnalysis
+    llm_usage: dict
+
+
+@dataclass
+class SequentialComparisonResult:
+    circuit: dict
+    comparison: SequentialComparison
+    #: The LLM-assisted run's own usage payload, so the caller can surface
+    #: it (API calls, token estimates) without digging into `comparison`.
     llm_usage: dict
 
 
@@ -39,24 +54,51 @@ class SequentialAtpgService:
                 return candidate.strip()
         return None
 
-    def run(
-        self,
-        source_text: str,
-        filename: str,
-        target_coverage: float = 100.0,
-        max_sequences: int = 60,
-        use_llm: bool = True,
-        api_key: str | None = None,
-    ) -> SequentialAnalysisResult:
-        parsed: ParsedCircuit = parse_circuit(source_text, filename)
-        profile: StructuralProfile = profile_circuit(parsed)
+    def _parse(self, source_text: str, filename: str) -> tuple[ParsedCircuit, StructuralProfile]:
+        parsed = parse_circuit(source_text, filename)
+        profile = profile_circuit(parsed)
         if not is_combinational_part_acyclic(parsed.circuit):
             raise ValueError(
                 "This circuit has a combinational feedback loop that is not broken by "
                 "a flip-flop (an asynchronous latch loop); sequential ATPG here assumes "
                 "every feedback path passes through a clocked flip-flop."
             )
+        return parsed, profile
 
+    @staticmethod
+    def _circuit_payload(parsed: ParsedCircuit, profile: StructuralProfile) -> dict[str, Any]:
+        return {
+            "name": parsed.name,
+            "filename": parsed.filename,
+            "format": "bench" if parsed.is_bench else "verilog",
+            "primary_inputs": profile.statistics.get("primary_inputs"),
+            "primary_outputs": profile.statistics.get("primary_outputs"),
+            "gates": profile.statistics.get("gates"),
+            "flip_flops": profile.statistics.get("flip_flops"),
+            # Matches the combinational payload's field name (AtpgCircuitOverview.logic_depth
+            # on the frontend) rather than the internal "max_level" stat key.
+            "logic_depth": profile.statistics.get("max_level"),
+            "gate_types": profile.statistics.get("gate_types"),
+            "total_nodes": profile.statistics.get("total_nodes"),
+            "total_edges": profile.statistics.get("total_edges"),
+            "max_fan_in": profile.statistics.get("max_fan_in"),
+            "max_fan_out": profile.statistics.get("max_fan_out"),
+            "avg_fan_in": profile.statistics.get("avg_fan_in"),
+            "avg_fan_out": profile.statistics.get("avg_fan_out"),
+            "is_dag": profile.statistics.get("is_dag"),
+        }
+
+    def _run_engine(
+        self,
+        parsed: ParsedCircuit,
+        profile: StructuralProfile,
+        source_text: str,
+        use_llm: bool,
+        api_key: str | None,
+        target_coverage: float,
+        max_sequences: int,
+        rng_seed: int | None = None,
+    ) -> tuple[SequentialAnalysis, dict]:
         key = self._api_key(use_llm, api_key)
         candidate_ranker = None
         llm_usage: dict = {"enabled": False}
@@ -78,10 +120,13 @@ class SequentialAtpgService:
             candidate_ranker = prioritizer.rank
             llm_usage = {"enabled": True, "tracker": tracker, "summary": summary}
 
+        config = EngineConfig(target_coverage=target_coverage, max_sequences=max_sequences)
+        if rng_seed is not None:
+            config.rng_seed = rng_seed
         engine = SequentialAtpgEngine(
             parsed.circuit,
             circuit_name=parsed.name,
-            config=EngineConfig(target_coverage=target_coverage, max_sequences=max_sequences),
+            config=config,
             candidate_ranker=candidate_ranker,
         )
         analysis = engine.run()
@@ -91,27 +136,59 @@ class SequentialAtpgService:
             usage_payload.update(llm_usage["tracker"].summary())
             usage_payload["circuit_summary"] = llm_usage["summary"]
 
+        return analysis, usage_payload
+
+    def run(
+        self,
+        source_text: str,
+        filename: str,
+        target_coverage: float = 100.0,
+        max_sequences: int = 60,
+        use_llm: bool = True,
+        api_key: str | None = None,
+    ) -> SequentialAnalysisResult:
+        parsed, profile = self._parse(source_text, filename)
+        analysis, llm_usage = self._run_engine(
+            parsed, profile, source_text, use_llm, api_key, target_coverage, max_sequences
+        )
         return SequentialAnalysisResult(
-            circuit={
-                "name": parsed.name,
-                "filename": parsed.filename,
-                "format": "bench" if parsed.is_bench else "verilog",
-                "primary_inputs": profile.statistics.get("primary_inputs"),
-                "primary_outputs": profile.statistics.get("primary_outputs"),
-                "gates": profile.statistics.get("gates"),
-                "flip_flops": profile.statistics.get("flip_flops"),
-                # Matches the combinational payload's field name (AtpgCircuitOverview.logic_depth
-                # on the frontend) rather than the internal "max_level" stat key.
-                "logic_depth": profile.statistics.get("max_level"),
-                "gate_types": profile.statistics.get("gate_types"),
-                "total_nodes": profile.statistics.get("total_nodes"),
-                "total_edges": profile.statistics.get("total_edges"),
-                "max_fan_in": profile.statistics.get("max_fan_in"),
-                "max_fan_out": profile.statistics.get("max_fan_out"),
-                "avg_fan_in": profile.statistics.get("avg_fan_in"),
-                "avg_fan_out": profile.statistics.get("avg_fan_out"),
-                "is_dag": profile.statistics.get("is_dag"),
-            },
+            circuit=self._circuit_payload(parsed, profile),
             analysis=analysis,
-            llm_usage=usage_payload,
+            llm_usage=llm_usage,
+        )
+
+    def run_comparison(
+        self,
+        source_text: str,
+        filename: str,
+        target_coverage: float = 100.0,
+        max_sequences: int = 60,
+        api_key: str | None = None,
+    ) -> SequentialComparisonResult:
+        """Run deterministic-only and LLM-assisted back to back and diff them.
+
+        Both runs use the same fixed seed, so the comparison isolates what
+        LLM-2 (and the deeper local search it unlocks) actually contributed
+        rather than differences from random-fill drawing different candidates.
+        """
+        parsed, profile = self._parse(source_text, filename)
+        baseline, _baseline_usage = self._run_engine(
+            parsed, profile, source_text, False, None,
+            target_coverage, max_sequences, rng_seed=_COMPARISON_SEED,
+        )
+        llm_assisted, llm_usage = self._run_engine(
+            parsed, profile, source_text, True, api_key,
+            target_coverage, max_sequences, rng_seed=_COMPARISON_SEED,
+        )
+        comparison = build_sequential_comparison(baseline, llm_assisted)
+        if not llm_usage.get("enabled"):
+            comparison.notes.insert(
+                0,
+                "No LLM API key is configured, so the 'LLM-assisted' column ran "
+                "deterministic-only too -- add a key in Settings for a real comparison.",
+            )
+        return SequentialComparisonResult(
+            circuit=self._circuit_payload(parsed, profile),
+            comparison=comparison,
+            llm_usage=llm_usage,
         )

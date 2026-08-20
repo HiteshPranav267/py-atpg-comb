@@ -315,10 +315,23 @@ export interface LlmUsage {
   circuit_summary?: string;
 }
 
+export interface SequentialComparison {
+  baseline: SequentialAnalysisData;
+  llm_assisted: SequentialAnalysisData;
+  coverage_delta: number | null;
+  additional_faults_detected: string[];
+  additional_sequences: number | null;
+  additional_clock_cycles: number | null;
+  notes: string[];
+}
+
 export interface SequentialSummary {
   circuit: AtpgCircuitOverview;
   analysis: SequentialAnalysisData;
   llm_usage: LlmUsage;
+  //: Populated instead of relying on `analysis` alone when Compare mode ran
+  //: a deterministic-only pass and an LLM-assisted pass back to back.
+  comparison?: SequentialComparison | null;
 }
 
 export interface AtpgReport {

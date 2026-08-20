@@ -1,6 +1,6 @@
 import { useState } from 'react';
-import { Cpu } from 'lucide-react';
-import type { SequentialSummary } from '@/types';
+import { Cpu, GitCompareArrows } from 'lucide-react';
+import type { SequentialComparison, SequentialSummary } from '@/types';
 import { KeyValue, Paginator, Pill, Section, Stat, metric } from './primitives';
 
 const ROWS_PER_PAGE = 25;
@@ -43,6 +43,8 @@ export function SequentialReport({ sequential }: { sequential: SequentialSummary
         </div>
       </Section>
 
+      {sequential.comparison && <SequentialComparisonPanel comparison={sequential.comparison} />}
+
       {llm_usage?.enabled && <LlmUsagePanel llm_usage={llm_usage} />}
 
       <SequenceTable sequential={sequential} />
@@ -58,6 +60,84 @@ export function SequentialReport({ sequential }: { sequential: SequentialSummary
         </Section>
       )}
     </div>
+  );
+}
+
+function SequentialComparisonPanel({ comparison }: { comparison: SequentialComparison }) {
+  const { baseline, llm_assisted } = comparison;
+  const deltaPositive = (comparison.coverage_delta ?? 0) > 0;
+
+  return (
+    <Section
+      title="Deterministic-only vs LLM-assisted"
+      subtitle="Both runs use the same random seed, so random-fill and PODEM search identical candidates first -- only the LLM-2-assisted phase (and the deeper local search it unlocks) can differ between the two columns below."
+      actions={<GitCompareArrows className="w-4 h-4 text-muted-foreground" />}
+    >
+      <div className="grid grid-cols-2 gap-4">
+        <div className="border border-border rounded-lg p-4">
+          <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+            Deterministic only
+          </span>
+          <div className="text-2xl font-bold tabular-nums mt-1">
+            {metric(baseline.results.fault_coverage, { suffix: ' %' })}
+          </div>
+          <div className="text-xs text-muted-foreground mt-1">
+            {baseline.results.detected_faults} / {baseline.results.total_faults} faults ·{' '}
+            {baseline.results.sequence_count} sequence(s) · {baseline.results.total_clock_cycles} cycles
+          </div>
+        </div>
+        <div className="border border-primary/40 bg-primary/5 rounded-lg p-4">
+          <span className="text-xs font-semibold uppercase tracking-wider text-primary">
+            LLM-assisted
+          </span>
+          <div className="text-2xl font-bold tabular-nums mt-1 text-primary">
+            {metric(llm_assisted.results.fault_coverage, { suffix: ' %' })}
+          </div>
+          <div className="text-xs text-muted-foreground mt-1">
+            {llm_assisted.results.detected_faults} / {llm_assisted.results.total_faults} faults ·{' '}
+            {llm_assisted.results.sequence_count} sequence(s) · {llm_assisted.results.total_clock_cycles} cycles
+          </div>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-4">
+        <Stat
+          label="Coverage delta"
+          value={
+            comparison.coverage_delta !== null
+              ? `${comparison.coverage_delta > 0 ? '+' : ''}${comparison.coverage_delta} %`
+              : null
+          }
+          emphasis={deltaPositive}
+        />
+        <Stat label="Additional faults detected" value={comparison.additional_faults_detected.length} emphasis={deltaPositive} />
+        <Stat label="Additional sequences" value={comparison.additional_sequences} />
+        <Stat label="Additional clock cycles" value={comparison.additional_clock_cycles} />
+      </div>
+
+      {comparison.additional_faults_detected.length > 0 && (
+        <div className="mt-4 pt-4 border-t border-border">
+          <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">
+            Faults only the LLM-assisted run detected
+          </h4>
+          <div className="flex flex-wrap gap-1.5">
+            {comparison.additional_faults_detected.map((fault) => (
+              <span key={fault} className="font-mono text-[11px] px-1.5 py-0.5 rounded bg-secondary text-primary">
+                {fault}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {comparison.notes.length > 0 && (
+        <ul className="list-disc list-inside text-xs text-muted-foreground space-y-1 mt-4 pt-4 border-t border-border">
+          {comparison.notes.map((note) => (
+            <li key={note}>{note}</li>
+          ))}
+        </ul>
+      )}
+    </Section>
   );
 }
 

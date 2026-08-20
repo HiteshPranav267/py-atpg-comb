@@ -58,3 +58,16 @@ def test_sequential_response_still_has_full_coverage_regardless_of_mode():
         analysis = service.run(source_text=_s27_v(), filename="s27.v", mode=mode, use_llm=False)
         d = analysis.to_dict()
         assert d["sequential"]["analysis"]["results"]["fault_coverage"] == 100.0
+
+
+def test_sequential_compare_mode_without_a_key_explains_there_is_nothing_to_compare():
+    """Regression: Compare mode used to silently behave like Targeted (a
+    single LLM-enabled run, or none at all without a key) -- there was no
+    actual deterministic-vs-LLM-assisted comparison for the user to see."""
+    service = AtpgAnalysisService()
+    analysis = service.run(
+        source_text=_s27_v(), filename="s27.v", mode=AnalysisMode.COMPARE, use_llm=True
+    )
+    d = analysis.to_dict()
+    assert d["sequential"]["comparison"] is None
+    assert any("nothing to compare" in note for note in d["notes"])

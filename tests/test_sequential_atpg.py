@@ -15,7 +15,7 @@ from pyatpg.core.netlist import Circuit, FlipFlop, NetlistParser
 from pyatpg.seq import dalgebra as da
 from pyatpg.seq.engine import EngineConfig, SequentialAtpgEngine
 from pyatpg.seq.faultsim import checkpoint_fault_list, evaluate_coverage
-from pyatpg.seq.models import SequentialFault, TestSequence
+from pyatpg.seq.models import SequentialFault, TestSequence, build_sequential_comparison
 from pyatpg.seq.podem import podem
 from pyatpg.seq.simulator import simulate, traces_diverge
 from pyatpg.seq.timeframe import build_unrolled_circuit
@@ -209,6 +209,39 @@ def test_engine_reaches_full_coverage_on_s27_without_llm():
     # every accepted sequence must have contributed at least one detection
     # (this is the minimisation property: no dead weight in the test set).
     assert all(result.newly_detected_by_sequence[i] for i in range(len(result.sequences)))
+
+
+def test_comparison_shows_a_real_delta_when_the_ranker_unlocks_more_search():
+    """s298 is a case where random-fill + PODEM alone plateau well below
+    100% -- exactly the circuit a deterministic-vs-LLM-assisted comparison
+    needs to be meaningful on. Uses a stub ranker (no network) standing in
+    for the real LLM-2 call: the point of this test is the comparison
+    plumbing, not the LLM's judgement, which pyatpg.llm's own tests cover."""
+    circuit = NetlistParser().parse((BENCHMARKS / "s298.bench").read_text())
+    config = EngineConfig(
+        target_coverage=95.0, max_sequences=40, base_cycles=4,
+        random_pool_size=15, podem_max_frames=3, podem_max_backtracks=40,
+        rng_seed=1234,
+    )
+
+    baseline = SequentialAtpgEngine(circuit, circuit_name="s298", config=config).run()
+    llm_assisted = SequentialAtpgEngine(
+        circuit, circuit_name="s298", config=config, candidate_ranker=lambda faults, ctx: None
+    ).run()
+
+    comparison = build_sequential_comparison(baseline, llm_assisted)
+    assert comparison.coverage_delta is not None and comparison.coverage_delta > 0
+    assert comparison.additional_faults_detected
+    assert set(comparison.additional_faults_detected) == set(llm_assisted.detected) - set(baseline.detected)
+    # every "additional" fault must be independently reproducible via the
+    # LLM-assisted run's own sequences -- never asserted from the delta alone.
+    for fault_name in comparison.additional_faults_detected[:5]:
+        node, stuck_at = fault_name.rsplit("/", 1)
+        fault = SequentialFault(node=node, stuck_at=int(stuck_at))
+        assert any(
+            evaluate_coverage(circuit, [fault], [seq])[0].detected_faults == 1
+            for seq in llm_assisted.sequences
+        )
 
 
 def test_engine_never_reports_fault_effects_beyond_the_simulator():
