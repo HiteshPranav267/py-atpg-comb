@@ -8,6 +8,7 @@ from pyatpg.api.schemas import (
 )
 from pyatpg.api.services.benchmark_service import BenchmarkService
 from pyatpg.api.services.ranking_service import RankingService
+from pyatpg.core.analytics_store import get_analytics_store
 
 router = APIRouter(prefix="/api/benchmark", tags=["benchmark"])
 
@@ -20,6 +21,9 @@ def get_rankers():
 async def start_benchmark(req: BenchmarkStartRequest):
     try:
         job_id = BenchmarkService.start_benchmark(req.dataset_dir, req.ranker_name, req.k)
+        get_analytics_store().record(
+            "benchmark_run", dataset_dir=req.dataset_dir, ranker_name=req.ranker_name, k=req.k
+        )
         return {"job_id": job_id}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))

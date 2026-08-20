@@ -11,6 +11,7 @@ from pyatpg.atpg import (
     NoTargetableGates,
 )
 from pyatpg.atpg.workspace import JobWorkspace
+from pyatpg.core.analytics_store import get_analytics_store
 
 router = APIRouter(prefix="/api/atpg", tags=["atpg"])
 
@@ -106,7 +107,49 @@ async def run_atpg(
     except AtalantaExecutionError as exc:
         raise HTTPException(status_code=502, detail=str(exc))
 
-    return analysis.to_dict()
+    payload = analysis.to_dict()
+    _record_atpg_run(payload)
+    return payload
+
+
+def _record_atpg_run(payload: dict) -> None:
+    """Log one ATPG run for the in-app analytics page.
+
+    Best-effort only: recording happens after the real result is already
+    computed and about to be returned, so a failure here must never affect
+    the response.
+    """
+    try:
+        sequential = payload.get("sequential")
+        if sequential is not None:
+            results = sequential["analysis"]["results"]
+            usage = sequential.get("llm_usage") or {}
+            get_analytics_store().record(
+                "atpg_run",
+                circuit_kind="sequential",
+                circuit_name=sequential["circuit"].get("name"),
+                mode=payload.get("mode"),
+                fault_coverage=results.get("fault_coverage"),
+                llm_api_calls=usage.get("api_calls"),
+                llm_tokens_est=usage.get("total_tokens_est"),
+            )
+            return
+
+        runs = payload.get("runs") or {}
+        primary = runs.get("non_targeted") or runs.get("targeted")
+        coverage = primary["results"].get("fault_coverage") if primary else None
+        used_llm = bool((payload.get("targeting") or {}).get("used_llm"))
+        get_analytics_store().record(
+            "atpg_run",
+            circuit_kind="combinational",
+            circuit_name=payload.get("circuit", {}).get("name"),
+            mode=payload.get("mode"),
+            fault_coverage=coverage,
+            llm_api_calls=(1 if used_llm else 0),
+            llm_tokens_est=None,
+        )
+    except Exception:  # noqa: BLE001 - analytics must never break a real response
+        pass
 
 
 @router.get("/jobs/{job_id}/artifacts/{filename}")

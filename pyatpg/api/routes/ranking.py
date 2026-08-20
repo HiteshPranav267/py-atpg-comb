@@ -4,6 +4,7 @@ from typing import List
 from pyatpg.api.schemas import RankingRequestSchema, RankingResultSchema, FeatureSetSchema
 from pyatpg.api.services.ranking_service import RankingService
 from pyatpg.analysis.models import FeatureSet, GateFeature, GateRole
+from pyatpg.core.analytics_store import get_analytics_store
 
 router = APIRouter(prefix="/api/ranking", tags=["ranking"])
 
@@ -53,6 +54,13 @@ def run_ranking(req: RankingRequestSchema):
         )
 
         result = RankingService.rank(fs, req.ranker_name, api_key=req.api_key)
+
+        get_analytics_store().record(
+            "ranking_run",
+            circuit_name=result.circuit_name,
+            ranker_name=result.ranker_name,
+            gate_count=len(result.ranked_gates),
+        )
 
         return RankingResultSchema(
             circuit_name=result.circuit_name,

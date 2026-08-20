@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from pyatpg.api.routes import circuit, feature, ranking, benchmark, trojan, atpg
+from pyatpg.api.routes import circuit, feature, ranking, benchmark, trojan, atpg, analytics
 
 app = FastAPI(
     title="PyATPG API",
@@ -23,6 +23,7 @@ app.include_router(ranking.router)
 app.include_router(benchmark.router)
 app.include_router(trojan.router)
 app.include_router(atpg.router)
+app.include_router(analytics.router)
 
 
 @app.get("/health")

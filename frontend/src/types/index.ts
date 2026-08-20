@@ -334,6 +334,47 @@ export interface SequentialSummary {
   comparison?: SequentialComparison | null;
 }
 
+// ---------------------------------------------------------------------------
+// In-app product-usage analytics (not visitor/page-view analytics -- that's
+// Vercel Web Analytics, tracked separately on the frontend and not
+// queryable from this API).
+// ---------------------------------------------------------------------------
+
+export interface AnalyticsCoveragePoint {
+  ts: number;
+  coverage: number | null;
+  circuit_kind: 'combinational' | 'sequential' | null;
+  circuit_name: string | null;
+}
+
+export interface AnalyticsActivityEvent {
+  ts: number;
+  type: string;
+  [key: string]: unknown;
+}
+
+export interface AnalyticsSummary {
+  total_events: number;
+  circuits_parsed: number;
+  atpg_runs: {
+    total: number;
+    combinational: number;
+    sequential: number;
+    avg_coverage_combinational: number | null;
+    avg_coverage_sequential: number | null;
+  };
+  llm: {
+    runs_with_llm: number;
+    total_api_calls: number;
+    total_tokens_est: number;
+  };
+  ranking_runs: number;
+  trojan_generations: number;
+  benchmark_runs: number;
+  coverage_over_time: AnalyticsCoveragePoint[];
+  recent_activity: AnalyticsActivityEvent[];
+}
+
 export interface AtpgReport {
   job_id: string;
   mode: AnalysisMode;

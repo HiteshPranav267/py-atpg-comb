@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Palette, Settings, HelpCircle } from 'lucide-react';
+import { Palette, Settings, HelpCircle, BarChart3 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useAppStore } from '@/store';
 import { SettingsModal } from './SettingsModal';
@@ -21,6 +21,9 @@ export function TopNav() {
         >
           <Palette className="w-4 h-4" />
         </button>
+        <Link to="/analytics" title="Analytics" className="hover:text-foreground transition-colors">
+          <BarChart3 className="w-4 h-4" />
+        </Link>
         <button
           onClick={() => setSettingsOpen(true)}
           title="Settings"

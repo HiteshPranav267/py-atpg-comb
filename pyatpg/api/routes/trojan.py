@@ -6,6 +6,7 @@ from fastapi import APIRouter, UploadFile, File, Form, HTTPException
 from fastapi.responses import StreamingResponse
 
 from pyatpg.api.services.trojan_service import TrojanService
+from pyatpg.core.analytics_store import get_analytics_store
 
 router = APIRouter(prefix="/api/trojan", tags=["trojan"])
 
@@ -22,6 +23,12 @@ async def generate_dataset(
         text = content.decode("utf-8")
         name = (file.filename or "circuit.v").rsplit('.', 1)[0]
         result = TrojanService.generate_dataset(text, name, variants, strategy)
+        get_analytics_store().record(
+            "trojan_generated",
+            circuit_name=result["circuit"],
+            variants=result["variants_generated"],
+            strategy=result["strategy"],
+        )
 
         output_dir = result["output_dir"]
         buffer = io.BytesIO()

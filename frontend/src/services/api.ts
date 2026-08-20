@@ -10,7 +10,8 @@ import type {
   AtpgReport,
   AnalysisMode,
   AnalysisModeOption,
-  TrojanGenerateResult
+  TrojanGenerateResult,
+  AnalyticsSummary
 } from '@/types';
 import { useAppStore } from '@/store';
 
@@ -160,5 +161,11 @@ export const api = {
     const root = resolveBaseRoot();
     const base = root ? `${root}/api` : '/api';
     return `${base}/atpg/jobs/${encodeURIComponent(jobId)}/artifacts/${encodeURIComponent(filename)}`;
+  },
+
+  // Analytics
+  getAnalyticsSummary: async (): Promise<AnalyticsSummary> => {
+    const res = await apiClient.get('/analytics/summary');
+    return res.data;
   }
 };
