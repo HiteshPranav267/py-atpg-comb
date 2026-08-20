@@ -77,6 +77,7 @@ export default function TrojanDataset() {
             >
               <option value="random">Random</option>
               <option value="rare_node">Rare Node Targeting (HTS/OCR)</option>
+              <option value="low_scoap">Low SCOAP Targeting (Hard-to-Control/Observe)</option>
             </select>
           </div>
         </div>

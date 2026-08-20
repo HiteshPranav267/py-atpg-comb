@@ -165,6 +165,13 @@ class FaultTargetSelector:
     ) -> list[str]:
         client = genai.Client(api_key=self.api_key)
 
+        # Rank by toggle-rate/CO so the most testability-relevant gates sort
+        # to the front, but keep every gate in the prompt: truncating here
+        # made the LLM blind to any gate outside the top slice, so a small
+        # planted change (e.g. a trojan) ranked just below the cutoff was
+        # invisible and the model reliably fell back to the circuit's own
+        # naturally-hardest-to-test gates -- indistinguishable from running
+        # it on a circuit that never had that change at all.
         ordered = sorted(
             profiles,
             key=lambda p: (
@@ -172,7 +179,7 @@ class FaultTargetSelector:
                 -p["features"].get("co", 0),
             ),
         )
-        profile_block = "\n".join(p["profile"] for p in ordered[:200])
+        profile_block = "\n".join(p["profile"] for p in ordered)
 
         prompt = f"""{summary}
 

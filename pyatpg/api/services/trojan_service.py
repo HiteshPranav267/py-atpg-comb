@@ -5,7 +5,7 @@ import tempfile
 
 from pyatpg.trojan.generator import TrojanDatasetGenerator
 from pyatpg.trojan.inserter import TrojanInserter
-from pyatpg.trojan.strategy import RandomStrategy, RareNodeStrategy
+from pyatpg.trojan.strategy import RandomStrategy, RareNodeStrategy, LowScoapStrategy
 
 class TrojanService:
     @staticmethod
@@ -17,6 +17,8 @@ class TrojanService:
     ) -> dict:
         if strategy == "rare_node":
             strat = RareNodeStrategy()
+        elif strategy == "low_scoap":
+            strat = LowScoapStrategy()
         else:
             strat = RandomStrategy()
 
