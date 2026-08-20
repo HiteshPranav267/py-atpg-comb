@@ -15,15 +15,31 @@ from .simulator import simulate, traces_diverge
 
 
 def checkpoint_fault_list(circuit: Circuit) -> list[SequentialFault]:
-    """Stuck-at-0/1 at every gate output, primary input, and flip-flop Q.
+    """Stuck-at-0/1 at every gate output, reachable primary input, and flip-flop Q.
 
     This is a *checkpoint* fault list (every net that can independently
     carry a fault effect), not an equivalence-collapsed one -- collapsing
     requires structural analysis this engine does not yet do, so the list is
     slightly larger than a fully collapsed one rather than silently
     understating what was checked.
+
+    A primary input that drives no gate and no flip-flop D input is excluded:
+    it cannot activate anything, so a stuck-at fault on it is permanently
+    undetectable by construction, not because the search failed. Left in,
+    such nodes (typically a clock port declared as a plain `input` in
+    structural Verilog, e.g. `input CK, ...` with no `always @(posedge CK)`
+    modeled here -- clocking is implicit in the per-cycle simulation model
+    instead) would silently cap fault coverage below 100% on an otherwise
+    fully-covered circuit.
     """
-    nodes: set[str] = set(circuit.gates.keys()) | set(circuit.inputs)
+    referenced: set[str] = set()
+    for gate in circuit.gates.values():
+        referenced.update(gate.inputs)
+    for ff in circuit.flipflops:
+        referenced.add(ff.d)
+
+    reachable_inputs = set(circuit.inputs) & referenced
+    nodes: set[str] = set(circuit.gates.keys()) | reachable_inputs
     nodes |= {ff.q for ff in circuit.flipflops}
     faults = []
     for node in sorted(nodes):

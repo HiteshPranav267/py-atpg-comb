@@ -160,6 +160,24 @@ def test_fault_injection_forces_stuck_at_value():
 
 
 # ------------------------------------------------------------------ engine
+def test_checkpoint_fault_list_excludes_unreachable_inputs():
+    """An input that drives nothing (e.g. a clock port declared as a plain
+    `input CK` in structural Verilog, with clocking implicit in the
+    per-cycle simulation model rather than modeled as a real signal) must
+    not appear in the fault list -- a stuck-at fault on it can never be
+    activated, so including it would silently cap coverage below 100% on
+    an otherwise fully-covered circuit."""
+    c = Circuit()
+    c.add_input("A")
+    c.add_input("CK")  # never referenced by any gate or flip-flop D
+    c.add_output("Y")
+    c.add_gate("BUF", "Y", ["A"])
+    faults = checkpoint_fault_list(c)
+    nodes = {f.node for f in faults}
+    assert "CK" not in nodes
+    assert nodes == {"A", "Y"}
+
+
 def test_checkpoint_fault_list_covers_every_net_both_polarities():
     circuit = _small_shift_register()
     faults = checkpoint_fault_list(circuit)

@@ -96,20 +96,21 @@ class SequentialAtpgService:
                 "name": parsed.name,
                 "filename": parsed.filename,
                 "format": "bench" if parsed.is_bench else "verilog",
-                **{
-                    k: profile.statistics.get(k)
-                    for k in (
-                        "primary_inputs",
-                        "primary_outputs",
-                        "gates",
-                        "flip_flops",
-                        "max_level",
-                        "gate_types",
-                        "total_nodes",
-                        "total_edges",
-                        "is_dag",
-                    )
-                },
+                "primary_inputs": profile.statistics.get("primary_inputs"),
+                "primary_outputs": profile.statistics.get("primary_outputs"),
+                "gates": profile.statistics.get("gates"),
+                "flip_flops": profile.statistics.get("flip_flops"),
+                # Matches the combinational payload's field name (AtpgCircuitOverview.logic_depth
+                # on the frontend) rather than the internal "max_level" stat key.
+                "logic_depth": profile.statistics.get("max_level"),
+                "gate_types": profile.statistics.get("gate_types"),
+                "total_nodes": profile.statistics.get("total_nodes"),
+                "total_edges": profile.statistics.get("total_edges"),
+                "max_fan_in": profile.statistics.get("max_fan_in"),
+                "max_fan_out": profile.statistics.get("max_fan_out"),
+                "avg_fan_in": profile.statistics.get("avg_fan_in"),
+                "avg_fan_out": profile.statistics.get("avg_fan_out"),
+                "is_dag": profile.statistics.get("is_dag"),
             },
             analysis=analysis,
             llm_usage=usage_payload,

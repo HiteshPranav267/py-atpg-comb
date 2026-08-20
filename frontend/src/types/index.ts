@@ -271,6 +271,56 @@ export interface AtpgCircuitOverview {
   is_dag: boolean | null;
 }
 
+// ---------------------------------------------------------------------------
+// Sequential ATPG (pyatpg.seq) -- returned instead of runs/comparison/
+// targeting/circuit_analysis/correlation when the circuit has flip-flops.
+// ---------------------------------------------------------------------------
+
+export interface SequentialTestSequence {
+  vectors: Record<string, number>[];
+  cycles: number;
+  origin: string;
+}
+
+export interface SequentialResults {
+  total_faults: number | null;
+  detected_faults: number | null;
+  undetected_faults: number | null;
+  aborted_faults: number | null;
+  fault_coverage: number | null;
+  sequence_count: number | null;
+  total_clock_cycles: number | null;
+  max_sequence_length: number | null;
+}
+
+export interface SequentialAnalysisData {
+  circuit_name: string;
+  results: SequentialResults;
+  sequences: SequentialTestSequence[];
+  detected: string[];
+  undetected: string[];
+  newly_detected_by_sequence: string[][];
+  llm: Record<string, unknown> | null;
+  notes: string[];
+}
+
+export interface LlmUsage {
+  enabled: boolean;
+  api_calls?: number;
+  cached_hits?: number;
+  prompt_tokens_est?: number;
+  response_tokens_est?: number;
+  total_tokens_est?: number;
+  by_stage?: Record<string, { calls: number; tokens_est: number }>;
+  circuit_summary?: string;
+}
+
+export interface SequentialSummary {
+  circuit: AtpgCircuitOverview;
+  analysis: SequentialAnalysisData;
+  llm_usage: LlmUsage;
+}
+
 export interface AtpgReport {
   job_id: string;
   mode: AnalysisMode;
@@ -282,4 +332,5 @@ export interface AtpgReport {
   circuit_analysis: CircuitAnalysis | null;
   correlation: CorrelationReport | null;
   notes: string[];
+  sequential: SequentialSummary | null;
 }

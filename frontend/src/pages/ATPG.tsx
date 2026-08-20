@@ -7,6 +7,7 @@ import { useAppStore } from '@/store';
 import type { AnalysisMode, AnalysisModeOption, AtpgReport } from '@/types';
 import { Section, Stat, Pill, KeyValue, metric } from '@/components/atpg/primitives';
 import { RunReport } from '@/components/atpg/RunReport';
+import { SequentialReport } from '@/components/atpg/SequentialReport';
 import {
   CircuitAnalysisPanel,
   ComparisonPanel,
@@ -109,6 +110,9 @@ export default function ATPG() {
                 </option>
               ))}
             </select>
+            <p className="text-xs text-muted-foreground mt-2 leading-relaxed italic">
+              Ignored for circuits with flip-flops — those always run the sequential engine.
+            </p>
             {selected && (
               <p className="text-xs text-muted-foreground mt-2 leading-relaxed">
                 {selected.description}
@@ -164,6 +168,24 @@ function ReportView({ report }: { report: AtpgReport }) {
     runKeys.includes('non_targeted') ? 'non_targeted' : runKeys[0]
   );
   const current = report.runs[activeRun] ?? report.runs[runKeys[0]];
+
+  if (report.sequential) {
+    return (
+      <div className="flex flex-col gap-6">
+        <CircuitOverview report={report} />
+        {report.notes.length > 0 && (
+          <div className="flex flex-col gap-2">
+            {report.notes.map((note) => (
+              <p key={note} className="text-xs text-muted-foreground bg-secondary/50 px-3 py-2 rounded-md">
+                {note}
+              </p>
+            ))}
+          </div>
+        )}
+        <SequentialReport sequential={report.sequential} />
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col gap-6">
