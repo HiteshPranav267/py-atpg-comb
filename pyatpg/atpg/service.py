@@ -167,6 +167,13 @@ class AtpgAnalysisService:
             mode=mode,
             circuit=self._circuit_payload(parsed, profile.statistics),
         )
+        if parsed.implicit_inputs:
+            names = ", ".join(parsed.implicit_inputs)
+            analysis.notes.append(
+                f"This netlist references signal(s) that are never driven by any gate "
+                f"({names}) -- treated as free primary inputs, since an undriven net's "
+                f"value is exactly as unconstrained as a real one's."
+            )
 
         selection = None
         if mode.runs_targeted:

@@ -18,7 +18,7 @@ from pyatpg.seq.faultsim import checkpoint_fault_list, evaluate_coverage
 from pyatpg.seq.models import SequentialFault, TestSequence, build_sequential_comparison
 from pyatpg.seq.podem import podem
 from pyatpg.seq.simulator import simulate, traces_diverge
-from pyatpg.seq.timeframe import build_unrolled_circuit
+from pyatpg.seq.timeframe import build_unrolled_circuit, is_combinational_part_acyclic
 
 BENCHMARKS = Path(__file__).parent.parent / "benchmarks"
 
@@ -77,6 +77,39 @@ def test_circuit_graph_levels_and_scoap_ignore_register_feedback():
     # output must be 0 (trivially observable), not some arbitrary fallback.
     assert co["G17"] == 0
     assert cc1["G17"] >= 1
+
+
+def test_promote_undefined_signals_to_inputs():
+    c = Circuit()
+    c.add_input("A")
+    c.add_output("Y")
+    c.add_gate("AND", "Y", ["A", "GHOST"])  # GHOST is never defined anywhere
+    promoted = c.promote_undefined_signals_to_inputs()
+    assert promoted == ["GHOST"]
+    assert "GHOST" in c.inputs
+    assert is_combinational_part_acyclic(c)
+
+
+def test_promote_undefined_signals_is_a_noop_when_everything_is_defined():
+    circuit = _small_shift_register()
+    assert circuit.promote_undefined_signals_to_inputs() == []
+
+
+def test_s400_dangling_clock_net_is_not_reported_as_a_feedback_loop():
+    """Regression: s400.bench/s400.v reference Phi1H, a clock-phase wire
+    that is declared but never driven by any gate -- a data-quality issue
+    in the benchmark files themselves (lost, presumably, when the original
+    latch-based ISCAS-89 circuit was flattened), not a real unbroken
+    combinational feedback loop. Before Circuit.promote_undefined_signals_
+    to_inputs, an undefined signal and a genuine async latch loop were
+    structurally indistinguishable -- both just never resolved during a
+    topological pass -- so s400 was wrongly rejected with a misleading
+    "combinational feedback loop" error."""
+    from pyatpg.atpg.structural import parse_circuit
+
+    parsed = parse_circuit((BENCHMARKS / "s400.bench").read_text(), "s400.bench")
+    assert parsed.implicit_inputs == ["Phi1H"]
+    assert is_combinational_part_acyclic(parsed.circuit)
 
 
 def test_register_feedback_is_not_a_combinational_cycle():

@@ -66,6 +66,17 @@ class SequentialAtpgService:
         return parsed, profile
 
     @staticmethod
+    def _implicit_input_notes(parsed: ParsedCircuit) -> list[str]:
+        if not parsed.implicit_inputs:
+            return []
+        names = ", ".join(parsed.implicit_inputs)
+        return [
+            f"This netlist references signal(s) that are never driven by any gate or "
+            f"flip-flop ({names}) -- treated as free primary inputs, since an undriven "
+            f"net's value is exactly as unconstrained as a real one's."
+        ]
+
+    @staticmethod
     def _circuit_payload(parsed: ParsedCircuit, profile: StructuralProfile) -> dict[str, Any]:
         return {
             "name": parsed.name,
@@ -151,6 +162,7 @@ class SequentialAtpgService:
         analysis, llm_usage = self._run_engine(
             parsed, profile, source_text, use_llm, api_key, target_coverage, max_sequences
         )
+        analysis.notes = self._implicit_input_notes(parsed) + analysis.notes
         return SequentialAnalysisResult(
             circuit=self._circuit_payload(parsed, profile),
             analysis=analysis,
@@ -187,6 +199,7 @@ class SequentialAtpgService:
                 "No LLM API key is configured, so the 'LLM-assisted' column ran "
                 "deterministic-only too -- add a key in Settings for a real comparison.",
             )
+        comparison.notes = self._implicit_input_notes(parsed) + comparison.notes
         return SequentialComparisonResult(
             circuit=self._circuit_payload(parsed, profile),
             comparison=comparison,

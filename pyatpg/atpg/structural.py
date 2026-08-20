@@ -25,6 +25,15 @@ class ParsedCircuit:
     source_text: str
     filename: str
     name: str
+    #: Signals referenced by a gate/flip-flop but never driven by anything
+    #: (not a declared input, gate output, or flip-flop Q) -- promoted to
+    #: free primary inputs during parsing. See
+    #: Circuit.promote_undefined_signals_to_inputs for why.
+    implicit_inputs: list[str] = None  # type: ignore[assignment]
+
+    def __post_init__(self) -> None:
+        if self.implicit_inputs is None:
+            self.implicit_inputs = []
 
     @property
     def is_bench(self) -> bool:
@@ -33,10 +42,15 @@ class ParsedCircuit:
     def to_bench(self) -> str:
         """The circuit in ISCAS .bench form, which is what Atalanta reads.
 
-        BENCH input is passed through untouched so the netlist Atalanta sees
-        is byte-identical to what the user supplied.
+        BENCH input is passed through untouched -- so the netlist Atalanta
+        sees is byte-identical to what the user supplied -- *unless* parsing
+        found undefined signals, in which case that guarantee would hide a
+        net Atalanta will fail on anyway; regenerating from the (now
+        input-promoted) circuit is the only way it actually gets one.
         """
-        return self.source_text if self.is_bench else self.circuit.to_bench()
+        if self.is_bench and not self.implicit_inputs:
+            return self.source_text
+        return self.circuit.to_bench()
 
 
 @dataclass
@@ -69,11 +83,13 @@ def parse_circuit(source_text: str, filename: str) -> ParsedCircuit:
     if stem.endswith("_mod"):
         stem = stem[:-4]
     circuit.name = stem
+    implicit_inputs = circuit.promote_undefined_signals_to_inputs()
     return ParsedCircuit(
         circuit=circuit,
         source_text=source_text,
         filename=filename,
         name=stem,
+        implicit_inputs=implicit_inputs,
     )
 
 
