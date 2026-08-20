@@ -111,9 +111,9 @@ export default function ATPG() {
               ))}
             </select>
             <p className="text-xs text-muted-foreground mt-2 leading-relaxed italic">
-              For circuits with flip-flops: Non-Targeted runs deterministic-only, Targeted enables
-              LLM-assisted fault prioritization (needs an API key in Settings), and Compare runs
-              both back to back and shows the delta.
+              For circuits with flip-flops: Non-Targeted runs deterministic-only. Targeted and
+              Compare both enable LLM assistance (needs an API key in Settings) and show a
+              deterministic-vs-LLM-assisted comparison side by side.
             </p>
             {selected && (
               <p className="text-xs text-muted-foreground mt-2 leading-relaxed">

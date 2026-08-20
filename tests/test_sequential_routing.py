@@ -1,9 +1,11 @@
 """Tests for how AtpgAnalysisService routes sequential circuits.
 
-No network/API key is used here: both scenarios below are decided before
-any LLM provider is ever constructed (no key configured; mode explicitly
-disables LLM assistance), so they stay fast and deterministic like the rest
-of the suite.
+Most scenarios here are decided before any LLM provider is ever
+constructed (no key configured; mode explicitly disables LLM assistance),
+so they stay fast, deterministic, and network-free. One test uses a fake
+key to exercise the actual GeminiProvider construction path; a fake key
+fails fast (not a slow timeout), and every layer downstream of it degrades
+gracefully by design, so this stays reliable without needing a real key.
 """
 from __future__ import annotations
 
@@ -60,14 +62,29 @@ def test_sequential_response_still_has_full_coverage_regardless_of_mode():
         assert d["sequential"]["analysis"]["results"]["fault_coverage"] == 100.0
 
 
-def test_sequential_compare_mode_without_a_key_explains_there_is_nothing_to_compare():
-    """Regression: Compare mode used to silently behave like Targeted (a
-    single LLM-enabled run, or none at all without a key) -- there was no
-    actual deterministic-vs-LLM-assisted comparison for the user to see."""
+def test_sequential_compare_mode_without_a_key_explains_why_there_is_no_comparison():
     service = AtpgAnalysisService()
     analysis = service.run(
         source_text=_s27_v(), filename="s27.v", mode=AnalysisMode.COMPARE, use_llm=True
     )
     d = analysis.to_dict()
     assert d["sequential"]["comparison"] is None
-    assert any("nothing to compare" in note for note in d["notes"])
+    assert any("no API key is configured" in note for note in d["notes"])
+
+
+def test_sequential_targeted_mode_with_a_key_shows_the_comparison_too():
+    """Regression: only Compare mode used to build the deterministic-vs-
+    LLM-assisted comparison, so picking "LLM Heuristic (Targeted)" -- the
+    natural choice for "I want the LLM to help" -- silently showed just a
+    single run with no comparison, which is what a user actually wants to
+    see. TARGETED and COMPARE must behave identically for sequential
+    circuits: there is no separate "targeted fault subset" concept here."""
+    service = AtpgAnalysisService()
+    analysis = service.run(
+        source_text=_s27_v(), filename="s27.v", mode=AnalysisMode.TARGETED,
+        use_llm=True, api_key="fake-key-for-test",
+    )
+    d = analysis.to_dict()
+    assert d["sequential"]["comparison"] is not None
+    assert d["sequential"]["comparison"]["baseline"]["results"]["fault_coverage"] == 100.0
+    assert d["sequential"]["comparison"]["llm_assisted"]["results"]["fault_coverage"] == 100.0

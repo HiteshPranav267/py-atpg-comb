@@ -249,12 +249,15 @@ class AtpgAnalysisService:
 
         Kept as a thin adapter so the response envelope (job_id, notes,
         redaction) stays identical between the two paths even though the
-        underlying engines are unrelated. ``mode`` is repurposed the same
-        way it gates the combinational path: NON_TARGETED means "no LLM
-        assistance", TARGETED/COMPARE mean "use it if a key is configured" --
-        there is no separate notion of a targeted fault subset here, since
-        LLM-2 already only ever prioritizes among the faults still
-        undetected after deterministic search, for every mode.
+        underlying engines are unrelated. ``mode`` gates LLM involvement the
+        same way it does on the combinational path: NON_TARGETED means "no
+        LLM assistance". Unlike combinational, TARGETED and COMPARE behave
+        identically here -- there is no separate notion of a targeted fault
+        subset for a sequential run, so whenever LLM assistance is on, the
+        deterministic-only-vs-LLM-assisted comparison always runs and is
+        always shown. Splitting that into two different modes just meant a
+        user had to already know to pick "Compare" to see the comparison
+        they wanted by asking for "Targeted" in the first place.
         """
         from pyatpg.seq.service import SequentialAtpgService
 
@@ -268,7 +271,7 @@ class AtpgAnalysisService:
         ]
         seq_service = SequentialAtpgService(api_key=self._explicit_api_key)
 
-        if mode is AnalysisMode.COMPARE and use_llm and resolved_key:
+        if effective_use_llm and resolved_key:
             # A real deterministic-only-vs-LLM-assisted comparison: two full
             # runs, same seed, so the difference is attributable to the LLM.
             comp = seq_service.run_comparison(
@@ -283,13 +286,7 @@ class AtpgAnalysisService:
             )
             circuit_payload = comp.circuit
         else:
-            if mode is AnalysisMode.COMPARE and use_llm and not resolved_key:
-                notes.append(
-                    "Compare mode requested but no API key is configured, so there is "
-                    "nothing to compare against; ran deterministic-only ATPG. Add a "
-                    "key in Settings for a deterministic-vs-LLM-assisted comparison."
-                )
-            elif use_llm and not mode.runs_targeted:
+            if use_llm and not mode.runs_targeted:
                 notes.append(
                     "LLM assistance skipped: mode is set to non-targeted "
                     "(deterministic-only ATPG). Switch to a targeted or compare mode "
@@ -298,7 +295,8 @@ class AtpgAnalysisService:
             elif effective_use_llm and not resolved_key:
                 notes.append(
                     "LLM assistance requested but no API key is configured; ran "
-                    "deterministic-only ATPG. Add a key in Settings to enable it."
+                    "deterministic-only ATPG. Add a key in Settings to see a "
+                    "deterministic-vs-LLM-assisted comparison."
                 )
 
             result = seq_service.run(
@@ -307,14 +305,6 @@ class AtpgAnalysisService:
                 use_llm=effective_use_llm,
                 api_key=api_key,
             )
-            llm2_calls = result.llm_usage.get("by_stage", {}).get("llm2", {}).get("calls", 0)
-            if effective_use_llm and resolved_key and result.llm_usage.get("enabled") and not llm2_calls:
-                notes.append(
-                    "LLM-1 summarised the circuit, but LLM-2 fault prioritization was "
-                    "never consulted: deterministic search (random-fill + PODEM) already "
-                    "reached every fault it could detect, so there was nothing left for "
-                    "it to help with."
-                )
             sequential = SequentialSummary(
                 circuit=result.circuit,
                 analysis=result.analysis.to_dict(),
