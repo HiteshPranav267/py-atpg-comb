@@ -18,8 +18,13 @@ export function SequentialReport({ sequential }: { sequential: SequentialSummary
 
   return (
     <div className="flex flex-col gap-6">
+      {/* When a comparison ran, it's the headline result -- shown before the
+          single-run summary below (which reflects the LLM-assisted run) so
+          it can't be missed further down the page. */}
+      {sequential.comparison && <SequentialComparisonPanel comparison={sequential.comparison} />}
+
       <Section
-        title="Sequential ATPG summary"
+        title={sequential.comparison ? 'LLM-assisted run detail' : 'Sequential ATPG summary'}
         subtitle="Time-frame-expansion engine (PODEM search + a deterministic, reset-driven multi-cycle fault simulator). No flip-flop-bearing circuit reaches a combinational-only engine."
         actions={<Pill tone="info">Sequential</Pill>}
       >
@@ -42,8 +47,6 @@ export function SequentialReport({ sequential }: { sequential: SequentialSummary
           <Stat label="Longest sequence (cycles)" value={r.max_sequence_length} />
         </div>
       </Section>
-
-      {sequential.comparison && <SequentialComparisonPanel comparison={sequential.comparison} />}
 
       {llm_usage?.enabled && <LlmUsagePanel llm_usage={llm_usage} />}
 
