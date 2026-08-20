@@ -149,7 +149,7 @@ class AtpgAnalysisService:
             # Atalanta is a purely combinational engine; it cannot levelize a
             # netlist with state elements. Route to the native sequential
             # engine (pyatpg.seq) instead of rejecting the circuit.
-            return self._run_sequential(parsed, source_text, filename, use_llm, api_key)
+            return self._run_sequential(parsed, source_text, filename, mode, use_llm, api_key)
 
         profile = profile_circuit(parsed, toggle_patterns=toggle_patterns)
         if not profile.statistics.get("is_dag", True):
@@ -241,6 +241,7 @@ class AtpgAnalysisService:
         parsed: ParsedCircuit,
         source_text: str,
         filename: str,
+        mode: AnalysisMode,
         use_llm: bool,
         api_key: str | None,
     ) -> AtpgAnalysis:
@@ -248,33 +249,61 @@ class AtpgAnalysisService:
 
         Kept as a thin adapter so the response envelope (job_id, notes,
         redaction) stays identical between the two paths even though the
-        underlying engines are unrelated.
+        underlying engines are unrelated. ``mode`` is repurposed the same
+        way it gates the combinational path: NON_TARGETED means "no LLM
+        assistance", TARGETED/COMPARE mean "use it if a key is configured" --
+        there is no separate notion of a targeted fault subset here, since
+        LLM-2 already only ever prioritizes among the faults still
+        undetected after deterministic search, for every mode.
         """
         from pyatpg.seq.service import SequentialAtpgService
 
         workspace = JobWorkspace.create(parsed.name)
         resolved_key = self._api_key(use_llm, request_key=api_key)
+        effective_use_llm = use_llm and mode.runs_targeted
+
+        notes = [
+            "Sequential circuit: routed to the native time-frame-expansion ATPG "
+            "engine for circuits with flip-flops."
+        ]
+        if use_llm and not mode.runs_targeted:
+            notes.append(
+                "LLM assistance skipped: mode is set to non-targeted "
+                "(deterministic-only ATPG). Switch to a targeted or compare mode "
+                "to enable it."
+            )
+        elif effective_use_llm and not resolved_key:
+            notes.append(
+                "LLM assistance requested but no API key is configured; ran "
+                "deterministic-only ATPG. Add a key in Settings to enable it."
+            )
+
         seq_service = SequentialAtpgService(api_key=self._explicit_api_key)
         result = seq_service.run(
             source_text=source_text,
             filename=filename,
-            use_llm=use_llm,
+            use_llm=effective_use_llm,
             api_key=api_key,
         )
+        llm2_calls = result.llm_usage.get("by_stage", {}).get("llm2", {}).get("calls", 0)
+        if effective_use_llm and resolved_key and result.llm_usage.get("enabled") and not llm2_calls:
+            notes.append(
+                "LLM-1 summarised the circuit, but LLM-2 fault prioritization was "
+                "never consulted: deterministic search (random-fill + PODEM) already "
+                "reached every fault it could detect, so there was nothing left for "
+                "it to help with."
+            )
 
         analysis = AtpgAnalysis(
             job_id=workspace.job_id,
-            mode=AnalysisMode.NON_TARGETED,
+            mode=mode,
             circuit=result.circuit,
             sequential=SequentialSummary(
                 circuit=result.circuit,
                 analysis=result.analysis.to_dict(),
                 llm_usage=result.llm_usage,
             ),
-            notes=[
-                "Sequential circuit: routed to the native time-frame-expansion ATPG "
-                "engine for circuits with flip-flops."
-            ],
+            notes=notes,
         )
         if resolved_key:
             _redact_secret(analysis, resolved_key)
