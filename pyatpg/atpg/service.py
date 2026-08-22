@@ -12,6 +12,7 @@ from typing import Any
 
 from .circuit_analyst import CircuitAnalysis, CircuitAnalyst
 from .correlation import CorrelationReport, correlate
+from .verdict import TrojanVerdict, build_verdict
 from .models import AnalysisMode, AtalantaRun, RunComparison, SequentialSummary, build_comparison
 from .runner import AtalantaRunner, build_fault_lines
 from .structural import ParsedCircuit, parse_circuit, profile_circuit
@@ -67,6 +68,9 @@ class AtpgAnalysis:
     targeting: dict[str, Any] = field(default_factory=dict)
     circuit_analysis: CircuitAnalysis | None = None
     correlation: CorrelationReport | None = None
+    #: The run's trojan conclusion. Separate from `correlation`, which only
+    #: reports overlap between two lists and deliberately draws no conclusion.
+    verdict: TrojanVerdict | None = None
     notes: list[str] = field(default_factory=list)
     #: Populated instead of `runs`/`targeting`/`circuit_analysis` when the
     #: circuit has flip-flops -- Atalanta cannot levelize sequential logic,
@@ -86,6 +90,7 @@ class AtpgAnalysis:
             "targeting": self.targeting,
             "circuit_analysis": self.circuit_analysis.to_dict() if self.circuit_analysis else None,
             "correlation": self.correlation.to_dict() if self.correlation else None,
+            "verdict": self.verdict.to_dict() if self.verdict else None,
             "notes": self.notes,
             "sequential": self.sequential.to_dict() if self.sequential else None,
         }
@@ -175,6 +180,18 @@ class AtpgAnalysisService:
                 f"value is exactly as unconstrained as a real one's."
             )
 
+        # Structural trojan evidence is independent of which ATPG runs were
+        # requested, so compute it once here: a non-targeted run should still
+        # get a verdict, and the targeted path reuses the same finding.
+        from .suspects import find_structural_suspects
+
+        try:
+            structural_suspects, suspect_reasons = find_structural_suspects(
+                profile.gate_profiles, profile.graph
+            )
+        except Exception:  # noqa: BLE001 - detector failure must not fail the run
+            structural_suspects, suspect_reasons = [], []
+
         selection = None
         if mode.runs_targeted:
             from .targeting import FaultTargetSelector
@@ -242,6 +259,12 @@ class AtpgAnalysisService:
         )
         analysis.correlation = correlate(
             analysis.circuit_analysis, list(analysis.runs.values())
+        )
+        analysis.verdict = build_verdict(
+            structural_suspects,
+            suspect_reasons,
+            list(analysis.runs.values()),
+            targeted_gates=(selection.gates if selection else []),
         )
 
         # Provider errors are surfaced verbatim to explain a fallback. Scrub

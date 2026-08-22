@@ -46,6 +46,36 @@ _MAX_TOGGLE_RATE = 0.1
 _MIN_FAN_IN = 2
 _MIN_OBSERVABILITY = 5
 
+#: Minimum confidence for a gate to enter the targeted fault list. Gates the
+#: model scores below this are dropped rather than tested.
+_MIN_CONFIDENCE = 0.3
+
+#: Worked examples of what inserted logic looks like in feature terms, given
+#: to the model as support-set "shots". Deliberately written as feature
+#: patterns rather than named gates: the point is to teach the shape, so it
+#: transfers to a netlist whose signals are named arbitrarily. Values are
+#: illustrative of the general profile, not copied from any test circuit.
+_FEW_SHOT_EXEMPLARS = """### Worked examples
+
+Example A -- a trigger. A 3-input AND sitting among 2-input NANDs, toggle
+rate 0.02 against a circuit median near 0.3, fan-out of exactly 1, CO higher
+than its immediate neighbours. Suspicious not because 0.02 is the lowest in
+the circuit (it usually is not) but because the gate is rare AND narrow AND
+feeds a single load -- a conjunction built to fire almost never.
+
+Example B -- a payload. A 2-input XOR whose two inputs have wildly different
+toggle rates: one near the circuit median, one an order of magnitude lower.
+On a normal data path both inputs of an XOR swing at comparable rates. This
+asymmetry is the signature of logic spliced into an existing path, where one
+side is the original signal and the other is a trigger.
+
+Example C -- NOT suspicious. A gate with the circuit's single lowest toggle
+rate, high CC0/CC1, sitting in a deep arithmetic cone with several fan-outs
+and neighbours of similar rarity. Extreme testability numbers alone are
+ordinary in benign logic -- deep carry chains and comparators look like this.
+Rarity matters when it is anomalous for its neighbourhood, not when it is
+simply the tail of the distribution."""
+
 
 @dataclass
 class TargetSelection:
@@ -187,6 +217,12 @@ class FaultTargetSelector:
     def _structural_selection(
         self, profiles: list[dict[str, Any]], max_gates: int, notes: list[str]
     ) -> TargetSelection:
+        def rank_key(p):
+            return (
+                p["features"].get("toggle_rate", 1.0),
+                -p["features"].get("co", 0),
+            )
+
         ranked = [
             p
             for p in profiles
@@ -194,12 +230,29 @@ class FaultTargetSelector:
         ]
         # Rarest-toggling and least-observable first, so a truncated list
         # keeps the most interesting candidates.
-        ranked.sort(
-            key=lambda p: (
-                p["features"].get("toggle_rate", 1.0),
-                -p["features"].get("co", 0),
-            )
-        )
+        ranked.sort(key=rank_key)
+
+        # All three thresholds must hold at once, so on a circuit whose logic
+        # happens not to satisfy them the filter can return almost nothing --
+        # a targeted run of one or two faults, which reports a meaningless
+        # 100% coverage and tests essentially none of the circuit. Top up from
+        # the same ranking so the fault list is always a usable size.
+        floor = min(_MIN_TARGET_GATES, max_gates, len(profiles))
+        if len(ranked) < floor:
+            qualified = len(ranked)
+            chosen = {id(p) for p in ranked}
+            for p in sorted(profiles, key=rank_key):
+                if len(ranked) >= floor:
+                    break
+                if id(p) not in chosen:
+                    ranked.append(p)
+                    chosen.add(id(p))
+            notes = notes + [
+                f"Only {qualified} gate(s) met all structural thresholds; topped up "
+                f"to {len(ranked)} from the same rarity ranking so the targeted run "
+                f"covers a meaningful share of the circuit."
+            ]
+
         return TargetSelection(
             gates=[p["gate_id"] for p in ranked[:max_gates]],
             strategy="structural-heuristic",
@@ -217,6 +270,48 @@ class FaultTargetSelector:
             )
         except (KeyError, TypeError):
             return False
+
+    @staticmethod
+    def _parse_scored_response(
+        text: str, alias_to_gate: dict[str, str]
+    ) -> list[str]:
+        """Read "alias,confidence" lines back into real gate names.
+
+        Tolerates the model answering in the older bare comma-separated form
+        (no scores) -- those gates are kept, since a missing score is not the
+        same as a low one. Aliases the model invents resolve to nothing and
+        are dropped here, before ``_keep_known_gates`` ever sees them.
+        """
+        scored: list[tuple[float, str]] = []
+        seen: set[str] = set()
+
+        for raw_line in text.replace(";", "\n").splitlines():
+            line = raw_line.strip()
+            if not line:
+                continue
+            parts = [p.strip() for p in line.split(",") if p.strip()]
+            if not parts:
+                continue
+
+            # "alias,confidence" -- the requested form.
+            if len(parts) == 2 and parts[0] in alias_to_gate:
+                try:
+                    confidence = float(parts[1])
+                except ValueError:
+                    confidence = 1.0
+                if parts[0] not in seen and confidence >= _MIN_CONFIDENCE:
+                    seen.add(parts[0])
+                    scored.append((confidence, parts[0]))
+                continue
+
+            # Fall back to bare aliases, possibly several per line.
+            for token in parts:
+                if token in alias_to_gate and token not in seen:
+                    seen.add(token)
+                    scored.append((1.0, token))
+
+        scored.sort(key=lambda pair: -pair[0])
+        return [alias_to_gate[alias] for _, alias in scored]
 
     @staticmethod
     def _keep_known_gates(gates: list[str], profiles: list[dict[str, Any]]) -> list[str]:
@@ -299,13 +394,21 @@ Weigh two different kinds of evidence:
    narrow-fan-out gate feeding a single unusual load, or a small cluster of
    gates whose profile differs from the surrounding logic.
 
+{_FEW_SHOT_EXEMPLARS}
+
 Do not return only the single most extreme gate. One gate being a clear
 outlier on toggle rate does not mean the rest are uninteresting -- inserted
 logic is usually NOT the most extreme thing in the circuit, so a one-gate
 answer will miss it. Return a spread of at least {floor} gates unless the
 circuit is smaller than that, covering both kinds of evidence above.
 
-Return between {floor} and {max_gates} gate ids, comma-separated, nothing else.
+### Output format
+Return one line per gate, most suspicious first, as:
+
+    gate_id,confidence
+
+where confidence is between 0.0 and 1.0. Output nothing else -- no prose, no
+headers. Return between {floor} and {max_gates} gates.
 
 Gate profiles:
 {profile_block}
@@ -318,15 +421,9 @@ Gate profiles:
                     model="gemini-flash-latest",
                     contents=prompt,
                 )
-                text = (response.text or "").replace("\n", " ")
-                # Map the opaque ids the model saw back to real gate names.
-                # An id it invents resolves to nothing and is dropped here,
-                # before _keep_known_gates ever sees it.
-                return [
-                    alias_to_gate[a]
-                    for a in (g.strip() for g in text.split(","))
-                    if a in alias_to_gate
-                ]
+                return self._parse_scored_response(
+                    response.text or "", alias_to_gate
+                )
             except Exception as exc:  # noqa: BLE001
                 last_error = exc
                 if not any(m in str(exc) for m in _RETRYABLE_MARKERS) or attempt == 2:

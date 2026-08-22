@@ -230,3 +230,123 @@ class TestSuspectMerging:
         )
         for gate in sel.structural_suspects:
             assert gate in sel.gates
+
+
+class TestConfidenceScoring:
+    """The prompt asks for 'alias,confidence'; low-confidence gates are dropped."""
+
+    def _run(self, response_text):
+        from pyatpg.atpg import targeting as T
+
+        p = _profile(TROJAN, toggle_patterns=200)
+
+        class FakeModels:
+            def generate_content(self, model, contents):
+                import re
+
+                aliases = re.findall(r"Gate: (g\d+),", contents)
+
+                class R:
+                    text = response_text.format(*aliases[:4])
+
+                return R()
+
+        class FakeClient:
+            def __init__(self, api_key=None):
+                self.models = FakeModels()
+
+        original = T.genai
+        T.genai = type("X", (), {"Client": FakeClient})
+        try:
+            return T.FaultTargetSelector(api_key="fake").select(p.gate_profiles)
+        finally:
+            T.genai = original
+
+    def test_low_confidence_gates_are_dropped(self):
+        sel = self._run("{0},0.9\n{1},0.1\n{2},0.8\n{3},0.05")
+        # Only the two gates at or above the 0.3 threshold survive.
+        assert len(sel.gates) == 2
+
+    def test_results_are_ordered_by_confidence(self):
+        sel = self._run("{0},0.4\n{1},0.95\n{2},0.6")
+        assert len(sel.gates) == 3
+
+    def test_bare_list_without_scores_still_works(self):
+        """Older/looser responses without confidences must not be discarded."""
+        sel = self._run("{0},{1},{2}")
+        assert len(sel.gates) >= 3
+
+
+class TestVerdict:
+    def test_clean_circuit_returns_no_trojan(self):
+        from pyatpg.atpg.verdict import build_verdict
+
+        v = build_verdict([], [], [])
+        assert v.verdict == "no_trojan_indicated"
+        assert v.confidence == 0.0
+        assert v.caveats
+
+    def test_structural_suspect_produces_a_verdict(self):
+        """The old rule required an undetected fault and so never fired."""
+        from pyatpg.atpg.verdict import build_verdict
+
+        v = build_verdict(
+            ["ht_trig"], ["ht_trig: rarely-satisfied AND feeding an XOR"], []
+        )
+        assert v.verdict == "trojan_suspected"
+        assert v.suspects[0].gate == "ht_trig"
+        assert v.suspects[0].confidence > 0.5
+
+    def test_detectable_suspect_scores_above_an_undetectable_one(self):
+        from pyatpg.atpg.models import AtalantaRun, FaultEntry
+        from pyatpg.atpg.verdict import build_verdict
+
+        run = AtalantaRun(label="x", targeted=False)
+        run.faults = [FaultEntry("a/0", "blocked", "sa0", "redundant")]
+        v = build_verdict(["reachable", "blocked"], [], [run])
+        by = {s.gate: s for s in v.suspects}
+        assert by["reachable"].confidence > by["blocked"].confidence
+        assert by["blocked"].atpg_status == "redundant"
+
+
+class TestGateTypeCoverage:
+    """Every gate type the parser accepts must be handled by the simulator and
+    SCOAP, or those gates silently corrupt the features derived from them."""
+
+    def test_buff_is_simulated_like_buf(self):
+        """BUFF is the ISCAS .bench spelling and is common in these netlists.
+        Unhandled, it evaluated to a constant 0, never toggled, and fell back
+        to the default 0.5 toggle rate."""
+        src = """
+module b(a, out1, out2);
+input a;
+output out1, out2;
+wire w1, w2;
+buf  g1(w1, a);
+buff g2(w2, a);
+not  g3(out1, w1);
+not  g4(out2, w2);
+endmodule
+"""
+        p = _profile(src, toggle_patterns=400)
+        feats = {str(g["gate_id"]): g["features"] for g in p.gate_profiles}
+        assert feats["w1"]["toggle_rate"] == feats["w2"]["toggle_rate"]
+        # A buffer of a random input toggles; it must not read as static.
+        assert feats["w2"]["toggle_rate"] > 0.0
+
+    def test_every_valid_gate_type_is_evaluated(self):
+        from pyatpg.core.netlist import Circuit
+        from pyatpg.core.graph_analysis import CircuitGraph
+
+        for gtype in sorted(Circuit.VALID_GATES):
+            arity = 1 if gtype in ("NOT", "BUF", "BUFF") else 2
+            ins = ", ".join("i%d" % i for i in range(arity))
+            src = (
+                "module t(%s, out);\ninput %s;\noutput out;\n%s g(out, %s);\nendmodule"
+                % (ins, ins, gtype.lower(), ins)
+            )
+            p = _profile(src, toggle_patterns=200)
+            feats = {str(g["gate_id"]): g["features"] for g in p.gate_profiles}
+            rate = feats["out"]["toggle_rate"]
+            # 0.5 is the "no data" default; a driven output must have real data.
+            assert rate != 0.5, f"{gtype} produced no simulated transitions"

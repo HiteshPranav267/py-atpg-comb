@@ -1,6 +1,72 @@
-import { Brain, GitCompareArrows, Info, Link2 } from 'lucide-react';
-import type { CircuitAnalysis, CorrelationReport, RunComparison } from '@/types';
+import { Brain, GitCompareArrows, Info, Link2, ShieldAlert, ShieldCheck } from 'lucide-react';
+import type { CircuitAnalysis, CorrelationReport, RunComparison, TrojanVerdict } from '@/types';
 import { KeyValue, Pill, Section, Stat, metric } from './primitives';
+
+export function VerdictPanel({ verdict }: { verdict: TrojanVerdict }) {
+  const suspected = verdict.verdict === 'trojan_suspected';
+  return (
+    <Section
+      title="Trojan verdict"
+      subtitle="Gates matching the structural shape of an inserted trigger/payload, confirmed against what ATPG could generate for them."
+      actions={
+        suspected ? (
+          <ShieldAlert className="w-4 h-4 text-red-400" />
+        ) : (
+          <ShieldCheck className="w-4 h-4 text-muted-foreground" />
+        )
+      }
+    >
+      <div className="flex items-center gap-2 mb-2">
+        <Pill tone={suspected ? 'warn' : 'neutral'}>
+          {suspected ? 'Trojan suspected' : 'No trojan indicated'}
+        </Pill>
+        {suspected && (
+          <span className="text-xs text-muted-foreground font-mono">
+            top confidence {verdict.confidence.toFixed(2)}
+          </span>
+        )}
+      </div>
+      <p className="text-sm leading-relaxed">{verdict.summary}</p>
+
+      {verdict.suspects.length > 0 && (
+        <div className="flex flex-col gap-3 mt-5">
+          {verdict.suspects.map((item) => (
+            <div key={item.gate} className="border border-border rounded-md p-4">
+              <div className="flex items-center gap-2 mb-2">
+                <span className="font-mono text-sm text-primary font-bold">{item.gate}</span>
+                <Pill tone={item.atpg_status === 'detected' ? 'warn' : 'neutral'}>
+                  {item.atpg_status}
+                </Pill>
+                <span className="text-xs text-muted-foreground font-mono ml-auto">
+                  confidence {item.confidence.toFixed(2)}
+                </span>
+              </div>
+              <p className="text-sm text-muted-foreground leading-relaxed">{item.statement}</p>
+              {item.reasons.length > 0 && (
+                <ul className="mt-2 flex flex-col gap-1">
+                  {item.reasons.map((reason) => (
+                    <li key={reason} className="text-xs text-muted-foreground/80 font-mono leading-relaxed">
+                      {reason}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      <ul className="mt-5 flex flex-col gap-2 border-t border-border pt-4">
+        {verdict.caveats.map((caveat) => (
+          <li key={caveat} className="text-xs text-muted-foreground leading-relaxed flex gap-2">
+            <Info className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+            {caveat}
+          </li>
+        ))}
+      </ul>
+    </Section>
+  );
+}
 
 export function ComparisonPanel({ comparison }: { comparison: RunComparison }) {
   return (

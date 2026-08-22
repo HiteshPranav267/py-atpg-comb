@@ -12,6 +12,7 @@ import {
   CircuitAnalysisPanel,
   ComparisonPanel,
   CorrelationPanel,
+  VerdictPanel,
 } from '@/components/atpg/AnalysisPanels';
 
 /** Fallback list if /atpg/modes is unreachable; labels match the backend. */
@@ -220,6 +221,7 @@ function ReportView({ report }: { report: AtpgReport }) {
 
       {current && <RunReport run={current} jobId={report.job_id} />}
 
+      {report.verdict && <VerdictPanel verdict={report.verdict} />}
       {report.circuit_analysis && <CircuitAnalysisPanel analysis={report.circuit_analysis} />}
       {report.correlation && <CorrelationPanel correlation={report.correlation} />}
     </div>

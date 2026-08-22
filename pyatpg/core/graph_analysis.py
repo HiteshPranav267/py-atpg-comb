@@ -178,13 +178,21 @@ class CircuitGraph:
                 p = preds[0]
                 cc0[node] = cc1.get(p, 1) + 1
                 cc1[node] = cc0.get(p, 1) + 1
-            elif gtype == 'XOR' and len(preds) == 2:
+            elif gtype in ('XOR', 'XNOR') and len(preds) == 2:
                 a, b = preds
-                cc0[node] = min(cc0.get(a, 1) + cc0.get(b, 1),
-                                cc1.get(a, 1) + cc1.get(b, 1)) + 1
-                cc1[node] = min(cc0.get(a, 1) + cc1.get(b, 1),
-                                cc1.get(a, 1) + cc0.get(b, 1)) + 1
-            elif gtype == 'BUF':
+                same = min(cc0.get(a, 1) + cc0.get(b, 1),
+                           cc1.get(a, 1) + cc1.get(b, 1)) + 1
+                differ = min(cc0.get(a, 1) + cc1.get(b, 1),
+                             cc1.get(a, 1) + cc0.get(b, 1)) + 1
+                # XNOR is XOR with the output inverted, so the two costs swap.
+                cc0[node], cc1[node] = (
+                    (same, differ) if gtype == 'XOR' else (differ, same)
+                )
+            elif gtype in ('BUF', 'BUFF'):
+                # BUFF is the ISCAS .bench spelling. Without it, buffers fell
+                # to the else-branch below and were costed as if they were
+                # free primary inputs (CC0 = CC1 = 1), understating the
+                # controllability of everything downstream of them.
                 p = preds[0]
                 cc0[node] = cc0.get(p, 1) + 1
                 cc1[node] = cc1.get(p, 1) + 1
@@ -215,11 +223,11 @@ class CircuitGraph:
                     cost = co[node] + sum(cc1.get(p, 1) for p in others) + 1
                 elif gtype in ('OR', 'NOR'):
                     cost = co[node] + sum(cc0.get(p, 1) for p in others) + 1
-                elif gtype in ('NOT', 'BUF'):
+                elif gtype in ('NOT', 'BUF', 'BUFF'):
                     cost = co[node] + 1
                 elif gtype in ('DFF', 'SDFF'):
                     cost = 0  # Should already be 0, but this acts as an absolute sink
-                elif gtype == 'XOR' and others:
+                elif gtype in ('XOR', 'XNOR') and others:
                     cost = co[node] + min(min(cc0.get(p, 1), cc1.get(p, 1)) for p in others) + 1
                 else:
                     cost = co[node] + 1
@@ -306,7 +314,12 @@ class CircuitGraph:
                 return int(not any(ins))
             if gt == "NOT":
                 return int(not ins[0])
-            if gt == "BUF":
+            # BUFF is the ISCAS .bench spelling and is by far the more common
+            # of the two in these netlists; omitting it made every such gate
+            # evaluate to a constant 0, so it never toggled, never appeared in
+            # the transition counts, and silently fell back to the default
+            # 0.5 toggle rate -- corrupting the ranking for whole circuits.
+            if gt in ("BUF", "BUFF"):
                 return ins[0]
             if gt == "XOR":
                 return int(sum(ins) % 2)

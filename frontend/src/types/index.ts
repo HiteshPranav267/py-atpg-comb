@@ -399,6 +399,25 @@ export interface AtpgReport {
   targeting: TargetingInfo | Record<string, never>;
   circuit_analysis: CircuitAnalysis | null;
   correlation: CorrelationReport | null;
+  verdict: TrojanVerdict | null;
   notes: string[];
   sequential: SequentialSummary | null;
+}
+
+export interface VerdictSuspect {
+  gate: string;
+  confidence: number;
+  evidence: string;
+  reasons: string[];
+  atpg_status: string;
+  activating_vectors: string[];
+  statement: string;
+}
+
+export interface TrojanVerdict {
+  verdict: 'trojan_suspected' | 'inconclusive' | 'no_trojan_indicated';
+  confidence: number;
+  suspects: VerdictSuspect[];
+  summary: string;
+  caveats: string[];
 }
