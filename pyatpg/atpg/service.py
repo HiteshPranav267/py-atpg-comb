@@ -180,13 +180,21 @@ class AtpgAnalysisService:
             from .targeting import FaultTargetSelector
 
             selector = FaultTargetSelector(api_key=api_key)
-            selection = selector.select(profile.gate_profiles, summary="")
+            selection = selector.select(
+                profile.gate_profiles, summary="", graph=profile.graph
+            )
             analysis.targeting = {
                 "strategy": selection.strategy,
                 "used_llm": selection.used_llm,
                 "gates": selection.gates,
                 "gate_count": len(selection.gates),
                 "notes": selection.notes,
+                "structural_suspects": selection.structural_suspects,
+                "suspect_reasons": selection.suspect_reasons,
+                # The ranking the selection was made from is only reproducible
+                # against the stimulus it was measured with, so record it.
+                "toggle_seed": profile.toggle_seed,
+                "toggle_patterns": profile.toggle_patterns,
             }
             if not selection.gates:
                 # A targeted-only request has nothing to run. In compare mode

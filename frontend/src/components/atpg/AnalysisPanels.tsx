@@ -10,13 +10,29 @@ export function ComparisonPanel({ comparison }: { comparison: RunComparison }) {
       actions={<GitCompareArrows className="w-4 h-4 text-muted-foreground" />}
     >
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        {/* Each coverage figure carries its own fault count: the targeted run
+            measures over only the gates it selected, so a small enough list
+            reaches 100% without covering much of the circuit. */}
         <Stat
           label="Targeted coverage"
           value={metric(comparison.targeted_coverage, { suffix: ' %' })}
+          hint={
+            comparison.targeted_faults != null
+              ? `of ${comparison.targeted_faults} selected faults` +
+                (comparison.targeted_fault_share_pct != null
+                  ? ` (${comparison.targeted_fault_share_pct}% of circuit)`
+                  : '')
+              : undefined
+          }
         />
         <Stat
           label="Non-targeted coverage"
           value={metric(comparison.non_targeted_coverage, { suffix: ' %' })}
+          hint={
+            comparison.non_targeted_faults != null
+              ? `of ${comparison.non_targeted_faults} circuit faults`
+              : undefined
+          }
         />
         <Stat
           label="Coverage delta"

@@ -295,15 +295,44 @@ function CircuitOverview({ report }: { report: AtpgReport }) {
             {targeting.gate_count} gate(s) selected for the targeted fault list.
           </p>
           <div className="flex flex-wrap gap-1.5 mt-3">
-            {targeting.gates.map((gate) => (
-              <span
-                key={gate}
-                className="font-mono text-[11px] px-1.5 py-0.5 rounded bg-secondary text-primary"
-              >
-                {gate}
-              </span>
-            ))}
+            {targeting.gates.map((gate) => {
+              // Highlight gates the structural detector flagged as
+              // trojan-shaped: those are the ones worth looking at first.
+              const flagged = targeting.structural_suspects?.includes(gate);
+              return (
+                <span
+                  key={gate}
+                  title={flagged ? 'Flagged as trojan-shaped by the structural detector' : undefined}
+                  className={[
+                    'font-mono text-[11px] px-1.5 py-0.5 rounded',
+                    flagged
+                      ? 'bg-red-500/15 text-red-400 ring-1 ring-red-500/40'
+                      : 'bg-secondary text-primary',
+                  ].join(' ')}
+                >
+                  {gate}
+                </span>
+              );
+            })}
           </div>
+          {targeting.suspect_reasons && targeting.suspect_reasons.length > 0 && (
+            <div className="mt-3 p-3 rounded-md border border-red-500/40 bg-red-500/10">
+              <p className="text-xs font-medium text-red-400 mb-1.5">
+                Structurally trojan-shaped logic detected
+              </p>
+              {targeting.suspect_reasons.map((reason) => (
+                <p key={reason} className="text-[11px] text-red-300/90 leading-relaxed font-mono">
+                  {reason}
+                </p>
+              ))}
+            </div>
+          )}
+          {targeting.toggle_seed != null && (
+            <p className="text-[11px] text-muted-foreground mt-2 font-mono">
+              ranking stimulus: seed {targeting.toggle_seed}
+              {targeting.toggle_patterns ? `, ${targeting.toggle_patterns} patterns` : ''}
+            </p>
+          )}
           {targeting.notes.map((note) => (
             <p key={note} className="text-xs text-yellow-500 mt-2 leading-relaxed">
               {note}

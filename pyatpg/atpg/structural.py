@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from pyatpg.core.graph_analysis import CircuitGraph
+from pyatpg.core.graph_analysis import CircuitGraph, DEFAULT_TOGGLE_SEED
 from pyatpg.core.netlist import Circuit, NetlistParser
 from pyatpg.core.verilog_parser import VerilogParser
 
@@ -60,6 +60,10 @@ class StructuralProfile:
     statistics: dict[str, Any]
     gate_profiles: list[dict[str, Any]]
     graph: CircuitGraph
+    #: Stimulus seed and pattern count the toggle rates were measured with.
+    #: Recorded so a run's gate ranking can be reproduced exactly.
+    toggle_seed: int | None = DEFAULT_TOGGLE_SEED
+    toggle_patterns: int = 3000
 
 
 def parse_circuit(source_text: str, filename: str) -> ParsedCircuit:
@@ -93,13 +97,23 @@ def parse_circuit(source_text: str, filename: str) -> ParsedCircuit:
     )
 
 
-def profile_circuit(parsed: ParsedCircuit, toggle_patterns: int = 3000) -> StructuralProfile:
-    """Compute SCOAP, topology and toggle-rate features for every gate."""
+def profile_circuit(
+    parsed: ParsedCircuit,
+    toggle_patterns: int = 3000,
+    toggle_seed: int | None = DEFAULT_TOGGLE_SEED,
+) -> StructuralProfile:
+    """Compute SCOAP, topology and toggle-rate features for every gate.
+
+    ``toggle_seed`` fixes the toggle-rate stimulus so the resulting gate
+    ranking is reproducible; pass None for nondeterministic sampling.
+    """
     graph = CircuitGraph(parsed.circuit)
     statistics = graph.get_stats()
-    graph.compute_toggle_rates(num_patterns=toggle_patterns)
+    graph.compute_toggle_rates(num_patterns=toggle_patterns, seed=toggle_seed)
     return StructuralProfile(
         statistics=statistics,
         gate_profiles=graph.to_llm_feature_profiles(),
         graph=graph,
+        toggle_seed=toggle_seed,
+        toggle_patterns=toggle_patterns,
     )

@@ -201,6 +201,12 @@ export interface RunComparison {
   pattern_reduction_pct: number | null;
   targeted_runtime: number | null;
   non_targeted_runtime: number | null;
+  // Denominators behind the coverage figures. A targeted run that selects
+  // two faults and detects both also reports 100%, so a coverage number is
+  // only meaningful next to the size of the list it was measured over.
+  targeted_faults: number | null;
+  non_targeted_faults: number | null;
+  targeted_fault_share_pct: number | null;
   notes: string[];
 }
 
@@ -250,6 +256,14 @@ export interface TargetingInfo {
   gates: string[];
   gate_count: number;
   notes: string[];
+  // Gates the deterministic trojan-shape detector flagged. Always a subset
+  // of `gates` -- they are force-included so a model miss cannot drop them.
+  structural_suspects?: string[];
+  suspect_reasons?: string[];
+  // Stimulus the toggle-rate ranking was measured with, so a selection can
+  // be reproduced exactly.
+  toggle_seed?: number | null;
+  toggle_patterns?: number;
 }
 
 export interface AtpgCircuitOverview {

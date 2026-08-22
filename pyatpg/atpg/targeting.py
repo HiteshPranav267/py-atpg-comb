@@ -55,6 +55,11 @@ class TargetSelection:
     strategy: str = "structural-heuristic"
     used_llm: bool = False
     notes: list[str] = field(default_factory=list)
+    #: Gates flagged by the deterministic trojan-shape detector, and why.
+    #: These are force-included in ``gates`` regardless of what the model
+    #: returned, so a model miss cannot drop them from the fault list.
+    structural_suspects: list[str] = field(default_factory=list)
+    suspect_reasons: list[str] = field(default_factory=list)
 
 
 class FaultTargetSelector:
@@ -78,8 +83,22 @@ class FaultTargetSelector:
         scaled = round(len(profiles) * _TARGET_GATE_FRACTION)
         return max(_MIN_TARGET_GATES, min(_MAX_TARGET_GATES_CEILING, scaled))
 
-    def select(self, profiles: list[dict[str, Any]], summary: str = "") -> TargetSelection:
+    def select(
+        self,
+        profiles: list[dict[str, Any]],
+        summary: str = "",
+        graph: Any = None,
+    ) -> TargetSelection:
+        """Choose the gates for the targeted fault list.
+
+        ``graph`` enables the deterministic trojan-shape detector; when it is
+        provided, anything that detector flags is merged into the result no
+        matter which selection path ran, so a model miss (or an LLM outage)
+        cannot silently drop inserted logic from the fault list.
+        """
         max_gates = self._effective_max_gates(profiles)
+        suspects, reasons = self._find_suspects(profiles, graph)
+
         if self.api_key:
             try:
                 gates = self._select_with_llm(profiles, summary, max_gates)
@@ -99,15 +118,71 @@ class FaultTargetSelector:
                         "Model returned no usable gate ids; fell back to the "
                         "structural heuristic."
                     )
-                    return self._structural_selection(profiles, max_gates, selection.notes)
-                return selection
+                    return self._merge_suspects(
+                        self._structural_selection(profiles, max_gates, selection.notes),
+                        suspects,
+                        reasons,
+                    )
+                return self._merge_suspects(selection, suspects, reasons)
             except Exception as exc:  # noqa: BLE001 - degrade, don't fail the run
-                return self._structural_selection(
-                    profiles,
-                    max_gates,
-                    [f"LLM targeting unavailable ({exc}); used the structural heuristic."],
+                return self._merge_suspects(
+                    self._structural_selection(
+                        profiles,
+                        max_gates,
+                        [f"LLM targeting unavailable ({exc}); used the structural heuristic."],
+                    ),
+                    suspects,
+                    reasons,
                 )
-        return self._structural_selection(profiles, max_gates, [])
+        return self._merge_suspects(
+            self._structural_selection(profiles, max_gates, []), suspects, reasons
+        )
+
+    @staticmethod
+    def _find_suspects(
+        profiles: list[dict[str, Any]], graph: Any
+    ) -> tuple[list[str], list[str]]:
+        if graph is None:
+            return [], []
+        try:
+            from .suspects import find_structural_suspects
+
+            return find_structural_suspects(profiles, graph)
+        except Exception:  # noqa: BLE001 - a detector failure must not fail the run
+            return [], []
+
+    @staticmethod
+    def _merge_suspects(
+        selection: TargetSelection, suspects: list[str], reasons: list[str]
+    ) -> TargetSelection:
+        """Force structurally-suspicious gates into the selection.
+
+        Appended rather than inserted, and exempt from ``max_gates``: the cap
+        exists to keep the targeted run small relative to a full one, and a
+        handful of flagged gates does not threaten that. Dropping them to
+        respect the cap would defeat the point of detecting them.
+        """
+        selection.structural_suspects = list(suspects)
+        selection.suspect_reasons = list(reasons)
+        if not suspects:
+            return selection
+
+        already = set(selection.gates)
+        added = [g for g in suspects if g not in already]
+        if added:
+            selection.gates = selection.gates + added
+            selection.notes.append(
+                f"{len(added)} gate(s) matching a trojan-like structural pattern "
+                f"were added to the fault list by the deterministic detector "
+                f"(not selected by the {'model' if selection.used_llm else 'heuristic'}): "
+                + ", ".join(added)
+            )
+        else:
+            selection.notes.append(
+                f"The deterministic detector flagged {len(suspects)} gate(s) as "
+                "trojan-shaped; all were already in the selection."
+            )
+        return selection
 
     def _structural_selection(
         self, profiles: list[dict[str, Any]], max_gates: int, notes: list[str]
@@ -181,13 +256,33 @@ class FaultTargetSelector:
         )
         profile_block = "\n".join(p["profile"] for p in ordered)
 
+        floor = min(_MIN_TARGET_GATES, len(ordered))
         prompt = f"""{summary}
 
-You are assisting with test-pattern generation for a combinational circuit.
-Select the gates whose stuck-at faults are most worth targeting explicitly:
-rarely-toggling, high fan-in, or hard to observe (high SCOAP CO).
+You are assisting with test-pattern generation for a combinational circuit,
+with the specific goal of catching logic that may have been maliciously
+inserted (a hardware trojan) as well as ordinary hard-to-test faults.
 
-Return at most {max_gates} gate ids, comma-separated, nothing else.
+Select the gates whose stuck-at faults are most worth targeting explicitly.
+Weigh two different kinds of evidence:
+
+1. Testability. Rarely-toggling, high fan-in, or hard to observe (high SCOAP
+   CO). These faults are the ones random patterns are least likely to catch.
+
+2. Structural anomaly. Inserted logic often does NOT stand out on testability
+   alone -- it is chosen to blend in. Look for gates whose relationship to
+   their neighbours is odd: a gate whose toggle rate is far out of line with
+   the gates around it, an XOR/XNOR sitting on an otherwise plain path, a
+   narrow-fan-out gate feeding a single unusual load, or a small cluster of
+   gates whose profile differs from the surrounding logic.
+
+Do not return only the single most extreme gate. One gate being a clear
+outlier on toggle rate does not mean the rest are uninteresting -- inserted
+logic is usually NOT the most extreme thing in the circuit, so a one-gate
+answer will miss it. Return a spread of at least {floor} gates unless the
+circuit is smaller than that, covering both kinds of evidence above.
+
+Return between {floor} and {max_gates} gate ids, comma-separated, nothing else.
 
 Gate profiles:
 {profile_block}

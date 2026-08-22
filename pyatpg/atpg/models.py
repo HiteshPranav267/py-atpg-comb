@@ -201,6 +201,13 @@ class RunComparison:
     pattern_reduction_pct: float | None = None
     targeted_runtime: float | None = None
     non_targeted_runtime: float | None = None
+    #: Denominators behind the two coverage figures. Without these,
+    #: "targeted 100% vs non-targeted 95%" reads as the targeted run being
+    #: better when it may have examined 6% of the faults -- a targeted run
+    #: that selects two faults and detects both also reports 100%.
+    targeted_faults: int | None = None
+    non_targeted_faults: int | None = None
+    targeted_fault_share_pct: float | None = None
     notes: list[str] = field(default_factory=list)
 
 
@@ -232,15 +239,32 @@ def build_comparison(targeted: AtalantaRun, non_targeted: AtalantaRun) -> RunCom
     # (it will typically be small -- targeting a handful of gates was never
     # meant to approach full-circuit coverage on its own).
     t_detected = targeted.results.detected_faults
+    t_collapsed = targeted.results.collapsed_faults
     n_collapsed = non_targeted.results.collapsed_faults
     if t_detected is not None and n_collapsed:
         comparison.targeted_circuit_wide_coverage = round(
             (t_detected / n_collapsed) * 100, 3
         )
 
+    # Carry the denominators alongside the percentages, so a coverage figure
+    # can never be read without the size of the list it was measured over.
+    comparison.targeted_faults = t_collapsed
+    comparison.non_targeted_faults = n_collapsed
+    if t_collapsed is not None and n_collapsed:
+        comparison.targeted_fault_share_pct = round(
+            (t_collapsed / n_collapsed) * 100, 2
+        )
+
     # The two runs target different fault sets, so coverage percentages are
     # not measuring the same denominator. Say so rather than letting the
     # numbers imply a like-for-like improvement.
+    share = comparison.targeted_fault_share_pct
+    scope = (
+        f" The targeted run examined {comparison.targeted_faults} of the circuit's "
+        f"{comparison.non_targeted_faults} collapsed faults ({share}%)."
+        if share is not None
+        else ""
+    )
     comparison.notes.append(
         "Coverage percentages are relative to each run's own fault list: the "
         "targeted run collapses only faults on selected gates, the "
@@ -249,5 +273,15 @@ def build_comparison(targeted: AtalantaRun, non_targeted: AtalantaRun) -> RunCom
         "improving metric. targeted_circuit_wide_coverage instead expresses the "
         "targeted run's detections as a share of the whole circuit's collapsed "
         "faults, for an apples-to-apples comparison against non_targeted_coverage."
+        + scope
     )
+    if share is not None and share < 25 and (t_cov or 0) >= (n_cov or 0):
+        comparison.notes.append(
+            f"targeted_coverage ({t_cov}%) is at or above non_targeted_coverage "
+            f"({n_cov}%) while covering only {share}% of the circuit's faults. A "
+            "small enough fault list is easy to fully detect, so this is not "
+            "evidence the targeted run performed better -- read "
+            f"targeted_circuit_wide_coverage "
+            f"({comparison.targeted_circuit_wide_coverage}%) instead."
+        )
     return comparison

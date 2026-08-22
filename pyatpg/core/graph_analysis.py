@@ -9,6 +9,12 @@ import networkx as nx
 import random
 import json
 
+#: Default stimulus seed for toggle-rate simulation. Fixed so that profiling
+#: the same netlist twice yields the same toggle rates, and therefore the same
+#: gate ranking, on every run. Vary it deliberately (and record it) when you
+#: want to measure how sensitive a result is to the stimulus.
+DEFAULT_TOGGLE_SEED = 20250822
+
 
 class CircuitGraph:
     """Converts a parsed Circuit into a NetworkX directed graph with analysis."""
@@ -23,6 +29,8 @@ class CircuitGraph:
         self._scoap = None
         self._topo = None
         self._topo_computed = False  # distinguishes "not yet computed" from "no valid order"
+        self._toggle = None
+        self._toggle_key = None  # (num_patterns, seed) the cache was built with
 
     # ------------------------------------------------------------------ build
     def _build(self):
@@ -225,7 +233,7 @@ class CircuitGraph:
         return cc0, cc1, co
 
     # -------------------------------------------------------- toggle rates
-    def compute_toggle_rates(self, num_patterns=5000):
+    def compute_toggle_rates(self, num_patterns=5000, seed=DEFAULT_TOGGLE_SEED):
         """Simulate num_patterns random vectors, counting 0->1 and 1->0 flips per gate.
 
         Returns dict: gate_name -> {
@@ -235,16 +243,51 @@ class CircuitGraph:
             'total_transitions': int,
         }
         Low toggle rates (< 0.05) are prime Hardware Trojan indicators.
+
+        ``seed`` fixes the stimulus so the toggle rates -- and therefore every
+        ranking derived from them -- are reproducible. This used to draw from
+        the global ``random`` module with no seed, which made the gate ranking
+        differ run to run on the *same* netlist: roughly a quarter of a
+        200-gate shortlist churned between identical runs, and a given gate
+        could move by hundreds of positions, so a downstream selection could
+        legitimately include a gate one run and miss it the next. Pass
+        ``seed=None`` for the old nondeterministic behaviour.
         """
+        # Cache on (patterns, seed): get_gate_features() also needs toggle
+        # rates, and without this it silently recomputed them with its own
+        # defaults -- discarding the seed a caller had asked for, and doing
+        # the whole simulation twice per profiling pass.
+        key = (num_patterns, seed)
+        if self._toggle is not None and self._toggle_key == key:
+            return self._toggle
+
         from pyatpg.core.simulator import Simulator
         try:
             sim = Simulator(self.circuit)
         except Exception:
             return {}
 
+        rng = random.Random(seed)
+
         input_list = sorted(self._as_set(getattr(self.circuit, 'inputs', [])))
         if not input_list:
             return {}
+
+        # Evaluate gates in topological order where one exists, so every gate
+        # is resolved in a single pass. The previous fixed-point loop bailed
+        # out via `len(unresolved) > 1000`, which fires on *any* circuit with
+        # more than 1000 gates after its first pass -- leaving most gates with
+        # no simulated value at all, and therefore the default 0.5 toggle rate.
+        # On c2670 (1271 gates) only 412 gates ever got real toggle data, which
+        # silently reduced every toggle-based ranking on large circuits to
+        # noise. Falls back to the fixed-point loop if no topological order
+        # exists (a genuine combinational cycle).
+        gates = self.circuit.gates
+        topo = self._topo_order()
+        if topo is not None:
+            order = [str(n) for n in topo if str(n) in gates]
+        else:
+            order = None
 
         # Track per-gate value history
         prev_values = {}
@@ -252,42 +295,56 @@ class CircuitGraph:
         transitions_10 = {}  # 1 -> 0
         valid_patterns = 0
 
+        def _eval(gt, ins):
+            if gt == "AND":
+                return int(all(ins))
+            if gt == "OR":
+                return int(any(ins))
+            if gt == "NAND":
+                return int(not all(ins))
+            if gt == "NOR":
+                return int(not any(ins))
+            if gt == "NOT":
+                return int(not ins[0])
+            if gt == "BUF":
+                return ins[0]
+            if gt == "XOR":
+                return int(sum(ins) % 2)
+            if gt == "XNOR":
+                return int(not (sum(ins) % 2))
+            return 0
+
         for _ in range(num_patterns):
-            vec = tuple(random.randint(0, 1) for _ in input_list)
+            vec = tuple(rng.randint(0, 1) for _ in input_list)
             try:
-                # We need all internal gate values, not just outputs
-                values = dict(zip(self.circuit.inputs, vec))
-                unresolved = dict(self.circuit.gates)
-                while unresolved:
-                    progress = False
-                    for name, g in list(unresolved.items()):
+                # We need all internal gate values, not just outputs.
+                # Zip against input_list, not circuit.inputs: the vector was
+                # generated per input_list (sorted), so pairing it with the
+                # unordered set would assign each value to an arbitrary input.
+                values = dict(zip(input_list, vec))
+
+                if order is not None:
+                    for name in order:
+                        g = gates[name]
                         try:
                             ins = [values[i] for i in g.inputs]
                         except KeyError:
                             continue
-                        gt = g.gtype
-                        if gt == "AND":
-                            values[name] = int(all(ins))
-                        elif gt == "OR":
-                            values[name] = int(any(ins))
-                        elif gt == "NAND":
-                            values[name] = int(not all(ins))
-                        elif gt == "NOR":
-                            values[name] = int(not any(ins))
-                        elif gt == "NOT":
-                            values[name] = int(not ins[0])
-                        elif gt == "BUF":
-                            values[name] = ins[0]
-                        elif gt == "XOR":
-                            values[name] = int(sum(ins) % 2)
-                        else:
-                            values[name] = 0
-                        del unresolved[name]
-                        progress = True
-                    if not progress:
-                        break
-                    if len(unresolved) > 1000: # Safety break for huge circuits
-                         break
+                        values[name] = _eval(g.gtype, ins)
+                else:
+                    unresolved = dict(gates)
+                    while unresolved:
+                        progress = False
+                        for name, g in list(unresolved.items()):
+                            try:
+                                ins = [values[i] for i in g.inputs]
+                            except KeyError:
+                                continue
+                            values[name] = _eval(g.gtype, ins)
+                            del unresolved[name]
+                            progress = True
+                        if not progress:
+                            break
 
                 valid_patterns += 1
 
@@ -326,6 +383,8 @@ class CircuitGraph:
                 'total_transitions': total,
             }
 
+        self._toggle = result
+        self._toggle_key = key
         return result
 
     # -------------------------------------------------------- stats
@@ -371,7 +430,13 @@ class CircuitGraph:
         cc0, cc1, co = self.compute_scoap()
         levels = self.compute_levels()
         max_level = max(levels.values()) if levels else 1
-        toggle_data = self.compute_toggle_rates(num_patterns=3000)
+        # Reuse whatever stimulus the caller already profiled with, so the
+        # features reflect their num_patterns/seed rather than these defaults.
+        toggle_data = (
+            self._toggle
+            if self._toggle is not None
+            else self.compute_toggle_rates(num_patterns=3000)
+        )
         
         # Advanced: Betweenness Centrality
         centrality = nx.betweenness_centrality(self.G, k=min(len(self.G), 100), normalized=True)
