@@ -45,6 +45,9 @@ atalanta_jobs/
 modus_jobs/
 datasets/
 
+# Local benchmark corpus and captured tool outputs (large, machine-specific)
+atpg testing/
+
 # Atalanta build outputs (compiled from source by build.sh)
 Atalanta/atalanta
 Atalanta/*.o
