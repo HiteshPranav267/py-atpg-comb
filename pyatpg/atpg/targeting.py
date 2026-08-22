@@ -254,7 +254,30 @@ class FaultTargetSelector:
                 -p["features"].get("co", 0),
             ),
         )
-        profile_block = "\n".join(p["profile"] for p in ordered)
+
+        # Anonymise gate names before they reach the model.
+        #
+        # The framework's premise is that gate-level structural features are
+        # obfuscation-invariant -- that detection survives an adversary
+        # renaming every signal, which is what defeats RTL/source-level
+        # detectors. Sending the real names breaks that premise in the worst
+        # possible way here, because inserted logic in the generated corpus is
+        # named ht_trigger_out_N / HT_PAYLOAD_XOR and the ground truth is
+        # literally "does the name contain HT_". A model could score perfectly
+        # by string-matching, and any measured result would be evidence about
+        # the naming convention rather than about structural reasoning.
+        #
+        # Substituting opaque ids makes the measurement mean what it claims to
+        # mean, and makes the run identical to one on a renamed netlist.
+        alias_to_gate = {}
+        aliased_blocks = []
+        for index, p in enumerate(ordered):
+            alias = f"g{index}"
+            alias_to_gate[alias] = str(p["gate_id"])
+            aliased_blocks.append(
+                p["profile"].replace(f"Gate: {p['gate_id']},", f"Gate: {alias},", 1)
+            )
+        profile_block = "\n".join(aliased_blocks)
 
         floor = min(_MIN_TARGET_GATES, len(ordered))
         prompt = f"""{summary}
@@ -296,7 +319,14 @@ Gate profiles:
                     contents=prompt,
                 )
                 text = (response.text or "").replace("\n", " ")
-                return [g.strip() for g in text.split(",") if g.strip()]
+                # Map the opaque ids the model saw back to real gate names.
+                # An id it invents resolves to nothing and is dropped here,
+                # before _keep_known_gates ever sees it.
+                return [
+                    alias_to_gate[a]
+                    for a in (g.strip() for g in text.split(","))
+                    if a in alias_to_gate
+                ]
             except Exception as exc:  # noqa: BLE001
                 last_error = exc
                 if not any(m in str(exc) for m in _RETRYABLE_MARKERS) or attempt == 2:

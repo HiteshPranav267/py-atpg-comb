@@ -133,6 +133,78 @@ class TestStructuralSuspects:
         assert sel.structural_suspects == []
 
 
+class TestObfuscationInvariance:
+    """The framework's premise is that gate-level structure, not naming,
+    carries the signal. The model must therefore never see real gate names --
+    otherwise a run measures the naming convention, not the reasoning."""
+
+    def _capture_prompt(self, profiles):
+        from pyatpg.atpg import targeting as T
+
+        captured = {}
+
+        class FakeModels:
+            def generate_content(self, model, contents):
+                captured["prompt"] = contents
+
+                class R:
+                    text = "g0,g1,g2"
+
+                return R()
+
+        class FakeClient:
+            def __init__(self, api_key=None):
+                self.models = FakeModels()
+
+        original = T.genai
+        T.genai = type("X", (), {"Client": FakeClient})
+        try:
+            selection = T.FaultTargetSelector(api_key="fake").select(profiles)
+        finally:
+            T.genai = original
+        return captured["prompt"], selection
+
+    def test_real_gate_names_never_reach_the_model(self):
+        p = _profile(TROJAN, toggle_patterns=200)
+        prompt, _ = self._capture_prompt(p.gate_profiles)
+        for name in ("ht_trig", "n5_orig", "n1", "n2"):
+            assert f"Gate: {name}," not in prompt
+        assert "ht_" not in prompt.lower()
+
+    def test_aliases_resolve_back_to_real_gates(self):
+        p = _profile(TROJAN, toggle_patterns=200)
+        _, selection = self._capture_prompt(p.gate_profiles)
+        known = {str(g["gate_id"]) for g in p.gate_profiles}
+        assert selection.gates
+        for gate in selection.gates:
+            assert gate in known
+
+    def test_invented_aliases_are_dropped(self):
+        from pyatpg.atpg import targeting as T
+
+        p = _profile(TROJAN, toggle_patterns=200)
+
+        class FakeModels:
+            def generate_content(self, model, contents):
+                class R:
+                    text = "g0, g99999, not_an_alias, ht_trig"
+
+                return R()
+
+        class FakeClient:
+            def __init__(self, api_key=None):
+                self.models = FakeModels()
+
+        original = T.genai
+        T.genai = type("X", (), {"Client": FakeClient})
+        try:
+            selection = T.FaultTargetSelector(api_key="fake").select(p.gate_profiles)
+        finally:
+            T.genai = original
+        # Only the one real alias survives; a raw gate name is not an alias.
+        assert len(selection.gates) == 1
+
+
 class TestSuspectMerging:
     def test_suspects_reach_the_fault_list_without_an_llm(self):
         p = _profile(TROJAN, toggle_patterns=600)
