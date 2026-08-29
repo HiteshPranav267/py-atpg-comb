@@ -26,7 +26,13 @@ class TrojanInserter:
         
         # 2. Select Nets using Strategy
         trigger_inputs = self.strategy.select_trigger_nets(compromised, num_inputs=num_trigger_inputs)
-        payload_target = self.strategy.select_payload_target(compromised)
+        payload_target = self.strategy.select_payload_target(compromised, trigger_inputs)
+
+        if payload_target in trigger_inputs:
+            raise ValueError(
+                f"Payload target {payload_target} is also a trigger input; "
+                "this would create a combinational feedback loop."
+            )
         
         trigger_output_name = f"ht_trigger_out_{trojan_id}"
         
@@ -44,6 +50,22 @@ class TrojanInserter:
             trigger_net=trigger_out
         )
         
+        # 4b. Guard against a cyclic result. A combinational netlist with a
+        # feedback loop is illegal and makes ATALANTA segfault during
+        # levelisation rather than reporting an error, so fail loudly here
+        # instead of shipping a netlist that crashes the ATPG tool.
+        import networkx as nx
+
+        check = nx.DiGraph()
+        for out, gate in compromised.gates.items():
+            for inp in gate.inputs:
+                check.add_edge(inp, out)
+        if not nx.is_directed_acyclic_graph(check):
+            raise ValueError(
+                "Trojan insertion produced a combinational feedback loop "
+                f"(trigger={trigger_inputs}, payload={payload_target})."
+            )
+
         # 5. Create Metadata
         metadata = TrojanMetadata(
             trojan_id=trojan_id,

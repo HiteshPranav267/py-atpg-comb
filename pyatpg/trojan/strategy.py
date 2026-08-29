@@ -1,8 +1,55 @@
 import random
 from abc import ABC, abstractmethod
-from typing import List
+from typing import List, Optional
+
+import networkx as nx
+
 from pyatpg.core.netlist import Circuit
 from pyatpg.core.graph_analysis import CircuitGraph
+
+
+def _circuit_digraph(circuit: Circuit) -> nx.DiGraph:
+    """Signal-flow graph of the *clean* circuit: edge driver -> load."""
+    g = nx.DiGraph()
+    g.add_nodes_from(circuit.nodes)
+    for out, gate in circuit.gates.items():
+        for inp in gate.inputs:
+            g.add_edge(inp, out)
+    return g
+
+
+def _acyclic_payload_candidates(
+    circuit: Circuit, trigger_nets: List[str]
+) -> List[str]:
+    """Payload targets that will not close a combinational feedback loop.
+
+    The payload splices in a gate whose fan-in includes the trigger output,
+    and the trigger output is driven by ``trigger_nets``. So the insertion
+    adds the path::
+
+        trigger_nets -> ht_trigger_out -> payload_target -> (payload fan-out)
+
+    If any trigger net is reachable from ``payload_target`` in the existing
+    netlist, that path joins an existing ``payload_target -> ... -> trigger_net``
+    path into a cycle. A cyclic "combinational" netlist is illegal, and
+    ATALANTA does not reject it cleanly -- it segfaults during levelisation.
+
+    Uniform-random selection almost never picks such a target, which is why
+    ``RandomStrategy`` appeared to work; ``LowScoapStrategy`` and
+    ``RareNodeStrategy`` pick the hardest-to-control net as a trigger (deep in
+    the circuit) and the hardest-to-observe / rarest net as the payload
+    (near the inputs), which is close to a worst case for this loop.
+    """
+    g = _circuit_digraph(circuit)
+    forbidden = set(trigger_nets)
+    for net in trigger_nets:
+        if net in g:
+            forbidden |= nx.ancestors(g, net)
+    return [
+        n for n in circuit.nodes
+        if n not in circuit.inputs and n not in forbidden
+    ]
+
 
 class InsertionStrategy(ABC):
     @property
@@ -16,8 +63,15 @@ class InsertionStrategy(ABC):
         pass
         
     @abstractmethod
-    def select_payload_target(self, circuit: Circuit) -> str:
-        """Select a net from the circuit to act as the Trojan payload target."""
+    def select_payload_target(
+        self, circuit: Circuit, trigger_nets: Optional[List[str]] = None
+    ) -> str:
+        """Select a net from the circuit to act as the Trojan payload target.
+
+        ``trigger_nets`` are the already-selected trigger inputs; the payload
+        target must be chosen so that splicing the trigger output into it does
+        not create a combinational feedback loop.
+        """
         pass
 
 
@@ -40,15 +94,19 @@ class RandomStrategy(InsertionStrategy):
             raise ValueError("Circuit too small to select triggers.")
         return random.sample(valid_nets, num_inputs)
         
-    def select_payload_target(self, circuit: Circuit) -> str:
-        valid_nets = self._get_valid_nets(circuit)
-        # Avoid primary inputs as payload targets because we'd have to override external pins,
-        # which might be tricky in simple Verilog structural generation.
-        # It's safer to target the output of an existing internal gate or a primary output.
-        targetable_nets = [net for net in valid_nets if net not in circuit.inputs]
-        if not targetable_nets:
-            raise ValueError("No targetable nets found for payload.")
-        return random.choice(targetable_nets)
+    def select_payload_target(
+        self, circuit: Circuit, trigger_nets: Optional[List[str]] = None
+    ) -> str:
+        # Avoid primary inputs as payload targets because we'd have to override
+        # external pins, and avoid any net from which a trigger net is
+        # reachable, which would make the circuit cyclic (see
+        # _acyclic_payload_candidates).
+        candidates = _acyclic_payload_candidates(circuit, trigger_nets or [])
+        if not candidates:
+            raise ValueError(
+                "No acyclic payload target available for the selected trigger nets."
+            )
+        return random.choice(candidates)
 
 
 class LowScoapStrategy(RandomStrategy):
@@ -83,13 +141,17 @@ class LowScoapStrategy(RandomStrategy):
         )
         return ranked[:num_inputs]
 
-    def select_payload_target(self, circuit: Circuit) -> str:
-        valid_nets = [n for n in self._get_valid_nets(circuit) if n not in circuit.inputs]
-        if not valid_nets:
-            raise ValueError("No targetable nets found for payload.")
+    def select_payload_target(
+        self, circuit: Circuit, trigger_nets: Optional[List[str]] = None
+    ) -> str:
+        candidates = _acyclic_payload_candidates(circuit, trigger_nets or [])
+        if not candidates:
+            raise ValueError(
+                "No acyclic payload target available for the selected trigger nets."
+            )
         _cc0, _cc1, co = CircuitGraph(circuit).compute_scoap()
         # Highest CO = hardest to propagate to an observable output.
-        return max(valid_nets, key=lambda n: co.get(n, 0))
+        return max(candidates, key=lambda n: co.get(n, 0))
 
 
 class RareNodeStrategy(RandomStrategy):
@@ -116,12 +178,16 @@ class RareNodeStrategy(RandomStrategy):
         )
         return ranked[:num_inputs]
 
-    def select_payload_target(self, circuit: Circuit) -> str:
-        valid_nets = [n for n in self._get_valid_nets(circuit) if n not in circuit.inputs]
-        if not valid_nets:
-            raise ValueError("No targetable nets found for payload.")
+    def select_payload_target(
+        self, circuit: Circuit, trigger_nets: Optional[List[str]] = None
+    ) -> str:
+        candidates = _acyclic_payload_candidates(circuit, trigger_nets or [])
+        if not candidates:
+            raise ValueError(
+                "No acyclic payload target available for the selected trigger nets."
+            )
         toggle_data = CircuitGraph(circuit).compute_toggle_rates()
         return min(
-            valid_nets,
+            candidates,
             key=lambda n: toggle_data.get(n, {}).get('toggle_rate', 0.5),
         )
