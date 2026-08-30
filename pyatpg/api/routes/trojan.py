@@ -21,8 +21,13 @@ async def generate_dataset(
     try:
         content = await file.read()
         text = content.decode("utf-8")
-        name = (file.filename or "circuit.v").rsplit('.', 1)[0]
-        result = TrojanService.generate_dataset(text, name, variants, strategy)
+        # The stem names the dataset; the full filename is passed separately
+        # because its extension is what selects the parser.
+        filename = file.filename or "circuit.v"
+        name = filename.rsplit('.', 1)[0]
+        result = TrojanService.generate_dataset(
+            text, name, variants, strategy, filename=filename
+        )
         get_analytics_store().record(
             "trojan_generated",
             circuit_name=result["circuit"],
@@ -44,6 +49,7 @@ async def generate_dataset(
             "Content-Disposition": f'attachment; filename="{name}_trojan_dataset.zip"',
             "X-Circuit-Name": result["circuit"],
             "X-Variants-Generated": str(result["variants_generated"]),
+            "X-Variants-Requested": str(result["variants_requested"]),
             "X-Strategy": result["strategy"],
         }
         return StreamingResponse(buffer, media_type="application/zip", headers=headers)
