@@ -48,6 +48,9 @@ datasets/
 # Local benchmark corpus and captured tool outputs (large, machine-specific)
 atpg testing/
 
+# Local investigation / bug-report write-ups
+reports/
+
 # Atalanta build outputs (compiled from source by build.sh)
 Atalanta/atalanta
 Atalanta/*.o
