@@ -30,6 +30,32 @@ class NoTargetableGates(RuntimeError):
     """Targeting selected no gates, so a targeted run is not meaningful."""
 
 
+def _targeted_scope_note(run: AtalantaRun, gates: list[str]) -> str:
+    """Spell out what a targeted run's fault coverage is a percentage *of*.
+
+    Atalanta computes coverage over the fault list it was given. With -f that
+    list holds only the selected gates' stuck-at faults, so a targeted run
+    routinely reports 99-100% while the great majority of the circuit's faults
+    were never in the list at all. Presented as a bare "fault coverage" it
+    reads as "the circuit is fully tested", which is close to the opposite of
+    what a targeted run measures. Compare mode already carries this caveat via
+    build_comparison; a targeted-only run carried nothing.
+    """
+    collapsed = run.results.collapsed_faults
+    scope = (
+        f"{collapsed} collapsed fault(s) from the {len(gates)} selected gate(s)"
+        if collapsed is not None
+        else f"the {len(gates)} selected gate(s)' faults"
+    )
+    return (
+        f"This was a targeted run: its fault coverage is measured over {scope}, "
+        "not over the whole circuit. A short fault list is easy to detect in "
+        "full, so a high percentage here does not mean the circuit is well "
+        "tested -- it means the selected faults were detectable. Use the "
+        "compare mode to see this alongside whole-circuit coverage."
+    )
+
+
 def _redact_secret(analysis: "AtpgAnalysis", secret: str) -> None:
     """Remove a credential from every free-text field of a result."""
 
@@ -248,6 +274,15 @@ class AtpgAnalysisService:
             analysis.comparison = build_comparison(
                 analysis.runs[self.TARGETED_KEY],
                 analysis.runs[self.NON_TARGETED_KEY],
+            )
+        elif self.TARGETED_KEY in analysis.runs:
+            # A targeted-only run has no non-targeted run to build a comparison
+            # against, so none of build_comparison's scope caveats exist -- and
+            # its fault coverage is the one number a reader is most likely to
+            # misread, because it is a percentage of the selected gates' faults,
+            # not of the circuit's. Say so on the run itself.
+            analysis.notes.append(
+                _targeted_scope_note(analysis.runs[self.TARGETED_KEY], selection.gates)
             )
 
         analyst = CircuitAnalyst(api_key=api_key)

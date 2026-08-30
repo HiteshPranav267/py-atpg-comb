@@ -43,14 +43,35 @@ function AtpgSummary({ run }: { run: AtpgRun }) {
       }
       actions={<Pill tone={run.targeted ? 'info' : 'neutral'}>{run.targeted ? 'Targeted' : 'Full fault list'}</Pill>}
     >
+      {run.targeted ? (
+        <p className="text-xs text-yellow-500/90 border border-yellow-500/30 bg-yellow-500/5 rounded-md px-3 py-2 mb-4">
+          Coverage below is measured over this run's <strong>targeted fault list</strong>
+          {r.collapsed_faults != null ? ` (${r.collapsed_faults.toLocaleString()} collapsed faults)` : ''}, not
+          over the whole circuit. A short fault list is easy to detect in full, so a high percentage
+          here does not mean the circuit is well tested.
+        </p>
+      ) : null}
+
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <Stat label="Fault coverage" value={metric(r.fault_coverage, { suffix: ' %' })} emphasis />
+        {/* The denominator differs between a targeted and a full run, so the
+            label has to say which one this is -- an unqualified "Fault
+            coverage" of 99% reads as whole-circuit coverage either way. */}
+        <Stat
+          label={run.targeted ? 'Fault coverage (targeted list)' : 'Fault coverage'}
+          value={metric(r.fault_coverage, { suffix: ' %' })}
+          hint={run.targeted ? 'of the targeted faults, not the circuit' : 'of the full collapsed fault list'}
+          emphasis
+        />
         <Stat label="Patterns before compaction" value={r.patterns_before_compaction} />
         <Stat label="Patterns after compaction" value={r.patterns_after_compaction} />
-        <Stat label="Collapsed faults" value={r.collapsed_faults} />
+        <Stat
+          label="Collapsed faults"
+          value={r.collapsed_faults}
+          hint={run.targeted ? 'the coverage denominator' : undefined}
+        />
         <Stat label="Detected faults" value={r.detected_faults} hint="collapsed − redundant − aborted" />
         <Stat label="Redundant faults" value={r.redundant_faults} />
-        <Stat label="Aborted faults" value={r.aborted_faults} />
+        <Stat label="Aborted faults" value={r.aborted_faults} hint="unfinished; 0 means the run completed" />
         <Stat label="Backtrackings" value={r.backtrackings} />
       </div>
 
