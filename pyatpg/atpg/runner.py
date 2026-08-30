@@ -13,6 +13,7 @@ from pathlib import Path
 from .binary import AtalantaBinary, resolve_atalanta_binary
 from .models import AtalantaRun
 from .parsing import apply_summary, parse_test_vectors, parse_undetected_faults
+from .validation import assert_atalanta_safe
 from .workspace import (
     ARTIFACT_BENCH,
     ARTIFACT_FAULT_LIST,
@@ -70,10 +71,17 @@ class AtalantaRunner:
                 recorded on the result for correlation.
 
         Raises:
+            CyclicNetlistError: the netlist has a combinational feedback loop,
+                which makes Atalanta crash rather than report an error.
             AtalantaExecutionError: on a non-zero exit, a timeout, or a
                 missing/unrunnable binary. Never returns a partial result
                 that could be mistaken for a successful zero-coverage run.
         """
+        # Checked here rather than in a caller because there is more than one
+        # entry point into this runner, and a cyclic netlist does not fail
+        # cleanly -- it segfaults, surfacing only as an opaque exit code.
+        assert_atalanta_safe(bench_text, label=label)
+
         prefix = f"{workspace.circuit_name}_{'targeted' if targeted_faults is not None else 'full'}"
 
         bench_path = workspace.write_text(f"{prefix}.bench", bench_text)
@@ -113,7 +121,7 @@ class AtalantaRunner:
 
         if completed.returncode != 0:
             raise AtalantaExecutionError(
-                f"Atalanta exited with code {completed.returncode} for run {label!r}.\n"
+                f"Atalanta {_describe_exit(completed.returncode)} for run {label!r}.\n"
                 f"{(stderr or stdout).strip()[:2000]}"
             )
 
@@ -161,6 +169,26 @@ class AtalantaRunner:
             if path is not None and path.is_file()
         }
         return run
+
+
+#: Windows reports an access violation as this exit code (0xC0000005); POSIX
+#: reports a fatal signal as 128+signum through the shell, or -signum via
+#: subprocess. Either way the number alone is unreadable in a UI.
+_WINDOWS_ACCESS_VIOLATION = 3221225477
+
+
+def _describe_exit(returncode: int) -> str:
+    """Human-readable phrasing for an Atalanta exit code.
+
+    A crash and an ordinary error exit call for very different follow-up, and
+    "exited with code 3221225477" tells a user neither -- it is what they end
+    up reporting as "segmentation fault" with nothing else to go on.
+    """
+    if returncode == _WINDOWS_ACCESS_VIOLATION:
+        return "crashed (access violation, exit code 0xC0000005)"
+    if returncode < 0:
+        return f"was killed by signal {-returncode}"
+    return f"exited with code {returncode}"
 
 
 def build_fault_lines(gates: list[str]) -> list[str]:

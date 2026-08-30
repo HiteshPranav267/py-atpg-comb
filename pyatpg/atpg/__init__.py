@@ -23,6 +23,7 @@ from .runner import AtalantaExecutionError, AtalantaRunner, build_fault_lines
 from .service import AtpgAnalysis, AtpgAnalysisService, NoTargetableGates
 from .structural import ParsedCircuit, parse_circuit, profile_circuit
 from .targeting import FaultTargetSelector, TargetSelection
+from .validation import CyclicNetlistError, assert_atalanta_safe, find_combinational_cycle
 from .workspace import JobWorkspace
 
 __all__ = [
@@ -40,6 +41,7 @@ __all__ = [
     "CircuitAnalyst",
     "CircuitStructure",
     "CorrelationReport",
+    "CyclicNetlistError",
     "FaultEntry",
     "FaultTargetSelector",
     "JobWorkspace",
@@ -52,8 +54,10 @@ __all__ = [
     "TestVector",
     "TestVectorSet",
     "TimingBreakdown",
+    "assert_atalanta_safe",
     "build_fault_lines",
     "correlate",
+    "find_combinational_cycle",
     "parse_circuit",
     "profile_circuit",
     "resolve_atalanta_binary",

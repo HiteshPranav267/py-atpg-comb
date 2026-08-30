@@ -52,8 +52,13 @@ def load_circuit():
         parser = VerilogParser() if fmt == 'verilog' else NetlistParser()
         
         circuit = parser.parse(text)
+        # A net that is referenced but never driven is a dangling signal, not a
+        # feedback loop; without promoting it neither acyclicity check below can
+        # tell the two apart and both report a loop that isn't there. See
+        # Circuit.promote_undefined_signals_to_inputs.
+        promoted = circuit.promote_undefined_signals_to_inputs()
         cg = CircuitGraph(circuit)
-        
+
         state['circuit'] = circuit
         state['graph'] = cg
         state['name'] = name
@@ -62,15 +67,20 @@ def load_circuit():
         state['is_combinational'] = len(circuit.flipflops) == 0
 
         stats = cg.get_stats()
-        if not state['is_combinational']:
-            from pyatpg.seq.timeframe import is_combinational_part_acyclic
-            if not is_combinational_part_acyclic(circuit):
-                return jsonify({
-                    'status': 'error',
-                    'msg': 'This circuit has a combinational feedback loop not broken by a '
-                           'flip-flop; sequential ATPG here assumes every feedback path passes '
-                           'through a clocked flip-flop.',
-                }), 400
+        # An unbroken combinational loop is fatal on *both* backends, so the
+        # check runs for every circuit. It used to be skipped whenever the
+        # circuit was combinational -- exactly the case that reaches Atalanta,
+        # which does not reject such a netlist but segfaults on it, surfacing
+        # to the user as "Job Failed: Atalanta exited with code 3221225477".
+        from pyatpg.seq.timeframe import is_combinational_part_acyclic
+        if not is_combinational_part_acyclic(circuit):
+            return jsonify({
+                'status': 'error',
+                'msg': 'This circuit has a combinational feedback loop not broken by a '
+                       'flip-flop, so no ATPG engine here can levelize it. If it came from '
+                       'trojan insertion, the payload target feeds back into a trigger '
+                       'input; regenerate the variant.',
+            }), 400
 
         return jsonify({
             'status': 'success',
@@ -83,6 +93,9 @@ def load_circuit():
                 'is_combinational': state['is_combinational'],
                 'atpg_backend': 'atalanta' if state['is_combinational'] else 'pyatpg-seq',
                 'flip_flops': stats.get('flip_flops', 0),
+                # Reported rather than silently applied: promoting an undriven
+                # net to a primary input reinterprets the netlist.
+                'promoted_inputs': promoted,
             }
         })
     except Exception as e:
