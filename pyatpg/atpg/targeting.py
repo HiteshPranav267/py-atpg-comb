@@ -13,21 +13,11 @@ from typing import Any
 
 try:  # pragma: no cover - exercised only where the SDK is installed
     from google import genai
-    from google.genai import types as genai_types
 except ImportError:  # pragma: no cover
     genai = None
-    genai_types = None
 
 #: Transient Gemini failures worth retrying.
 _RETRYABLE_MARKERS = ("503", "UNAVAILABLE", "429", "RESOURCE_EXHAUSTED", "500", "INTERNAL")
-
-#: Per-request timeout (ms) for the Gemini SDK's HTTP client. genai.Client()
-#: leaves this unset by default, which httpx treats as "wait forever" -- a
-#: degraded endpoint (the "high demand" 503s Gemini returns under load) could
-#: then hang a single attempt indefinitely instead of failing so the retry
-#: loop below could run, tying up the request -- and, on a single-worker
-#: deployment, the whole backend -- well past any client-side timeout.
-_LLM_TIMEOUT_MS = 20_000
 
 #: Cap on how many gates the targeted fault list may contain, used verbatim
 #: when a caller passes an explicit ``max_gates``. Automatic selection (the
@@ -343,10 +333,7 @@ class FaultTargetSelector:
     def _select_with_llm(
         self, profiles: list[dict[str, Any]], summary: str, max_gates: int
     ) -> list[str]:
-        http_options = (
-            genai_types.HttpOptions(timeout=_LLM_TIMEOUT_MS) if genai_types else None
-        )
-        client = genai.Client(api_key=self.api_key, http_options=http_options)
+        client = genai.Client(api_key=self.api_key)
 
         # Rank by toggle-rate/CO so the most testability-relevant gates sort
         # to the front, but keep every gate in the prompt: truncating here

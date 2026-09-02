@@ -153,7 +153,7 @@ class TestObfuscationInvariance:
                 return R()
 
         class FakeClient:
-            def __init__(self, api_key=None, http_options=None):
+            def __init__(self, api_key=None):
                 self.models = FakeModels()
 
         original = T.genai
@@ -192,7 +192,7 @@ class TestObfuscationInvariance:
                 return R()
 
         class FakeClient:
-            def __init__(self, api_key=None, http_options=None):
+            def __init__(self, api_key=None):
                 self.models = FakeModels()
 
         original = T.genai
@@ -252,7 +252,7 @@ class TestConfidenceScoring:
                 return R()
 
         class FakeClient:
-            def __init__(self, api_key=None, http_options=None):
+            def __init__(self, api_key=None):
                 self.models = FakeModels()
 
         original = T.genai
