@@ -19,10 +19,6 @@ except ImportError:  # pragma: no cover
     genai = None
     genai_types = None
 
-#: Per-request timeout (ms) for the Gemini SDK's HTTP client. See the same
-#: constant in pyatpg.atpg.targeting for why this must be set explicitly.
-_LLM_TIMEOUT_MS = 20_000
-
 #: How many gate profiles to include as evidence in the prompt.
 _PROFILE_BUDGET = 120
 
@@ -212,10 +208,7 @@ class CircuitAnalyst:
         stats: dict[str, Any],
         circuit_name: str,
     ) -> CircuitAnalysis:
-        http_options = (
-            genai_types.HttpOptions(timeout=_LLM_TIMEOUT_MS) if genai_types else None
-        )
-        client = genai.Client(api_key=self.api_key, http_options=http_options)
+        client = genai.Client(api_key=self.api_key)
 
         ranked = sorted(
             profiles,
