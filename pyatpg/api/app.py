@@ -5,7 +5,7 @@ from pyatpg.api.routes import circuit, feature, ranking, benchmark, trojan, atpg
 app = FastAPI(
     title="PyATPG API",
     description="Stateless REST API for Hardware Trojan localization, feature extraction, ranking, and benchmarking.",
-    version="1.0.0",
+    version="1.0.1",
 )
 
 app.add_middleware(
