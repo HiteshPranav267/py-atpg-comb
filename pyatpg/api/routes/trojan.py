@@ -16,6 +16,7 @@ async def generate_dataset(
     file: UploadFile = File(...),
     variants: int = Form(10),
     strategy: str = Form("random"),
+    seed: int | None = Form(None),
 ):
     """Generate a trojan dataset from an uploaded circuit file and return it as a zip."""
     try:
@@ -26,7 +27,7 @@ async def generate_dataset(
         filename = file.filename or "circuit.v"
         name = filename.rsplit('.', 1)[0]
         result = TrojanService.generate_dataset(
-            text, name, variants, strategy, filename=filename
+            text, name, variants, strategy, filename=filename, seed=seed
         )
         get_analytics_store().record(
             "trojan_generated",

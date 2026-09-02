@@ -7,6 +7,25 @@ import networkx as nx
 from pyatpg.core.netlist import Circuit
 from pyatpg.core.graph_analysis import CircuitGraph
 
+#: Fraction of a circuit's nets that a biased strategy treats as its "rare"
+#: pool to sample triggers and payload targets from. The HT-insertion
+#: literature sets its rareness thresholds (HTS/OCR, or switching activity)
+#: so that roughly 5% of nets qualify, then picks trigger nets from within
+#: that set -- it does not take the single most extreme net. Sampling is what
+#: makes a *dataset* of trojans: with an argmax the same circuit yields the
+#: same trojan every time.
+RARE_NET_FRACTION = 0.05
+
+#: The pool never shrinks below this, or the "rarest 5%" of a small circuit is
+#: one or two nets and sampling degenerates back to a fixed choice.
+MIN_RARE_POOL = 8
+
+
+def _rare_pool(ranked: List[str], num_needed: int = 1) -> List[str]:
+    """The rarest slice of an already-ranked (rarest-first) net list."""
+    size = max(MIN_RARE_POOL, num_needed, round(len(ranked) * RARE_NET_FRACTION))
+    return ranked[:size] or list(ranked)
+
 
 def _circuit_digraph(circuit: Circuit) -> nx.DiGraph:
     """Signal-flow graph of the *clean* circuit: edge driver -> load."""
@@ -45,18 +64,52 @@ def _acyclic_payload_candidates(
     for net in trigger_nets:
         if net in g:
             forbidden |= nx.ancestors(g, net)
+    # Sorted, because ``circuit.nodes`` is a set: its iteration order varies
+    # with the process's string-hash seed, which would make a seeded run
+    # irreproducible across processes.
     return [
-        n for n in circuit.nodes
+        n for n in sorted(circuit.nodes)
         if n not in circuit.inputs and n not in forbidden
     ]
 
 
 class InsertionStrategy(ABC):
+    """Chooses where a trojan goes.
+
+    ``seed`` fixes the whole dataset: one strategy instance is reused for
+    every variant, so its RNG advances between variants (each gets a
+    different placement) while a re-run with the same seed reproduces the
+    dataset exactly. ``seed=None`` draws from OS entropy.
+    """
+
+    def __init__(self, seed: Optional[int] = None):
+        self._rng = random.Random(seed)
+        self._graph_cache: dict = {}
+
+    def _graph(self, circuit: Circuit) -> CircuitGraph:
+        """A ``CircuitGraph`` for ``circuit``, reused across variants.
+
+        The generator hands every variant a fresh clone of the same clean
+        circuit, so without this each variant recomputed SCOAP and re-ran the
+        5000-pattern toggle simulation -- twice, once for the trigger pick and
+        once for the payload -- on identical structure.
+        """
+        key = (
+            len(circuit.nodes),
+            len(circuit.gates),
+            hash(frozenset(circuit.gates)),
+        )
+        graph = self._graph_cache.get(key)
+        if graph is None:
+            graph = CircuitGraph(circuit)
+            self._graph_cache[key] = graph
+        return graph
+
     @property
     @abstractmethod
     def name(self) -> str:
         pass
-        
+
     @abstractmethod
     def select_trigger_nets(self, circuit: Circuit, num_inputs: int) -> List[str]:
         """Select `num_inputs` nets from the circuit to act as the Trojan trigger inputs."""
@@ -86,14 +139,15 @@ class RandomStrategy(InsertionStrategy):
         # Exclude primary outputs from being triggers if they have no fan-out, 
         # but for randomness, any internal net or input is fine.
         # Actually, let's just pick any net except the ones we are about to inject.
-        return list(circuit.nodes)
+        # Sorted for the same reproducibility reason as the payload candidates.
+        return sorted(circuit.nodes)
         
     def select_trigger_nets(self, circuit: Circuit, num_inputs: int) -> List[str]:
         valid_nets = self._get_valid_nets(circuit)
         if len(valid_nets) < num_inputs:
             raise ValueError("Circuit too small to select triggers.")
-        return random.sample(valid_nets, num_inputs)
-        
+        return self._rng.sample(valid_nets, num_inputs)
+
     def select_payload_target(
         self, circuit: Circuit, trigger_nets: Optional[List[str]] = None
     ) -> str:
@@ -106,7 +160,7 @@ class RandomStrategy(InsertionStrategy):
             raise ValueError(
                 "No acyclic payload target available for the selected trigger nets."
             )
-        return random.choice(candidates)
+        return self._rng.choice(candidates)
 
 
 class LowScoapStrategy(RandomStrategy):
@@ -132,14 +186,18 @@ class LowScoapStrategy(RandomStrategy):
         valid_nets = self._get_valid_nets(circuit)
         if len(valid_nets) < num_inputs:
             raise ValueError("Circuit too small to select triggers.")
-        cc0, cc1, _co = CircuitGraph(circuit).compute_scoap()
-        # Highest combined CC0+CC1 = hardest to drive to either value.
+        cc0, cc1, _co = self._graph(circuit).compute_scoap()
+        # Highest combined CC0+CC1 = hardest to drive to either value. Sample
+        # from that pool rather than taking the top `num_inputs`: an argmax
+        # returns the same nets for every variant of the same circuit, and
+        # the top few are usually adjacent nets in one deep cone -- which is
+        # both a single trojan repeated N times and the narrowest possible
+        # placement.
         ranked = sorted(
             valid_nets,
-            key=lambda n: cc0.get(n, 1) + cc1.get(n, 1),
-            reverse=True,
+            key=lambda n: (-(cc0.get(n, 1) + cc1.get(n, 1)), n),
         )
-        return ranked[:num_inputs]
+        return self._rng.sample(_rare_pool(ranked, num_inputs), num_inputs)
 
     def select_payload_target(
         self, circuit: Circuit, trigger_nets: Optional[List[str]] = None
@@ -149,9 +207,11 @@ class LowScoapStrategy(RandomStrategy):
             raise ValueError(
                 "No acyclic payload target available for the selected trigger nets."
             )
-        _cc0, _cc1, co = CircuitGraph(circuit).compute_scoap()
-        # Highest CO = hardest to propagate to an observable output.
-        return max(candidates, key=lambda n: co.get(n, 0))
+        _cc0, _cc1, co = self._graph(circuit).compute_scoap()
+        # Highest CO = hardest to propagate to an observable output; sampled
+        # from the hardest-to-observe pool for the reason above.
+        ranked = sorted(candidates, key=lambda n: (-co.get(n, 0), n))
+        return self._rng.choice(_rare_pool(ranked))
 
 
 class RareNodeStrategy(RandomStrategy):
@@ -171,12 +231,14 @@ class RareNodeStrategy(RandomStrategy):
         valid_nets = self._get_valid_nets(circuit)
         if len(valid_nets) < num_inputs:
             raise ValueError("Circuit too small to select triggers.")
-        toggle_data = CircuitGraph(circuit).compute_toggle_rates()
+        toggle_data = self._graph(circuit).compute_toggle_rates()
+        # Rarest-toggling first, then sampled -- see LowScoapStrategy for why
+        # the top-`num_inputs` slice is not used.
         ranked = sorted(
             valid_nets,
-            key=lambda n: toggle_data.get(n, {}).get('toggle_rate', 0.5),
+            key=lambda n: (toggle_data.get(n, {}).get('toggle_rate', 0.5), n),
         )
-        return ranked[:num_inputs]
+        return self._rng.sample(_rare_pool(ranked, num_inputs), num_inputs)
 
     def select_payload_target(
         self, circuit: Circuit, trigger_nets: Optional[List[str]] = None
@@ -186,8 +248,9 @@ class RareNodeStrategy(RandomStrategy):
             raise ValueError(
                 "No acyclic payload target available for the selected trigger nets."
             )
-        toggle_data = CircuitGraph(circuit).compute_toggle_rates()
-        return min(
+        toggle_data = self._graph(circuit).compute_toggle_rates()
+        ranked = sorted(
             candidates,
-            key=lambda n: toggle_data.get(n, {}).get('toggle_rate', 0.5),
+            key=lambda n: (toggle_data.get(n, {}).get('toggle_rate', 0.5), n),
         )
+        return self._rng.choice(_rare_pool(ranked))
