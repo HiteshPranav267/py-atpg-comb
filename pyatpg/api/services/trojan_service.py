@@ -38,6 +38,7 @@ class TrojanService:
         strategy: str = "random",
         filename: str | None = None,
         output_dir: str = DEFAULT_OUTPUT_DIR,
+        seed: int | None = None,
     ) -> dict:
         """Generate `variants` trojan-inserted copies of an uploaded circuit.
 
@@ -51,13 +52,16 @@ class TrojanService:
                 be Verilog.
             output_dir: root the dataset is written under. Relative to the
                 process's working directory by default.
+            seed: fixes where the trojans go. Variants within one dataset
+                still differ from each other; the same seed reproduces the
+                same dataset. None draws from OS entropy.
         """
         if strategy == "rare_node":
-            strat = RareNodeStrategy()
+            strat = RareNodeStrategy(seed=seed)
         elif strategy == "low_scoap":
-            strat = LowScoapStrategy()
+            strat = LowScoapStrategy(seed=seed)
         else:
-            strat = RandomStrategy()
+            strat = RandomStrategy(seed=seed)
 
         inserter = TrojanInserter(strategy=strat)
         generator = TrojanDatasetGenerator(inserter=inserter, output_dir=output_dir)
@@ -89,5 +93,6 @@ class TrojanService:
             "variants_generated": generated,
             "variants_requested": variants,
             "strategy": strategy,
+            "seed": seed,
             "output_dir": os.path.join(output_dir, circuit_name),
         }
