@@ -5,6 +5,14 @@ from abc import ABC, abstractmethod
 # Gemini transient failures (over capacity, rate limited) worth retrying.
 _RETRYABLE_MARKERS = ("503", "UNAVAILABLE", "429", "RESOURCE_EXHAUSTED", "500", "INTERNAL")
 
+#: Per-request timeout (ms) for the Gemini SDK's HTTP client. genai.Client()
+#: leaves this unset by default, which httpx treats as "wait forever" -- a
+#: degraded endpoint could then hang a single attempt indefinitely instead of
+#: failing so the retry loop below runs, tying up the request (and, on a
+#: single-worker deployment, the whole backend) well past any client-side
+#: timeout. See the same constant in pyatpg.atpg.targeting.
+_LLM_TIMEOUT_MS = 20_000
+
 
 class LLMProvider(ABC):
     """Abstract base class for LLM providers.
@@ -31,6 +39,7 @@ class GeminiProvider(LLMProvider):
     def _get_client(self):
         try:
             from google import genai
+            from google.genai import types as genai_types
         except ImportError:
             raise ImportError("Please install google-genai to use GeminiProvider")
 
@@ -41,7 +50,10 @@ class GeminiProvider(LLMProvider):
                     "No Gemini API key available: none was supplied with the request "
                     "and GEMINI_API_KEY is not set."
                 )
-            self._client = genai.Client(api_key=api_key)
+            self._client = genai.Client(
+                api_key=api_key,
+                http_options=genai_types.HttpOptions(timeout=_LLM_TIMEOUT_MS),
+            )
         return self._client
 
     def complete(self, prompt: str, max_retries: int = 3) -> str:
