@@ -156,6 +156,7 @@ class AtpgAnalysisService:
         toggle_patterns: int = 3000,
         use_llm: bool = True,
         api_key: str | None = None,
+        backtrack_limit: int | None = None,
     ) -> AtpgAnalysis:
         """Execute an analysis.
 
@@ -171,6 +172,11 @@ class AtpgAnalysisService:
                 when this is False or no key is configured.
             api_key: credential for this request only, taking precedence over
                 the deployment's environment variable.
+            backtrack_limit: Atalanta's own search-effort cap (its -b flag),
+                applied to every run this call makes. None leaves Atalanta's
+                built-in default (10) in effect. Raising it lets a fault that
+                aborted for lack of search budget be told apart from one that
+                is genuinely undetectable -- see AtalantaRunner.run.
         """
         prune_old_jobs()
 
@@ -259,6 +265,7 @@ class AtpgAnalysisService:
                 workspace,
                 bench_text,
                 label=AnalysisMode.NON_TARGETED.label,
+                backtrack_limit=backtrack_limit,
             )
 
         if selection is not None:
@@ -268,6 +275,7 @@ class AtpgAnalysisService:
                 label=AnalysisMode.TARGETED.label,
                 targeted_faults=build_fault_lines(selection.gates),
                 targeted_gates=selection.gates,
+                backtrack_limit=backtrack_limit,
             )
 
         if self.TARGETED_KEY in analysis.runs and self.NON_TARGETED_KEY in analysis.runs:
