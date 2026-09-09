@@ -104,7 +104,15 @@ class TimingBreakdown:
 
 @dataclass
 class FaultEntry:
-    """A single fault from Atalanta's undetected-fault (-U) report."""
+    """A single fault Atalanta did not detect a pattern for.
+
+    ``status`` is ``"redundant"`` or ``"aborted"`` when parsed from
+    Atalanta's -l log (parsing.parse_fault_dispositions), which is the only
+    place those two are distinguished; ``"undetected"`` only as a fallback
+    when that log is unavailable and this had to fall back to the -U file
+    (which cannot tell the two apart); or ``"targeted"`` for an entry from
+    the fault list handed to Atalanta via -f (parse_fault_list).
+    """
 
     fault_name: str
     gate: str

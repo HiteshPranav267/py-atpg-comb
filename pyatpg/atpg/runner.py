@@ -12,11 +12,17 @@ from pathlib import Path
 
 from .binary import AtalantaBinary, resolve_atalanta_binary
 from .models import AtalantaRun
-from .parsing import apply_summary, parse_test_vectors, parse_undetected_faults
+from .parsing import (
+    apply_summary,
+    parse_fault_dispositions,
+    parse_test_vectors,
+    parse_undetected_faults,
+)
 from .validation import assert_atalanta_safe
 from .workspace import (
     ARTIFACT_BENCH,
     ARTIFACT_FAULT_LIST,
+    ARTIFACT_FAULT_LOG,
     ARTIFACT_LOG,
     ARTIFACT_STDERR,
     ARTIFACT_TEST_VECTORS,
@@ -57,6 +63,7 @@ class AtalantaRunner:
         label: str,
         targeted_faults: list[str] | None = None,
         targeted_gates: list[str] | None = None,
+        backtrack_limit: int | None = None,
     ) -> AtalantaRun:
         """Execute one Atalanta job.
 
@@ -69,6 +76,14 @@ class AtalantaRunner:
                 itself, which is the non-targeted run.
             targeted_gates: the gate ids the faults were derived from,
                 recorded on the result for correlation.
+            backtrack_limit: passed as Atalanta's ``-b`` (phase-1 backtrack
+                limit). None omits the flag entirely, leaving Atalanta's own
+                built-in default (10) in effect -- the default here is
+                "unchanged from before this parameter existed", not "10",
+                since that number belongs to Atalanta, not this wrapper.
+                Raising it is how to tell a fault that aborted for lack of
+                search budget apart from one that is genuinely undetectable
+                within any reasonable budget.
 
         Raises:
             CyclicNetlistError: the netlist has a combinational feedback loop,
@@ -87,6 +102,11 @@ class AtalantaRunner:
         bench_path = workspace.write_text(f"{prefix}.bench", bench_text)
         vec_path = workspace.path_for(f"{prefix}.vec")
         ufaults_path = workspace.path_for(f"{prefix}.ufaults")
+        # Atalanta's own -l log (distinct from log_path below, which is just
+        # this wrapper's capture of stdout). Requesting it is what makes
+        # Atalanta print a per-fault redundant/aborted breakdown at all --
+        # see parse_fault_dispositions.
+        atalanta_log_path = workspace.path_for(f"{prefix}.atalanta.log")
         log_path = workspace.path_for(f"{prefix}.log")
         stderr_path = workspace.path_for(f"{prefix}.stderr.log")
 
@@ -95,7 +115,14 @@ class AtalantaRunner:
         if targeted_faults is not None:
             fault_path = workspace.write_text(f"{prefix}.faults", "\n".join(targeted_faults) + "\n")
             command += ["-f", fault_path.name]
-        command += ["-t", vec_path.name, "-U", ufaults_path.name, bench_path.name]
+        if backtrack_limit is not None:
+            command += ["-b", str(int(backtrack_limit))]
+        command += [
+            "-t", vec_path.name,
+            "-U", ufaults_path.name,
+            "-l", atalanta_log_path.name,
+            bench_path.name,
+        ]
 
         try:
             completed = subprocess.run(
@@ -150,7 +177,20 @@ class AtalantaRunner:
 
         if vec_path.is_file():
             run.test_vectors = parse_test_vectors(vec_path.read_text(encoding="utf-8", errors="replace"))
-        if ufaults_path.is_file():
+
+        # The -l log is the only place Atalanta distinguishes a redundant
+        # fault from a merely-aborted one (see parse_fault_dispositions). An
+        # empty result here can mean two different things: full coverage (no
+        # dispositions to report -- correct), or a build of Atalanta that
+        # doesn't emit the -l breakdown at all (unexpected, given the
+        # vendored binary does) -- so this falls back to the -U file, which
+        # always exists whenever run.results.aborted_faults > 0.
+        run.faults = []
+        if atalanta_log_path.is_file():
+            run.faults = parse_fault_dispositions(
+                atalanta_log_path.read_text(encoding="utf-8", errors="replace")
+            )
+        if not run.faults and ufaults_path.is_file():
             run.faults = parse_undetected_faults(
                 ufaults_path.read_text(encoding="utf-8", errors="replace")
             )
@@ -160,6 +200,7 @@ class AtalantaRunner:
             ARTIFACT_FAULT_LIST: fault_path,
             ARTIFACT_TEST_VECTORS: vec_path,
             ARTIFACT_UNDETECTED_FAULTS: ufaults_path,
+            ARTIFACT_FAULT_LOG: atalanta_log_path,
             ARTIFACT_LOG: log_path,
             ARTIFACT_STDERR: stderr_path,
         }

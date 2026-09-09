@@ -32,6 +32,10 @@ ARTIFACT_BENCH = "bench"
 ARTIFACT_FAULT_LIST = "fault_list"
 ARTIFACT_TEST_VECTORS = "test_vectors"
 ARTIFACT_UNDETECTED_FAULTS = "undetected_faults"
+#: Atalanta's own -l log, which is what carries the per-fault
+#: redundant-vs-aborted breakdown (see parsing.parse_fault_dispositions).
+#: Distinct from ARTIFACT_LOG, which is just this wrapper's stdout capture.
+ARTIFACT_FAULT_LOG = "fault_log"
 ARTIFACT_LOG = "log"
 ARTIFACT_STDERR = "stderr"
 
