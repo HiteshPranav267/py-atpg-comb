@@ -17,8 +17,15 @@ async def generate_dataset(
     variants: int = Form(10),
     strategy: str = Form("random"),
     seed: int | None = Form(None),
+    verify_activation: bool = Form(False),
 ):
-    """Generate a trojan dataset from an uploaded circuit file and return it as a zip."""
+    """Generate a trojan dataset from an uploaded circuit file and return it as a zip.
+
+    `verify_activation` runs one extra targeted Atalanta job per insertion to
+    confirm the trigger is actually reachable and observable, dropping any
+    variant that isn't -- requires a working Atalanta binary on this
+    deployment and roughly doubles the work per variant.
+    """
     try:
         content = await file.read()
         text = content.decode("utf-8")
@@ -27,7 +34,8 @@ async def generate_dataset(
         filename = file.filename or "circuit.v"
         name = filename.rsplit('.', 1)[0]
         result = TrojanService.generate_dataset(
-            text, name, variants, strategy, filename=filename, seed=seed
+            text, name, variants, strategy,
+            filename=filename, seed=seed, verify_activation=verify_activation,
         )
         get_analytics_store().record(
             "trojan_generated",

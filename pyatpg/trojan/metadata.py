@@ -14,6 +14,14 @@ class TrojanMetadata:
     inserted_gates: List[str]
     affected_net: str
     strategy: str
+    #: Whether the trigger was proven activatable (Atalanta found a pattern
+    #: that both justifies its "on" value from the primary inputs and
+    #: propagates it to a primary output) -- see pyatpg.trojan.activation.
+    #: None means this was never checked (TrojanInserter's
+    #: verify_activation was off), not "checked and failed": a failed check
+    #: makes insert() raise rather than return, so a variant with this field
+    #: set is always either True or was never asked about.
+    activation_confirmed: Optional[bool] = None
 
     def to_dict(self):
         return asdict(self)

@@ -85,6 +85,30 @@ class InsertionStrategy(ABC):
     def __init__(self, seed: Optional[int] = None):
         self._rng = random.Random(seed)
         self._graph_cache: dict = {}
+        #: Payload targets already handed out by this instance. One strategy
+        #: instance is reused for a whole dataset batch (its seeded RNG
+        #: advances between variants), but each payload pick used to be an
+        #: independent draw from a pool as small as MIN_RARE_POOL nets --
+        #: two variants landing on the same target by chance was common
+        #: (observed: 2 of 3 rare_node variants on the same circuit). This
+        #: tracks picks so select_payload_target can prefer an unused net.
+        self._used_payloads: set[str] = set()
+
+    def _choose_payload(self, ranked: List[str]) -> str:
+        """Pick a payload target from ``ranked``, preferring one not yet
+        used by this strategy instance this batch.
+
+        ``ranked`` is candidate order to sample from -- unordered for
+        ``RandomStrategy``, already reduced to the rare/hard-to-test pool
+        for ``LowScoapStrategy``/``RareNodeStrategy``. Falls back to
+        allowing a repeat once every candidate in ``ranked`` has been used,
+        so a batch requesting more variants than the pool has nets can
+        still complete rather than degrading every later variant.
+        """
+        fresh = [n for n in ranked if n not in self._used_payloads]
+        pick = self._rng.choice(fresh or ranked)
+        self._used_payloads.add(pick)
+        return pick
 
     def _graph(self, circuit: Circuit) -> CircuitGraph:
         """A ``CircuitGraph`` for ``circuit``, reused across variants.
@@ -160,7 +184,7 @@ class RandomStrategy(InsertionStrategy):
             raise ValueError(
                 "No acyclic payload target available for the selected trigger nets."
             )
-        return self._rng.choice(candidates)
+        return self._choose_payload(candidates)
 
 
 class LowScoapStrategy(RandomStrategy):
@@ -211,7 +235,7 @@ class LowScoapStrategy(RandomStrategy):
         # Highest CO = hardest to propagate to an observable output; sampled
         # from the hardest-to-observe pool for the reason above.
         ranked = sorted(candidates, key=lambda n: (-co.get(n, 0), n))
-        return self._rng.choice(_rare_pool(ranked))
+        return self._choose_payload(_rare_pool(ranked))
 
 
 class RareNodeStrategy(RandomStrategy):
@@ -253,4 +277,4 @@ class RareNodeStrategy(RandomStrategy):
             candidates,
             key=lambda n: (toggle_data.get(n, {}).get('toggle_rate', 0.5), n),
         )
-        return self._rng.choice(_rare_pool(ranked))
+        return self._choose_payload(_rare_pool(ranked))

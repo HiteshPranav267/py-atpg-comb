@@ -11,6 +11,7 @@ import pytest
 
 from pyatpg.atpg.parsing import (
     extract_version,
+    parse_fault_dispositions,
     parse_summary_report,
     parse_test_vectors,
     parse_undetected_faults,
@@ -122,3 +123,52 @@ def test_undetected_faults_parse():
 
 def test_empty_fault_report_yields_no_faults():
     assert parse_undetected_faults("") == []
+
+
+def test_fault_dispositions_split_redundant_from_aborted():
+    """Real Atalanta -l output on c432 (same circuit as the -U fixture above).
+
+    -U alone reports these same 4 faults as "undetected" with no way to tell
+    the redundant one apart -- the point of parse_fault_dispositions is that
+    -l's headed breakdown makes that distinction possible at all.
+    """
+    text = (FIXTURES / "atalanta_c432.atalanta.log").read_text()
+    faults = parse_fault_dispositions(text)
+
+    redundant = [f for f in faults if f.status == "redundant"]
+    aborted = [f for f in faults if f.status == "aborted"]
+
+    assert len(redundant) == 1
+    assert redundant[0].gate == "393->429"
+    assert redundant[0].fault_name == "393->429 /1"
+
+    assert len(aborted) == 4
+    assert {f.gate for f in aborted} == {"379", "347", "259", "377"}
+
+    # Matches the summary block's own counts (parse_summary_report on the
+    # same log) -- the two parsers must never disagree.
+    _, _, results, _, _ = parse_summary_report(text)
+    assert len(redundant) == results.redundant_faults
+    assert len(aborted) == results.aborted_faults
+
+
+def test_fault_dispositions_empty_text_yields_nothing():
+    assert parse_fault_dispositions("") == []
+
+
+def test_fault_dispositions_ignore_unrelated_content():
+    """Only text inside the two headed blocks counts as a fault line."""
+    text = """
+* Log file for the circuit c432.bench.
+fpTestFile    1: 0000 1111   3 faults detected
+
+* List of identified redundant faults:
+100 /0
+
+* Number of faults detected by each test pattern:
+200 /1
+"""
+    faults = parse_fault_dispositions(text)
+    assert len(faults) == 1
+    assert faults[0].gate == "100"
+    assert faults[0].status == "redundant"

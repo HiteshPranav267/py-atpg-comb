@@ -62,6 +62,7 @@ async def run_atpg(
     patterns: int = Form(3000),
     use_llm: bool = Form(True),
     api_key: str = Form(""),
+    backtrack_limit: int | None = Form(None),
 ) -> Dict[str, Any]:
     """Run an ATPG analysis over an uploaded circuit.
 
@@ -74,6 +75,12 @@ async def run_atpg(
     `api_key` is optional and applies to this request only, letting a
     credential be changed without restarting the service. It is never
     logged, stored with the job, or returned in the response.
+
+    `backtrack_limit` is optional and forwarded to Atalanta's own `-b` flag
+    on every run this request makes (combinational path only). Omitted, it
+    leaves Atalanta's built-in default (10) in effect -- raise it to see
+    whether a fault reported as aborted is genuinely undetectable or just
+    ran out of search budget.
     """
     try:
         selected_mode = AnalysisMode(mode)
@@ -98,6 +105,7 @@ async def run_atpg(
             toggle_patterns=patterns,
             use_llm=use_llm,
             api_key=api_key or None,
+            backtrack_limit=backtrack_limit,
         )
     except (ValueError, NoTargetableGates) as exc:
         raise HTTPException(status_code=400, detail=str(exc))

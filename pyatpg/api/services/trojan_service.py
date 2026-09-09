@@ -39,6 +39,7 @@ class TrojanService:
         filename: str | None = None,
         output_dir: str = DEFAULT_OUTPUT_DIR,
         seed: int | None = None,
+        verify_activation: bool = False,
     ) -> dict:
         """Generate `variants` trojan-inserted copies of an uploaded circuit.
 
@@ -55,6 +56,13 @@ class TrojanService:
             seed: fixes where the trojans go. Variants within one dataset
                 still differ from each other; the same seed reproduces the
                 same dataset. None draws from OS entropy.
+            verify_activation: run an extra targeted Atalanta job per
+                insertion to confirm the trigger is actually reachable and
+                observable, silently dropping any variant that isn't (see
+                pyatpg.trojan.activation). Off by default: it requires a
+                working Atalanta binary and roughly doubles the work per
+                variant (one extra ATPG job), and every existing caller of
+                this service predates the guarantee existing at all.
         """
         if strategy == "rare_node":
             strat = RareNodeStrategy(seed=seed)
@@ -63,7 +71,7 @@ class TrojanService:
         else:
             strat = RandomStrategy(seed=seed)
 
-        inserter = TrojanInserter(strategy=strat)
+        inserter = TrojanInserter(strategy=strat, verify_activation=verify_activation)
         generator = TrojanDatasetGenerator(inserter=inserter, output_dir=output_dir)
 
         # TrojanDatasetGenerator reads circuits from disk, derives the dataset
@@ -94,5 +102,6 @@ class TrojanService:
             "variants_requested": variants,
             "strategy": strategy,
             "seed": seed,
+            "verify_activation": verify_activation,
             "output_dir": os.path.join(output_dir, circuit_name),
         }

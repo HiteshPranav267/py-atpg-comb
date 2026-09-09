@@ -34,6 +34,12 @@ _VECTOR_RE = re.compile(r"^\s*(?P<index>\d+)\s*:\s*(?P<inputs>[01xXzZ]+)\s+(?P<o
 #: "379 /1" -> gate 379, stuck-at-1.
 _FAULT_RE = re.compile(r"^(?P<gate>\S+)\s+/(?P<value>[01])\s*$")
 
+#: Headers Atalanta's -l log prints (Atalanta/print.cpp's
+#: print_undetected_faults, called with cRFaultMode='y') ahead of each
+#: per-fault disposition block.
+_REDUNDANT_HEADER_RE = re.compile(r"list of identified redundant faults", re.IGNORECASE)
+_ABORTED_HEADER_RE = re.compile(r"list of aborted faults", re.IGNORECASE)
+
 
 def _to_int(value: str | None) -> int | None:
     if value is None:
@@ -215,6 +221,58 @@ def parse_undetected_faults(text: str, status: str = "undetected") -> list[Fault
                 gate=gate,
                 fault_type=f"stuck-at-{value}",
                 status=status,
+            )
+        )
+    return faults
+
+
+def parse_fault_dispositions(text: str) -> list[FaultEntry]:
+    """Parse the per-fault redundant/aborted breakdown from Atalanta's -l log.
+
+    Passing ``-l <file>`` to Atalanta (alongside ``-U``) makes it print two
+    headed sections after the results summary -- "* List of identified
+    redundant faults:" then one fault per line, followed by "* List of
+    aborted faults:" likewise (Atalanta/print.cpp's
+    ``print_undetected_faults``, invoked with ``cRFaultMode='y'`` only from
+    the ``-l`` log path). This is the only place either the C binary or this
+    codebase can tell a redundant fault from an aborted one: ``-U`` alone
+    (without ``-l``/``-v``) never writes the redundant block at all, so
+    every line ``parse_undetected_faults`` reads from it is actually an
+    aborted fault, mislabelled "undetected".
+
+    A section is entered by its header and closed by any other line that
+    isn't a recognisable "gate /value" fault -- including the next section's
+    header, or the log's trailing content -- so this only reads faults out
+    of Atalanta's own dedicated blocks.
+    """
+    section: str | None = None
+    faults: list[FaultEntry] = []
+    for line in (text or "").splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if stripped.startswith("*"):
+            if _REDUNDANT_HEADER_RE.search(stripped):
+                section = "redundant"
+            elif _ABORTED_HEADER_RE.search(stripped):
+                section = "aborted"
+            else:
+                section = None
+            continue
+        if section is None:
+            continue
+        match = _FAULT_RE.match(stripped)
+        if not match:
+            section = None
+            continue
+        gate = match.group("gate")
+        value = match.group("value")
+        faults.append(
+            FaultEntry(
+                fault_name=f"{gate} /{value}",
+                gate=gate,
+                fault_type=f"stuck-at-{value}",
+                status=section,
             )
         )
     return faults
