@@ -26,6 +26,89 @@ _RETRYABLE_MARKERS = (
     "502", "504", "overloaded", "rate limit", "RateLimit", "Timeout", "timed out",
 )
 
+# "The account needs attention" -- out of credits / over quota, the key
+# rejected, or no key at all -- across every provider's own wording for it.
+# Matched case-insensitively. Deliberately heuristic: providers don't share
+# an error taxonomy, so a message that slips past these is just described
+# generically, which is safe rather than wrong.
+_QUOTA_MARKERS = (
+    "insufficient_quota", "exceeded your current quota", "quota exceeded",
+    "credit balance", "billing",
+)
+_AUTH_MARKERS = (
+    "invalid api key", "invalid_api_key", "invalid x-api-key", "incorrect api key",
+    "authentication_error", "permission_denied", "unauthorized", "401", "403",
+)
+_NO_KEY_MARKERS = (
+    "no gemini api key available", "no openai api key available",
+    "no anthropic api key available", "no nvidia api key available",
+    "no llm api key available",
+)
+#: Retrying one of these is pointless until a human tops up billing or swaps
+#: the key, so :meth:`LLMProvider._with_retry` fails fast on them, and the
+#: batch runner (``pyatpg.automation.retry``) reports them as a distinct
+#: "credentials" category rather than a transient blip.
+ACCOUNT_ERROR_MARKERS = _QUOTA_MARKERS + _AUTH_MARKERS + _NO_KEY_MARKERS
+
+
+class LLMUnavailableError(RuntimeError):
+    """The model could not be run at all, so nothing it would have said exists.
+
+    Raised by :meth:`LLMProvider._with_retry` once a provider call has
+    failed for good -- out of credits, rate limited, the service returning
+    a 5xx, the key rejected. This is deliberately *not* something the ATPG
+    pipeline degrades around: a run the user asked to be LLM-assisted is
+    aborted and told why, rather than silently substituting the structural
+    heuristic and presenting that as the answer. The message is what the
+    user sees; ``reason`` is the short human-readable cause and ``cause``
+    the provider's original wording, kept so a batch runner can still
+    classify it (see ``pyatpg.automation.retry.classify_error``).
+    """
+
+    def __init__(self, provider_label: str, cause: str):
+        self.provider_label = provider_label
+        self.cause = cause
+        self.reason = describe_llm_failure(cause)
+        super().__init__(
+            f"LLM could not be run: {self.reason}. "
+            f"The ATPG run was stopped rather than falling back to the offline "
+            f"structural heuristic. ({provider_label} failure: {cause})"
+        )
+
+
+def describe_llm_failure(message: str) -> str:
+    """Turn a provider's error text into one short plain-English cause.
+
+    Account problems are checked before HTTP statuses because several
+    vendors report an exhausted balance *as* a 429, and "you are out of
+    credits" is the more useful of the two things to say about that.
+    """
+    text = message.lower()
+
+    def has(*markers: str) -> bool:
+        return any(m.lower() in text for m in markers)
+
+    if has(*_NO_KEY_MARKERS):
+        return "no API key was configured"
+    if has(*_QUOTA_MARKERS):
+        return "the LLM account is out of credits or over its quota"
+    if has(*_AUTH_MARKERS):
+        return "the LLM provider rejected the API key (authentication failed)"
+    if has("429", "resource_exhausted", "rate limit", "ratelimit"):
+        return "the LLM provider rate-limited the request (HTTP 429)"
+    if has("503", "unavailable", "overloaded"):
+        return "the LLM provider is unavailable or overloaded (HTTP 503)"
+    if has("500", "internal"):
+        return "the LLM provider returned an internal server error (HTTP 500)"
+    if has("502"):
+        return "the LLM provider's gateway returned an error (HTTP 502)"
+    if has("504"):
+        return "the LLM provider's gateway timed out (HTTP 504)"
+    if has("timeout", "timed out"):
+        return "the request to the LLM provider timed out"
+    return "the request to the LLM provider failed"
+
+
 #: Generic environment variables honoured by every provider; the
 #: provider-specific ones (``GEMINI_API_KEY`` etc.) still work too.
 LLM_PROVIDER_ENV_VAR = "LLM_PROVIDER"
@@ -337,6 +420,12 @@ class LLMProvider(ABC):
     #: Model identifier, surfaced in reports so a result can be attributed.
     model_name: str = ""
 
+    #: Token usage the provider reported for the most recent successful
+    #: ``complete`` call, as ``{"prompt_tokens": int, "completion_tokens":
+    #: int}``, or None when the SDK returned no usage block. Read it
+    #: immediately after the call; the next call overwrites it.
+    last_usage: dict[str, int] | None = None
+
     @abstractmethod
     def complete(self, prompt: str, *, json_mode: bool = False) -> str:
         """Send the prompt and return the raw text response.
@@ -347,23 +436,42 @@ class LLMProvider(ABC):
         """
         ...
 
+    def _note_usage(self, prompt_tokens: Any, completion_tokens: Any) -> None:
+        """Record a usage report, ignoring anything that is not two ints."""
+        if isinstance(prompt_tokens, int) and isinstance(completion_tokens, int):
+            self.last_usage = {
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": completion_tokens,
+            }
+        else:
+            self.last_usage = None
+
     @property
     def label(self) -> str:
         return self.__class__.__name__
 
     def _with_retry(self, call, max_retries: int = 3) -> str:
-        """Run ``call`` with exponential back-off on transient failures."""
+        """Run ``call`` with exponential back-off on transient failures.
+
+        Whatever the call ultimately fails with is raised as
+        :class:`LLMUnavailableError` -- the one signal the ATPG pipeline
+        treats as "stop, the model could not be consulted". An account
+        problem (no credits, bad key) is not retried at all: it cannot fix
+        itself in the next four seconds.
+        """
         last_error: Exception = RuntimeError(f"{self.label} failure")
         for attempt in range(max_retries):
             try:
                 return call()
             except Exception as e:  # noqa: BLE001 - classified below
                 last_error = e
-                retryable = any(marker in str(e) for marker in _RETRYABLE_MARKERS)
+                text = str(e)
+                account_problem = any(m in text.lower() for m in ACCOUNT_ERROR_MARKERS)
+                retryable = not account_problem and any(m in text for m in _RETRYABLE_MARKERS)
                 if not retryable or attempt == max_retries - 1:
-                    raise RuntimeError(f"{self.label} failure: {e}") from e
+                    raise LLMUnavailableError(self.label, text) from e
                 time.sleep(2 ** attempt)  # 1s, 2s, 4s
-        raise RuntimeError(f"{self.label} failure: {last_error}") from last_error
+        raise LLMUnavailableError(self.label, str(last_error)) from last_error
 
 
 class GeminiProvider(LLMProvider):
@@ -407,6 +515,11 @@ class GeminiProvider(LLMProvider):
         def call() -> str:
             response = client.models.generate_content(
                 model=self.model_name, contents=prompt, config=config
+            )
+            meta = getattr(response, "usage_metadata", None)
+            self._note_usage(
+                getattr(meta, "prompt_token_count", None),
+                getattr(meta, "candidates_token_count", None),
             )
             return response.text or ""
 
@@ -468,6 +581,11 @@ class OpenAIProvider(LLMProvider):
                 messages=[{"role": "user", "content": prompt}],
                 **kwargs,
             )
+            usage = getattr(response, "usage", None)
+            self._note_usage(
+                getattr(usage, "prompt_tokens", None),
+                getattr(usage, "completion_tokens", None),
+            )
             choice = response.choices[0] if response.choices else None
             return (choice.message.content if choice and choice.message else "") or ""
 
@@ -524,6 +642,11 @@ class AnthropicProvider(LLMProvider):
                 max_tokens=self.max_tokens,
                 messages=[{"role": "user", "content": prompt}],
                 **kwargs,
+            )
+            usage = getattr(response, "usage", None)
+            self._note_usage(
+                getattr(usage, "input_tokens", None),
+                getattr(usage, "output_tokens", None),
             )
             return "".join(
                 block.text for block in response.content if getattr(block, "type", "") == "text"

@@ -20,6 +20,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Callable, TypeVar
 
+from pyatpg.ranking.providers import ACCOUNT_ERROR_MARKERS
+
 T = TypeVar("T")
 
 
@@ -46,20 +48,10 @@ class Classification(str, Enum):
     FATAL = "fatal"
 
 
-#: Substrings (matched case-insensitively) that mean "the account needs
-#: attention", across every provider's own wording for it. Deliberately
-#: heuristic -- providers don't share an error taxonomy -- so a message that
-#: slips past this just gets treated as a plain transient failure, which is
-#: safe (it retries, a bit less usefully) rather than wrong.
-_CREDENTIALS_MARKERS = (
-    "insufficient_quota", "exceeded your current quota", "quota exceeded",
-    "credit balance", "billing", "invalid api key", "invalid_api_key",
-    "invalid x-api-key", "incorrect api key", "authentication_error",
-    "permission_denied", "unauthorized", "401", "403",
-    "no gemini api key available", "no openai api key available",
-    "no anthropic api key available", "no nvidia api key available",
-    "no llm api key available",
-)
+#: The provider layer owns the list of "account needs attention" phrasings
+#: (it fails fast on them instead of retrying); reuse it so the two never
+#: disagree about what counts as a credentials problem.
+_CREDENTIALS_MARKERS = ACCOUNT_ERROR_MARKERS
 
 
 def classify_error(exc: BaseException) -> Classification:

@@ -70,7 +70,7 @@ class _StubApiClient:
         return {
             "job_id": "stub-job",
             "mode": mode,
-            "runs": {"non_targeted": {"results": {"fault_coverage": 87.5, "pattern_count": 12}}},
+            "runs": {"non_targeted": {"results": {"fault_coverage": 87.5, "patterns_after_compaction": 12}}},
             "comparison": None,
             "notes": [],
             "sequential": None,

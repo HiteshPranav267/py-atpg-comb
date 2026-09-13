@@ -43,6 +43,19 @@ def _print_run(run: dict) -> None:
     print(f"    CPU total                     : {_fmt(timing['total'], ' s')}")
     print(f"    Test vectors generated        : {run['test_vectors']['count']}")
     print(f"    Undetected faults listed      : {len(run['faults'])}")
+    pc = run.get("pattern_coverage")
+    if pc:
+        if pc.get("unavailable_reason"):
+            print(f"    Whole-circuit pattern cov.    : not measured ({pc['unavailable_reason']})")
+        else:
+            print(f"    Whole-circuit pattern cov.    : {_fmt(pc['coverage'], ' %')} "
+                  f"({pc['detected_faults']} of {pc['total_faults']} circuit faults, simulated)")
+    attempts = run.get("attempts") or []
+    if len(attempts) > 1:
+        print("    Search-effort escalation      :")
+        for a in attempts:
+            print(f"      {a['label']:<24} coverage {_fmt(a['fault_coverage'], ' %')}, "
+                  f"aborted {_fmt(a['aborted_faults'])}, {_fmt(a['cpu_seconds'], ' s')}")
 
 
 def _print_sequential(sequential: dict) -> None:
@@ -97,8 +110,25 @@ def print_report(analysis: dict) -> None:
         print(f"    Non-targeted coverage  : {_fmt(comparison['non_targeted_coverage'], ' %')}")
         print(f"    Coverage delta         : {_fmt(comparison['coverage_delta'], ' pts')}")
         print(f"    Pattern reduction      : {_fmt(comparison['pattern_reduction_pct'], ' %')}")
+        if comparison.get("targeted_simulated_coverage") is not None:
+            # The one pair with a shared denominator: each run's patterns
+            # fault-simulated over the same whole-circuit fault list.
+            print(f"    Whole-circuit, same fault list ({_fmt(comparison.get('simulated_fault_count'))} faults):")
+            print(f"      Targeted patterns    : {_fmt(comparison['targeted_simulated_coverage'], ' %')}")
+            print(f"      Non-targeted patterns: {_fmt(comparison['non_targeted_simulated_coverage'], ' %')}")
+            print(f"      Delta                : {_fmt(comparison['simulated_coverage_delta'], ' pts')}")
         for note in comparison["notes"]:
             print(f"    Note: {note}")
+
+    usage = analysis.get("llm_usage") or {}
+    if usage.get("enabled"):
+        exact = "exact" if usage.get("tokens_exact") else "estimated"
+        print(f"\n  LLM usage ({usage.get('provider', '?')} / {usage.get('model', '?')}): "
+              f"{usage.get('api_calls', 0)} call(s), {usage.get('cached_hits', 0)} cached, "
+              f"{usage.get('prompt_tokens_est', 0)} prompt + {usage.get('response_tokens_est', 0)} "
+              f"response tokens ({exact})")
+        for stage, row in (usage.get("by_stage") or {}).items():
+            print(f"    {stage:<12}: {row.get('tokens_est', 0)} tokens, {row.get('calls', 0)} call(s)")
 
     circuit_analysis = analysis.get("circuit_analysis")
     if circuit_analysis:

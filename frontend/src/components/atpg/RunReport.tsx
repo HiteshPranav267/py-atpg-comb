@@ -22,6 +22,7 @@ export function RunReport({ run, jobId }: { run: AtpgRun; jobId: string }) {
       <AtpgSummary run={run} />
       <CircuitAsRead run={run} />
       <RunParameters run={run} />
+      <SearchEffort run={run} />
       <FaultTable run={run} />
       <VectorTable run={run} />
       <Artifacts run={run} jobId={jobId} />
@@ -75,6 +76,8 @@ function AtpgSummary({ run }: { run: AtpgRun }) {
         <Stat label="Backtrackings" value={r.backtrackings} />
       </div>
 
+      {run.pattern_coverage && <PatternCoverageStat run={run} />}
+
       <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mt-4">
         <Stat label="Initialization" value={metric(run.timing.initialization, { suffix: ' s' })} />
         <Stat label="Fault simulation" value={metric(run.timing.fault_simulation, { suffix: ' s' })} />
@@ -83,6 +86,33 @@ function AtpgSummary({ run }: { run: AtpgRun }) {
         <Stat label="Memory used" value={metric(run.memory_mb, { suffix: ' MB' })} />
       </div>
     </Section>
+  );
+}
+
+/**
+ * This run's patterns fault-simulated over the whole circuit. The one
+ * figure on a targeted run that says what its patterns do for the circuit
+ * rather than for the handful of faults they were written for.
+ */
+function PatternCoverageStat({ run }: { run: AtpgRun }) {
+  const pc = run.pattern_coverage!;
+  if (pc.unavailable_reason) {
+    return (
+      <p className="text-xs text-muted-foreground mt-4">
+        Whole-circuit pattern coverage not measured: {pc.unavailable_reason}
+      </p>
+    );
+  }
+  return (
+    <div className="mt-4 grid grid-cols-2 md:grid-cols-4 gap-4">
+      <Stat
+        label="Whole-circuit coverage of these patterns"
+        value={metric(pc.coverage, { suffix: ' %' })}
+        hint={`${pc.patterns.toLocaleString()} patterns fault-simulated over all ${pc.total_faults.toLocaleString()} gate-output and input stuck-at faults`}
+        emphasis={run.targeted}
+      />
+      <Stat label="Faults detected by these patterns" value={pc.detected_faults} hint="of the whole circuit, uncollapsed" />
+    </div>
   );
 }
 
@@ -126,6 +156,52 @@ function RunParameters({ run }: { run: AtpgRun }) {
       <p className="text-xs text-muted-foreground mt-4 font-mono break-all">
         $ {run.command.join(' ')}
       </p>
+    </Section>
+  );
+}
+
+/** The search budgets tried for a targeted run whose faults aborted. */
+function SearchEffort({ run }: { run: AtpgRun }) {
+  const attempts = run.attempts ?? [];
+  if (attempts.length < 2) return null;
+  const kept = attempts.find((a) => a.reported) ?? attempts[attempts.length - 1];
+  return (
+    <Section
+      title="Search-effort escalation"
+      subtitle="Faults in the targeted list aborted at the initial budget, so the same list was re-run with more backtracking. The attempt with the fewest aborted faults is the one reported above; the non-targeted run keeps the requested budget as the baseline."
+    >
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="text-left text-xs text-muted-foreground border-b border-border">
+              <th className="py-2 pr-4 font-medium">Budget</th>
+              <th className="py-2 pr-4 font-medium">Coverage</th>
+              <th className="py-2 pr-4 font-medium">Aborted</th>
+              <th className="py-2 pr-4 font-medium">Redundant</th>
+              <th className="py-2 pr-4 font-medium">Patterns</th>
+              <th className="py-2 pr-4 font-medium">CPU</th>
+            </tr>
+          </thead>
+          <tbody>
+            {attempts.map((a, i) => {
+              const isKept = a === kept;
+              return (
+                <tr key={`${a.label}-${i}`} className={`border-b border-border/50 ${isKept ? 'text-primary' : ''}`}>
+                  <td className="py-2 pr-4 font-mono text-xs">
+                    {a.label}
+                    {isKept && <span className="ml-2"><Pill tone="info">reported</Pill></span>}
+                  </td>
+                  <td className="py-2 pr-4 tabular-nums">{metric(a.fault_coverage, { suffix: ' %' })}</td>
+                  <td className="py-2 pr-4 tabular-nums">{metric(a.aborted_faults)}</td>
+                  <td className="py-2 pr-4 tabular-nums">{metric(a.redundant_faults)}</td>
+                  <td className="py-2 pr-4 tabular-nums">{metric(a.patterns)}</td>
+                  <td className="py-2 pr-4 tabular-nums">{metric(a.cpu_seconds, { suffix: ' s' })}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
     </Section>
   );
 }

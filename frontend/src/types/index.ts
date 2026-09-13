@@ -219,6 +219,35 @@ export interface AtpgRun {
   raw_log: string;
   raw_stderr: string;
   artifacts: Record<string, string>;
+  // Every ATPG-tool attempt made for this run when the service re-ran the
+  // same fault list at a higher search budget. Empty for a single attempt.
+  attempts?: RunAttempt[];
+  // This run's patterns fault-simulated over the whole circuit, on the same
+  // fault list for every run, so pattern sets can be compared directly.
+  pattern_coverage?: PatternCoverage | null;
+}
+
+export interface RunAttempt {
+  label: string;
+  backtrack_limit: number | null;
+  backtrack_limit_phase2: number | null;
+  static_learning: boolean;
+  fault_coverage: number | null;
+  aborted_faults: number | null;
+  redundant_faults: number | null;
+  patterns: number | null;
+  cpu_seconds: number | null;
+  // True on the attempt whose results the run reports (fewest aborted faults).
+  reported?: boolean;
+}
+
+export interface PatternCoverage {
+  total_faults: number;
+  detected_faults: number;
+  patterns: number;
+  coverage: number | null;
+  unavailable_reason: string | null;
+  notes: string[];
 }
 
 export interface RunComparison {
@@ -237,6 +266,12 @@ export interface RunComparison {
   targeted_faults: number | null;
   non_targeted_faults: number | null;
   targeted_fault_share_pct: number | null;
+  // Both pattern sets fault-simulated over the same whole-circuit fault list:
+  // the one pair of numbers here that shares a denominator.
+  targeted_simulated_coverage?: number | null;
+  non_targeted_simulated_coverage?: number | null;
+  simulated_coverage_delta?: number | null;
+  simulated_fault_count?: number | null;
   notes: string[];
 }
 
@@ -294,6 +329,15 @@ export interface TargetingInfo {
   // be reproduced exactly.
   toggle_seed?: number | null;
   toggle_patterns?: number;
+  // True when the model's answer was reused from an earlier identical run.
+  cached?: boolean;
+  // What the model was shown, when one was consulted.
+  context?: {
+    gates_sent?: number;
+    gates_total?: number;
+    gate_limit?: number;
+    notes?: string[];
+  };
 }
 
 export interface AtpgCircuitOverview {
@@ -350,12 +394,26 @@ export interface SequentialAnalysisData {
 
 export interface LlmUsage {
   enabled: boolean;
+  provider?: string;
+  model?: string;
   api_calls?: number;
   cached_hits?: number;
   prompt_tokens_est?: number;
   response_tokens_est?: number;
   total_tokens_est?: number;
-  by_stage?: Record<string, { calls: number; tokens_est: number }>;
+  // True when every counted call carried the provider's own usage report,
+  // so the numbers are exact rather than a chars/4 estimate.
+  tokens_exact?: boolean;
+  by_stage?: Record<
+    string,
+    {
+      calls: number;
+      cached_hits?: number;
+      prompt_tokens_est?: number;
+      response_tokens_est?: number;
+      tokens_est: number;
+    }
+  >;
   circuit_summary?: string;
 }
 
@@ -432,6 +490,9 @@ export interface AtpgReport {
   verdict: TrojanVerdict | null;
   notes: string[];
   sequential: SequentialSummary | null;
+  // Model calls and token counts for the combinational path (the
+  // sequential path carries its own under `sequential.llm_usage`).
+  llm_usage?: LlmUsage;
 }
 
 export interface VerdictSuspect {

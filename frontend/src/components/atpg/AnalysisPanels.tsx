@@ -1,5 +1,12 @@
-import { Brain, GitCompareArrows, Info, Link2, ShieldAlert, ShieldCheck } from 'lucide-react';
-import type { CircuitAnalysis, CorrelationReport, RunComparison, TrojanVerdict } from '@/types';
+import { Brain, Cpu, GitCompareArrows, Info, Link2, ShieldAlert, ShieldCheck } from 'lucide-react';
+import type {
+  CircuitAnalysis,
+  CorrelationReport,
+  LlmUsage,
+  RunComparison,
+  TargetingInfo,
+  TrojanVerdict,
+} from '@/types';
 import { KeyValue, Pill, Section, Stat, metric } from './primitives';
 
 export function VerdictPanel({ verdict }: { verdict: TrojanVerdict }) {
@@ -69,12 +76,52 @@ export function VerdictPanel({ verdict }: { verdict: TrojanVerdict }) {
 }
 
 export function ComparisonPanel({ comparison }: { comparison: RunComparison }) {
+  const simulated =
+    comparison.targeted_simulated_coverage != null &&
+    comparison.non_targeted_simulated_coverage != null;
   return (
     <Section
       title="Targeted vs non-targeted"
       subtitle="Both sets of numbers come from separate ATPG runs on the same netlist."
       actions={<GitCompareArrows className="w-4 h-4 text-muted-foreground" />}
     >
+      {/* The one like-for-like pair: each run's patterns fault-simulated over
+          the same whole-circuit fault list. Shown first because every other
+          coverage figure below has a different denominator. */}
+      {simulated && (
+        <div className="mb-5">
+          <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3">
+            Whole-circuit coverage of each pattern set (same fault list)
+          </h4>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <Stat
+              label="Targeted patterns"
+              value={metric(comparison.targeted_simulated_coverage, { suffix: ' %' })}
+              hint={`${comparison.targeted_patterns ?? '?'} patterns simulated over ${comparison.simulated_fault_count?.toLocaleString() ?? '?'} circuit faults`}
+              emphasis
+            />
+            <Stat
+              label="Non-targeted patterns"
+              value={metric(comparison.non_targeted_simulated_coverage, { suffix: ' %' })}
+              hint={`${comparison.non_targeted_patterns ?? '?'} patterns simulated over the same faults`}
+            />
+            <Stat
+              label="Coverage delta"
+              value={metric(comparison.simulated_coverage_delta, { suffix: ' pts' })}
+              hint="targeted − non-targeted, like for like"
+            />
+            <Stat
+              label="Circuit faults simulated"
+              value={comparison.simulated_fault_count}
+              hint="gate-output and primary-input stuck-at faults, uncollapsed"
+            />
+          </div>
+        </div>
+      )}
+
+      <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3">
+        As reported by the ATPG tool (each over its own fault list)
+      </h4>
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         {/* Each coverage figure carries its own fault count: the targeted run
             measures over only the gates it selected, so a small enough list
@@ -103,14 +150,16 @@ export function ComparisonPanel({ comparison }: { comparison: RunComparison }) {
         <Stat
           label="Coverage delta"
           value={metric(comparison.coverage_delta, { suffix: ' pts' })}
+          hint="different denominators -- not like for like"
         />
         <Stat
           label="Pattern reduction"
           value={metric(comparison.pattern_reduction_pct, { suffix: ' %' })}
         />
         <Stat
-          label="Targeted, whole-circuit share"
+          label="Targeted detections, share of circuit"
           value={metric(comparison.targeted_circuit_wide_coverage, { suffix: ' %' })}
+          hint="only the faults in the targeted list; a lower bound"
         />
       </div>
 
@@ -286,6 +335,76 @@ export function CorrelationPanel({ correlation }: { correlation: CorrelationRepo
           </li>
         ))}
       </ul>
+    </Section>
+  );
+}
+
+/** Human labels for the stages the backend logs model calls under. */
+const STAGE_LABELS: Record<string, string> = {
+  targeting: 'Gate selection (targeting)',
+  analysis: 'Circuit analysis',
+  llm1: 'Circuit summary (LLM-1)',
+  llm2: 'Fault prioritisation (LLM-2)',
+};
+
+export function LlmUsagePanel({
+  usage,
+  targeting,
+}: {
+  usage: LlmUsage;
+  targeting: TargetingInfo | null;
+}) {
+  const exact = usage.tokens_exact !== false;
+  const suffix = exact ? '' : ' (est.)';
+  const stages = Object.entries(usage.by_stage ?? {});
+  const context = targeting?.context;
+  return (
+    <Section
+      title="LLM usage"
+      subtitle={
+        <>
+          Every model call this run made
+          {usage.provider ? ` via ${usage.provider}` : ''}
+          {usage.model ? ` / ${usage.model}` : ''}.{' '}
+          {exact
+            ? "Token counts are the provider's own usage report."
+            : 'The provider reported no usage, so token counts are estimated as characters ÷ 4.'}
+        </>
+      }
+      actions={<Cpu className="w-4 h-4 text-muted-foreground" />}
+    >
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <Stat label="API calls" value={usage.api_calls ?? 0} />
+        <Stat
+          label="Cached hits"
+          value={usage.cached_hits ?? 0}
+          hint="answers reused from an earlier identical run; cost no tokens"
+        />
+        <Stat label={`Prompt tokens${suffix}`} value={usage.prompt_tokens_est ?? 0} />
+        <Stat label={`Response tokens${suffix}`} value={usage.response_tokens_est ?? 0} />
+      </div>
+
+      {stages.length > 0 && (
+        <div className="mt-4">
+          <KeyValue
+            rows={stages.map(([stage, s]) => [
+              STAGE_LABELS[stage] ?? stage,
+              `${(s.prompt_tokens_est ?? 0).toLocaleString()} in / ${(s.response_tokens_est ?? 0).toLocaleString()} out` +
+                (s.calls ? ` · ${s.calls} call${s.calls === 1 ? '' : 's'}` : '') +
+                (s.cached_hits ? ` · ${s.cached_hits} cached` : ''),
+            ])}
+          />
+        </div>
+      )}
+
+      {context && context.gates_total != null && (
+        <p className="text-xs text-muted-foreground mt-4 leading-relaxed border-t border-border pt-4">
+          Context sent for gate selection: {context.gates_sent?.toLocaleString()} of{' '}
+          {context.gates_total.toLocaleString()} gate profiles
+          {context.gate_limit ? ` (cap ${context.gate_limit.toLocaleString()}; LLM_CONTEXT_GATES=0 sends all)` : ''}
+          , as one CSV row per gate.
+        </p>
+      )}
     </Section>
   );
 }

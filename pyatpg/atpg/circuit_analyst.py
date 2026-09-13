@@ -12,10 +12,29 @@ import json
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
-from pyatpg.ranking.providers import LLMProvider, provider_from_request
+from pyatpg.llm.token_tracker import TokenTracker
+from pyatpg.ranking.providers import LLMProvider, LLMUnavailableError, provider_from_request
 
-#: How many gate profiles to include as evidence in the prompt.
+from .llm_context import (
+    COMPACT_LEGEND,
+    LLMResultCache,
+    cache_enabled,
+    compact_profile_block,
+    rarity_key,
+)
+
+#: Stage name this analyst's calls are logged under in the TokenTracker.
+TOKEN_STAGE = "analysis"
+
+#: How many gate profiles to include as evidence in the prompt. In the
+#: compact CSV encoding this is roughly 2k tokens.
 _PROFILE_BUDGET = 120
+
+#: How much of the raw netlist to show. The prompt tells the model to ground
+#: every point in the gate rows, so the source is there only to let it name
+#: the architecture; a few hundred lines are enough for that and the full
+#: 8000 characters used previously doubled the prompt on small circuits.
+_SOURCE_EXCERPT_CHARS = 3000
 
 #: How many gates each structural observation lists.
 _STRUCTURAL_TOP_N = 8
@@ -80,7 +99,15 @@ class CircuitAnalyst:
         api_key: str | None = None,
         model: str | None = None,
         provider: LLMProvider | None = None,
+        tracker: TokenTracker | None = None,
+        cache: LLMResultCache | None = None,
     ):
+        #: Every model call is logged here (shared with the target selector
+        #: when the service passes one in).
+        self.tracker = tracker or TokenTracker()
+        #: Cache of earlier answers for the same netlist; None means "use
+        #: the default on-disk cache".
+        self.cache = cache
         #: The model to ask, or None for the structural fallback. A ready
         #: provider wins; a bare ``api_key`` is resolved against the
         #: environment (provider sniffed from the key's prefix).
@@ -103,7 +130,12 @@ class CircuitAnalyst:
         if self.provider is not None:
             try:
                 return self._analyze_with_llm(circuit_source, profiles, stats, circuit_name)
-            except Exception as exc:  # noqa: BLE001 - degrade to structural
+            except LLMUnavailableError:
+                # The model could not be consulted (credits, rate limit,
+                # provider outage): abort the run and say why rather than
+                # presenting the structural fallback as the analysis.
+                raise
+            except Exception as exc:  # noqa: BLE001 - model ran but its answer was unusable
                 analysis = self._analyze_structurally(profiles, stats, circuit_name)
                 analysis.reasoning.insert(
                     0,
@@ -217,15 +249,11 @@ class CircuitAnalyst:
         stats: dict[str, Any],
         circuit_name: str,
     ) -> CircuitAnalysis:
-        ranked = sorted(
-            profiles,
-            key=lambda p: (
-                p["features"].get("toggle_rate", 1.0),
-                -p["features"].get("co", 0),
-            ),
+        ranked = sorted(profiles, key=rarity_key)
+        profile_block = compact_profile_block(
+            [(str(p["gate_id"]), p.get("features", {}) or {}) for p in ranked[:_PROFILE_BUDGET]]
         )
-        profile_block = "\n".join(p["profile"] for p in ranked[:_PROFILE_BUDGET])
-        source_excerpt = circuit_source[:8000]
+        source_excerpt = circuit_source[:_SOURCE_EXCERPT_CHARS]
 
         prompt = f"""You are a design-for-test engineer reviewing a combinational circuit
 before automatic test pattern generation.
@@ -250,14 +278,47 @@ Rules:
 Circuit source (may be truncated):
 {source_excerpt}
 
-Gate profiles (rarest-toggling first):
+Gate profiles, rarest-toggling first ({len(ranked[:_PROFILE_BUDGET])} of {len(ranked)}):
+{COMPACT_LEGEND}
 {profile_block}
 """
+        full_prompt = prompt + "\n" + _JSON_CONTRACT
 
-        response_text = self.provider.complete(prompt + "\n" + _JSON_CONTRACT, json_mode=True)
-        payload = _load_json(response_text or "")
+        # An identical netlist through the same model gets the same answer
+        # at full price; reuse it.
+        cache = self.cache
+        if cache is None and cache_enabled():
+            cache = LLMResultCache()
+        cache_params = dict(model=self.provider.model_name, budget=_PROFILE_BUDGET)
+        response_text: str | None = None
+        cached = False
+        if cache is not None:
+            hit = cache.get(TOKEN_STAGE, circuit_source, **cache_params)
+            if isinstance(hit, dict) and isinstance(hit.get("response"), str):
+                response_text = hit["response"]
+                cached = True
+                self.tracker.record_cached(TOKEN_STAGE)
+        if response_text is None:
+            response_text = self.provider.complete(full_prompt, json_mode=True) or ""
+            self.tracker.record(
+                TOKEN_STAGE,
+                full_prompt,
+                response_text,
+                usage=getattr(self.provider, "last_usage", None),
+            )
+
+        payload = _load_json(response_text)
+        if cache is not None and not cached:
+            # Only a response that parsed is worth remembering.
+            cache.put(TOKEN_STAGE, circuit_source, {"response": response_text}, **cache_params)
         known = {str(p["gate_id"]) for p in profiles}
-        return self._build_from_payload(payload, known)
+        analysis = self._build_from_payload(payload, known)
+        if cached:
+            analysis.reasoning.append(
+                "This analysis was reused from the cache of an earlier run of this "
+                "exact netlist through the same model; it cost no tokens."
+            )
+        return analysis
 
     def _build_from_payload(
         self, payload: dict[str, Any], known_gates: set[str]

@@ -131,11 +131,25 @@ def _run_summary_row(circuit: Path, analysis: Any, elapsed: float, llm_config) -
     for run_key, run in (payload.get("runs") or {}).items():
         results = run.get("results") or {}
         row[f"{run_key}_fault_coverage"] = results.get("fault_coverage")
-        row[f"{run_key}_pattern_count"] = results.get("pattern_count")
+        row[f"{run_key}_pattern_count"] = results.get("patterns_after_compaction")
+        row[f"{run_key}_aborted_faults"] = results.get("aborted_faults")
+        # Whole-circuit coverage of this run's patterns (same fault list
+        # for every run) -- the comparable number, unlike fault_coverage.
+        pattern_coverage = run.get("pattern_coverage") or {}
+        row[f"{run_key}_simulated_coverage"] = pattern_coverage.get("coverage")
+        row[f"{run_key}_search_attempts"] = len(run.get("attempts") or []) or 1
     comparison = payload.get("comparison")
     if comparison:
         row["targeted_coverage"] = comparison.get("targeted_coverage")
         row["non_targeted_coverage"] = comparison.get("non_targeted_coverage")
+        row["simulated_coverage_delta"] = comparison.get("simulated_coverage_delta")
+    usage = payload.get("llm_usage") or {}
+    if usage.get("enabled"):
+        row["llm_api_calls"] = usage.get("api_calls")
+        row["llm_cached_hits"] = usage.get("cached_hits")
+        row["llm_prompt_tokens"] = usage.get("prompt_tokens_est")
+        row["llm_response_tokens"] = usage.get("response_tokens_est")
+        row["llm_tokens_exact"] = usage.get("tokens_exact")
     sequential = payload.get("sequential")
     if sequential:
         seq_results = (sequential.get("analysis") or {}).get("results") or {}

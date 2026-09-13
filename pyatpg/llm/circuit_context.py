@@ -17,9 +17,12 @@ from pyatpg.core.memory import CircuitMemory
 from .token_tracker import TokenTracker
 
 try:
-    from pyatpg.ranking.providers import LLMProvider
+    from pyatpg.ranking.providers import LLMProvider, LLMUnavailableError
 except ImportError:  # pragma: no cover
     LLMProvider = None  # type: ignore[assignment,misc]
+
+    class LLMUnavailableError(RuntimeError):  # type: ignore[no-redef]
+        """Placeholder so the except clause below still resolves."""
 
 _DEFAULT_CACHE_PATH = os.path.join(os.getcwd(), "outputs", "seq_llm1_cache.json")
 
@@ -73,7 +76,11 @@ class CircuitContextAnalyzer:
         )
         try:
             summary = self.provider.complete(prompt)
-        except Exception:
+        except LLMUnavailableError:
+            # Provider could not be reached at all: the run stops here, it
+            # must not continue on the no-LLM summary as if it had been asked.
+            raise
+        except Exception:  # noqa: BLE001 - model ran but its answer was unusable
             summary = _structural_summary(circuit_name, stats)
             self.cache.remember(source_text, summary, stats)
             return summary

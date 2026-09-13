@@ -22,9 +22,12 @@ from .store import LocalContextStore
 from .token_tracker import TokenTracker
 
 try:
-    from pyatpg.ranking.providers import LLMProvider
+    from pyatpg.ranking.providers import LLMProvider, LLMUnavailableError
 except ImportError:  # pragma: no cover
     LLMProvider = None  # type: ignore[assignment,misc]
+
+    class LLMUnavailableError(RuntimeError):  # type: ignore[no-redef]
+        """Placeholder so the except clause below still resolves."""
 
 
 class LLMFaultPrioritizer:
@@ -61,7 +64,11 @@ class LLMFaultPrioritizer:
         )
         try:
             response = self.provider.complete(prompt)
-        except Exception:
+        except LLMUnavailableError:
+            # Provider could not be reached at all: abort the run rather
+            # than silently continuing in natural fault order.
+            raise
+        except Exception:  # noqa: BLE001 - model ran but its answer was unusable
             return None
         self.tracker.record("llm2", prompt, response)
 

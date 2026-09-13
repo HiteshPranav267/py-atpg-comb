@@ -137,7 +137,7 @@ export default function Analytics() {
 
           <Section
             title="LLM usage"
-            subtitle="Aggregated across every ATPG run that had an API key configured. Sequential runs report real token estimates (see the context-reduction design in the ATPG page); combinational runs currently only report whether the LLM was used."
+            subtitle="Aggregated across every ATPG run that had an API key configured. Both combinational and sequential runs report per-call token counts (the provider's own where reported); see the LLM usage panel on the ATPG page."
             actions={<Sparkles className="w-4 h-4 text-muted-foreground" />}
           >
             <KeyValue

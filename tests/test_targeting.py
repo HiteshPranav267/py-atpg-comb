@@ -163,8 +163,11 @@ class TestObfuscationInvariance:
     def test_real_gate_names_never_reach_the_model(self):
         p = _profile(TROJAN, toggle_patterns=200)
         prompt, _ = self._capture_prompt(p.gate_profiles)
+        import re
+
         for name in ("ht_trig", "n5_orig", "n1", "n2"):
-            assert f"Gate: {name}," not in prompt
+            # A real name would appear as the id column of a CSV row.
+            assert not re.search(rf"^{re.escape(name)},", prompt, flags=re.MULTILINE)
         assert "ht_" not in prompt.lower()
 
     def test_aliases_resolve_back_to_real_gates(self):
@@ -224,7 +227,8 @@ class TestConfidenceScoring:
         def respond(prompt):
             import re
 
-            aliases = re.findall(r"Gate: (g\d+),", prompt)
+            # Aliases appear as the first column of the compact CSV rows.
+            aliases = re.findall(r"^(g\d+),", prompt, flags=re.MULTILINE)
             return response_text.format(*aliases[:4])
 
         return T.FaultTargetSelector(provider=_FakeProvider(respond)).select(p.gate_profiles)

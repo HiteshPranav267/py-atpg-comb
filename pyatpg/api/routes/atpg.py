@@ -8,6 +8,7 @@ from pyatpg.atpg import (
     AtalantaExecutionError,
     AtalantaNotAvailable,
     AtpgAnalysisService,
+    LLMUnavailableError,
     NoTargetableGates,
 )
 from pyatpg.atpg.workspace import JobWorkspace
@@ -124,6 +125,13 @@ async def run_atpg(
         raise HTTPException(status_code=503, detail=str(exc))
     except AtalantaExecutionError as exc:
         raise HTTPException(status_code=502, detail=str(exc))
+    except LLMUnavailableError as exc:
+        # The model could not be consulted (no credits, rate limited, the
+        # provider returned a 5xx, key rejected). The user asked for an
+        # LLM-assisted run, so this is reported as a failure of that run --
+        # not silently downgraded to the offline heuristic. 502 because the
+        # failure is upstream of this service; the detail says exactly why.
+        raise HTTPException(status_code=502, detail=str(exc))
 
     payload = analysis.to_dict()
     _record_atpg_run(payload)
@@ -156,15 +164,15 @@ def _record_atpg_run(payload: dict) -> None:
         runs = payload.get("runs") or {}
         primary = runs.get("non_targeted") or runs.get("targeted")
         coverage = primary["results"].get("fault_coverage") if primary else None
-        used_llm = bool((payload.get("targeting") or {}).get("used_llm"))
+        usage = payload.get("llm_usage") or {}
         get_analytics_store().record(
             "atpg_run",
             circuit_kind="combinational",
             circuit_name=payload.get("circuit", {}).get("name"),
             mode=payload.get("mode"),
             fault_coverage=coverage,
-            llm_api_calls=(1 if used_llm else 0),
-            llm_tokens_est=None,
+            llm_api_calls=usage.get("api_calls") if usage.get("enabled") else 0,
+            llm_tokens_est=usage.get("total_tokens_est") if usage.get("enabled") else None,
         )
     except Exception:  # noqa: BLE001 - analytics must never break a real response
         pass

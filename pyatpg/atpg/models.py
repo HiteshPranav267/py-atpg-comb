@@ -163,6 +163,17 @@ class AtalantaRun:
     raw_log: str = ""
     raw_stderr: str = ""
     artifacts: dict[str, str] = field(default_factory=dict)
+    #: Every Atalanta attempt made for this run, when the service re-ran
+    #: the same fault list at a higher search budget because faults were
+    #: aborted (see AtpgAnalysisService._run_targeted). One entry per
+    #: attempt, in order; the last is the one this object reports. Empty
+    #: for a run that was executed exactly once.
+    attempts: list[dict[str, Any]] = field(default_factory=list)
+    #: This run's patterns fault-simulated over the *whole* circuit by
+    #: pyatpg.atpg.faultsim -- the same fault list for every run, so two
+    #: runs' pattern sets can be compared directly. None when the
+    #: simulation was not performed.
+    pattern_coverage: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
@@ -216,6 +227,15 @@ class RunComparison:
     targeted_faults: int | None = None
     non_targeted_faults: int | None = None
     targeted_fault_share_pct: float | None = None
+    #: Both pattern sets fault-simulated over the same whole-circuit fault
+    #: list (pyatpg.atpg.faultsim). Unlike the two Atalanta coverages above
+    #: these share one denominator, so they are directly comparable: this
+    #: is what the targeted run's patterns actually achieve on the circuit,
+    #: not just on the faults they were written for.
+    targeted_simulated_coverage: float | None = None
+    non_targeted_simulated_coverage: float | None = None
+    simulated_coverage_delta: float | None = None
+    simulated_fault_count: int | None = None
     notes: list[str] = field(default_factory=list)
 
 
@@ -283,6 +303,28 @@ def build_comparison(targeted: AtalantaRun, non_targeted: AtalantaRun) -> RunCom
         "faults, for an apples-to-apples comparison against non_targeted_coverage."
         + scope
     )
+    # The whole-circuit simulation of each run's patterns is the one figure
+    # that puts both runs on the same denominator.
+    t_sim = targeted.pattern_coverage or {}
+    n_sim = non_targeted.pattern_coverage or {}
+    if t_sim.get("coverage") is not None and n_sim.get("coverage") is not None:
+        comparison.targeted_simulated_coverage = t_sim["coverage"]
+        comparison.non_targeted_simulated_coverage = n_sim["coverage"]
+        comparison.simulated_coverage_delta = round(
+            t_sim["coverage"] - n_sim["coverage"], 3
+        )
+        comparison.simulated_fault_count = t_sim.get("total_faults")
+        comparison.notes.append(
+            f"targeted_simulated_coverage ({t_sim['coverage']}%) and "
+            f"non_targeted_simulated_coverage ({n_sim['coverage']}%) were measured "
+            f"by fault-simulating each run's {t_sim.get('patterns')} and "
+            f"{n_sim.get('patterns')} patterns over the same "
+            f"{t_sim.get('total_faults')} gate-output and primary-input stuck-at "
+            "faults of the whole circuit, so they share one denominator and can be "
+            "read against each other directly. Patterns written for hard faults "
+            "detect many easier faults on the way to an output, which is why the "
+            "targeted figure is far above targeted_circuit_wide_coverage."
+        )
     if share is not None and share < 25 and (t_cov or 0) >= (n_cov or 0):
         comparison.notes.append(
             f"targeted_coverage ({t_cov}%) is at or above non_targeted_coverage "

@@ -19,7 +19,7 @@ class _FakeAnalysis:
             "job_id": "job-1",
             "mode": "compare",
             "circuit": {"name": circuit_name},
-            "runs": {"non_targeted": {"results": {"fault_coverage": coverage, "pattern_count": 10}}},
+            "runs": {"non_targeted": {"results": {"fault_coverage": coverage, "patterns_after_compaction": 10}}},
             "comparison": None,
             "notes": [],
             "sequential": None,

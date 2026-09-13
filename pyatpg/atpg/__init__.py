@@ -25,6 +25,7 @@ from .structural import ParsedCircuit, parse_circuit, profile_circuit
 from .targeting import FaultTargetSelector, TargetSelection
 from .validation import CyclicNetlistError, assert_atalanta_safe, find_combinational_cycle
 from .workspace import JobWorkspace
+from pyatpg.ranking.providers import LLMUnavailableError
 
 __all__ = [
     "AnalysisMode",
@@ -45,6 +46,7 @@ __all__ = [
     "FaultEntry",
     "FaultTargetSelector",
     "JobWorkspace",
+    "LLMUnavailableError",
     "NoTargetableGates",
     "Observation",
     "ParsedCircuit",

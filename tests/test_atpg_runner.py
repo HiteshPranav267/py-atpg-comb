@@ -81,3 +81,38 @@ def test_run_still_succeeds_with_a_backtrack_limit(tmp_path):
     run, _ = _run(ws, backtrack_limit=25)
     assert run.exit_code == 0
     assert run.results.fault_coverage == 100.0
+
+
+def test_phase2_and_learning_flags_are_forwarded(tmp_path):
+    ws = JobWorkspace(job_id="t", directory=tmp_path, circuit_name="fake")
+    _, argv = _run(ws, backtrack_limit=1000, backtrack_limit_phase2=1000, static_learning=True)
+    assert argv[argv.index("-b") + 1] == "1000"
+    assert argv[argv.index("-B") + 1] == "1000"
+    assert "-L" in argv
+
+
+def test_phase2_and_learning_omitted_by_default(tmp_path):
+    ws = JobWorkspace(job_id="t", directory=tmp_path, circuit_name="fake")
+    _, argv = _run(ws)
+    assert "-B" not in argv
+    assert "-L" not in argv
+
+
+def test_attempt_tag_keeps_artifacts_apart(tmp_path):
+    """Two attempts at the same fault list must not overwrite each other."""
+    ws = JobWorkspace(job_id="t", directory=tmp_path, circuit_name="fake")
+    first, _ = _run(ws, targeted_faults=["z /0"])
+    second, _ = _run(ws, targeted_faults=["z /0"], attempt_tag="b1000")
+    assert first.artifacts["bench"] == "fake_targeted.bench"
+    assert second.artifacts["bench"] == "fake_targeted_b1000.bench"
+
+
+def test_pattern_file_does_not_share_atalantas_scratch_vec_name(tmp_path):
+    """Atalanta writes its own "<stem>.vec" regardless of -t; the -t file
+    must have a different name or the two writers clobber each other."""
+    ws = JobWorkspace(job_id="t", directory=tmp_path, circuit_name="fake")
+    _, argv = _run(ws)
+    test_file = argv[argv.index("-t") + 1]
+    bench = argv[-1]
+    assert test_file != bench.rsplit(".", 1)[0] + ".vec"
+    assert test_file.endswith(".test")

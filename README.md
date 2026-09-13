@@ -52,7 +52,9 @@ pyatpg/atpg/                           pyatpg/seq/
   runner.py       run Atalanta           podem.py       PODEM search over the unrolled netlist
   parsing.py      read Atalanta output   simulator.py   deterministic multi-cycle fault sim (source of truth)
   circuit_analyst.py  LLM/structural     faultsim.py    checkpoint fault list + coverage calculation
-  correlation.py  gates vs. faults       generator.py   random-fill / mutation candidates
+  llm_context.py  compact/capped prompts generator.py   random-fill / mutation candidates
+  faultsim.py     patterns vs. whole circuit
+  correlation.py  gates vs. faults
                                          engine.py      orchestrates candidates -> minimal test-sequence set
                                          service.py     orchestration (mirrors atpg/service.py)
 ```
@@ -69,6 +71,31 @@ Every ATPG metric shown — fault coverage, pattern counts, collapsed/redundant/
 faults, backtrackings, CPU time — is parsed from Atalanta's own output. A metric Atalanta
 did not report is surfaced as *"Not reported by Atalanta"*, never as `0`. The LLM layer is
 interpretive only and contributes no measurements.
+
+**Reading a targeted run's coverage.** Atalanta's coverage is a percentage of the fault list
+it was *given*, and a targeted list is a few percent of the circuit, so the two runs'
+`fault_coverage` figures have different denominators and cannot be compared directly. Two
+things make the targeted run readable:
+
+- *Search-effort escalation* (`pyatpg/atpg/service.py`, `TARGETED_EFFORT_LADDER`). The
+  targeted list is built from the hardest faults in the circuit, which is exactly where
+  Atalanta's default budget of 10 backtracks gives up. Because the list is tiny, the service
+  re-runs it at `-b 1000 -B 1000`, then `-b 10000 -B 10000 -L`, for as long as faults are
+  still *aborted* (never for *redundant* ones — those are proven undetectable), keeps the
+  attempt with the fewest aborted faults, and records every attempt on the run
+  (`runs.targeted.attempts`). On the ISCAS-85 set the top rung costs well under a second.
+  The non-targeted run keeps the requested budget: it is the plain-ATPG baseline.
+- *Whole-circuit pattern coverage* (`pyatpg/atpg/faultsim.py`). Each run's generated
+  patterns are fault-simulated over every gate-output and primary-input stuck-at fault of the
+  whole circuit, with the same list for both runs, and reported as
+  `runs.<key>.pattern_coverage` and `comparison.targeted_simulated_coverage` /
+  `non_targeted_simulated_coverage`. This is the one like-for-like pair: patterns written
+  for the hardest faults detect most of the easy ones on the way to an output (c1908's ~30
+  targeted patterns cover ~84% of the circuit, against the 7% that
+  `targeted_circuit_wide_coverage` — detections *inside* the targeted list only — reports).
+  The simulator cross-checks its fault-free response against the one Atalanta recorded next
+  to each pattern and reports the figure as unavailable on any disagreement, rather than
+  scoring the wrong circuit.
 
 **Sequential circuits** (any flip-flop, scan or not) never reach Atalanta — it is a purely
 combinational engine and cannot levelize state-holding logic. They are routed to `pyatpg/seq`
@@ -147,9 +174,23 @@ py-atpg-comb/
 - Python 3.11+
 - Node.js 20+ (for the research frontend)
 - ATALANTA compiled binary (inside `Atalanta/`)
-- An LLM API key for LLM-based ranking/prioritization (optional; everything falls back to structural heuristics without one). Any of these work, in your environment or `.env`:
+- An LLM API key for LLM-based ranking/prioritization (optional; everything falls back to structural heuristics without one). Note the distinction: *no key* means the structural heuristics run in the model's place, but a key whose provider **cannot be reached** (out of credits, rate limited with a 429, a 500/503 from the service, a rejected key) stops the run with `LLM could not be run: <reason>` rather than silently substituting the heuristic. Any of these work, in your environment or `.env`:
   - `GEMINI_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY` or `NVIDIA_API_KEY` — the vendor is implied by the variable
   - or the generic `LLM_API_KEY` plus `LLM_PROVIDER` (`gemini` / `openai` / `anthropic` / `nvidia` / `openai_compatible`), with optional `LLM_MODEL` and, for OpenAI-compatible endpoints such as Ollama/Groq/OpenRouter, `LLM_BASE_URL`
+- Context and cost of the combinational LLM stages (`pyatpg/atpg/llm_context.py`):
+  - Gate profiles go to the model as one CSV row per gate (~18 tokens) instead of a five-line
+    paragraph (~60), and the targeting prompt carries a capped **candidate pool** rather than
+    every gate: the union of the rarest-toggling, hardest-to-observe and
+    neighbourhood-anomalous gates plus everything the structural trojan detector flags,
+    topped up from the rarity ranking. `LLM_CONTEXT_GATES` sets the cap (default 300, about 6k
+    tokens; `0` sends every gate, which on c7552 is ~220k tokens). The response's
+    `targeting.context` and the LLM usage panel say exactly what was sent.
+  - Model answers are cached on disk per netlist + model (`outputs/comb_llm_cache.json`), so an
+    identical re-run costs no tokens; `LLM_RESULT_CACHE=0` forces a fresh call.
+  - Every call is counted in the response's `llm_usage` (`api_calls`, `cached_hits`,
+    `prompt_tokens_est`, `response_tokens_est`, per-stage breakdown). The counts are the
+    provider's own usage report whenever the SDK returns one (`tokens_exact: true`); only
+    when it does not are they estimated as characters ÷ 4.
   - or paste a key in the frontend's **Settings** dialog: pick a provider from the dropdown or leave it on *Auto* and the vendor is recognised from the key's prefix (`AIza` Gemini, `sk-ant-` Anthropic, `nvapi-` NVIDIA, `sk-` OpenAI). Per-request keys override the server's.
 
 ```bash

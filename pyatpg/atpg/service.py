@@ -11,17 +11,38 @@ from typing import Any
 
 from .circuit_analyst import CircuitAnalysis, CircuitAnalyst
 from .correlation import CorrelationReport, correlate
+from .faultsim import simulate_pattern_coverage
 from .verdict import TrojanVerdict, build_verdict
 from .models import AnalysisMode, AtalantaRun, RunComparison, SequentialSummary, build_comparison
 from .runner import AtalantaRunner, build_fault_lines
 from .structural import ParsedCircuit, parse_circuit, profile_circuit
 from .workspace import JobWorkspace, prune_old_jobs
 
+from pyatpg.llm.token_tracker import TokenTracker
 from pyatpg.ranking.providers import LLMConfig, create_provider, resolve_llm_config
 
 
 #: Stand-in written over a credential before any text reaches a response.
 _REDACTED = "[redacted]"
+
+#: Search budgets tried, in turn, for a targeted run that still has aborted
+#: faults after the first attempt, as (phase-1 backtracks, phase-2
+#: backtracks, static learning). The targeted fault list is a few percent of
+#: the circuit, so even the top rung costs well under a second on the ISCAS
+#: circuits -- and the faults in it were chosen *because* they are hard, so
+#: the default budget of 10 backtracks is exactly where they abort. The
+#: non-targeted run is left at the budget the caller asked for: it is the
+#: plain-ATPG baseline, and this ladder over a whole circuit is not cheap.
+TARGETED_EFFORT_LADDER: tuple[tuple[int, int, bool], ...] = (
+    (1000, 1000, False),
+    (10000, 10000, True),
+)
+
+#: Wall-clock allowance for fault-simulating one run's patterns over the
+#: whole circuit. Well above what the ISCAS-85 set needs (about a second on
+#: c6288); a circuit that blows through it reports the figure as unavailable
+#: rather than holding up the response.
+PATTERN_SIMULATION_BUDGET_SECONDS = 30.0
 
 
 class NoTargetableGates(RuntimeError):
@@ -80,6 +101,28 @@ def _redact_secret(analysis: "AtpgAnalysis", secret: str) -> None:
             analysis.sequential.llm_usage["circuit_summary"] = scrub(summary)
 
 
+def _describe_attempt(
+    run: AtalantaRun, phase1: int | None, phase2: int | None, learning: bool
+) -> dict[str, Any]:
+    """One row of a targeted run's search-budget history."""
+    parts = [f"-b {phase1}" if phase1 is not None else "default budget"]
+    if phase2 is not None:
+        parts.append(f"-B {phase2}")
+    if learning:
+        parts.append("-L")
+    return {
+        "label": " ".join(parts),
+        "backtrack_limit": phase1,
+        "backtrack_limit_phase2": phase2,
+        "static_learning": learning,
+        "fault_coverage": run.results.fault_coverage,
+        "aborted_faults": run.results.aborted_faults,
+        "redundant_faults": run.results.redundant_faults,
+        "patterns": run.results.patterns_after_compaction,
+        "cpu_seconds": run.timing.total,
+    }
+
+
 @dataclass
 class AtpgAnalysis:
     """The complete result of an analysis request."""
@@ -100,6 +143,10 @@ class AtpgAnalysis:
     #: circuit has flip-flops -- Atalanta cannot levelize sequential logic,
     #: so those circuits are routed to pyatpg.seq instead of rejected.
     sequential: SequentialSummary | None = None
+    #: Every model call this analysis made, with token counts (the
+    #: provider's own where it reported them), per stage. ``enabled`` is
+    #: False when no model was consulted at all.
+    llm_usage: dict[str, Any] = field(default_factory=lambda: {"enabled": False})
 
     def to_dict(self) -> dict[str, Any]:
         from dataclasses import asdict
@@ -117,6 +164,7 @@ class AtpgAnalysis:
             "verdict": self.verdict.to_dict() if self.verdict else None,
             "notes": self.notes,
             "sequential": self.sequential.to_dict() if self.sequential else None,
+            "llm_usage": self.llm_usage,
         }
 
 
@@ -193,8 +241,13 @@ class AtpgAnalysisService:
                 This drives the structural analysis only -- Atalanta chooses
                 its own pattern counts.
             use_llm: whether to consult the model for targeting and analysis.
-                Both layers fall back to deterministic structural methods
-                when this is False or no key is configured.
+                Both layers use deterministic structural methods when this
+                is False or no key is configured. When a key *is* configured
+                but the provider cannot be run -- out of credits, rate
+                limited (429), a 5xx from the service, a rejected key -- the
+                run is aborted with :class:`LLMUnavailableError` rather than
+                silently substituting the structural heuristic; the message
+                says why the model could not be consulted.
             api_key: credential for this request only, taking precedence over
                 the deployment's environment variable.
             llm_provider: which vendor the key belongs to (``gemini``,
@@ -269,17 +322,26 @@ class AtpgAnalysisService:
         except Exception:  # noqa: BLE001 - detector failure must not fail the run
             structural_suspects, suspect_reasons = [], []
 
+        # One tracker across both model stages, so the response can say
+        # exactly what the whole request cost.
+        tracker = TokenTracker()
+
         selection = None
         if mode.runs_targeted:
             from .targeting import FaultTargetSelector
 
-            selector = FaultTargetSelector(provider=provider)
+            selector = FaultTargetSelector(provider=provider, tracker=tracker)
             selection = selector.select(
-                profile.gate_profiles, summary="", graph=profile.graph
+                profile.gate_profiles,
+                summary="",
+                graph=profile.graph,
+                source_text=parsed.source_text,
             )
             analysis.targeting = {
                 "strategy": selection.strategy,
                 "used_llm": selection.used_llm,
+                "cached": selection.cached,
+                "context": selection.context,
                 "gates": selection.gates,
                 "gate_count": len(selection.gates),
                 "notes": selection.notes,
@@ -314,14 +376,16 @@ class AtpgAnalysisService:
             )
 
         if selection is not None:
-            analysis.runs[self.TARGETED_KEY] = self.runner.run(
-                workspace,
-                bench_text,
-                label=AnalysisMode.TARGETED.label,
-                targeted_faults=build_fault_lines(selection.gates),
-                targeted_gates=selection.gates,
-                backtrack_limit=backtrack_limit,
+            analysis.runs[self.TARGETED_KEY] = self._run_targeted(
+                workspace, bench_text, selection.gates, backtrack_limit, analysis.notes
             )
+
+        # Score every run's patterns over the whole circuit, on one shared
+        # fault list, so a targeted run's patterns can be read against the
+        # circuit and not only against the handful of faults they were
+        # written for.
+        for run in analysis.runs.values():
+            run.pattern_coverage = self._score_patterns(parsed, run)
 
         if self.TARGETED_KEY in analysis.runs and self.NON_TARGETED_KEY in analysis.runs:
             analysis.comparison = build_comparison(
@@ -338,7 +402,7 @@ class AtpgAnalysisService:
                 _targeted_scope_note(analysis.runs[self.TARGETED_KEY], selection.gates)
             )
 
-        analyst = CircuitAnalyst(provider=provider)
+        analyst = CircuitAnalyst(provider=provider, tracker=tracker)
         analysis.circuit_analysis = analyst.analyze(
             circuit_source=parsed.source_text,
             profiles=profile.gate_profiles,
@@ -366,8 +430,102 @@ class AtpgAnalysisService:
                 )
             else:
                 analysis.notes.append(f"LLM: {llm_config.describe()}.")
+                analysis.llm_usage = {
+                    "enabled": True,
+                    "provider": llm_config.spec.label,
+                    "model": llm_config.model,
+                    **tracker.summary(),
+                }
             _redact_secret(analysis, llm_config.api_key)
         return analysis
+
+    def _run_targeted(
+        self,
+        workspace: JobWorkspace,
+        bench_text: str,
+        gates: list[str],
+        backtrack_limit: int | None,
+        notes: list[str],
+    ) -> AtalantaRun:
+        """Run the targeted fault list, raising the search budget while faults abort.
+
+        An aborted fault is one Atalanta gave up on, not one it proved
+        undetectable; on a list built from the hardest faults in the
+        circuit, the default budget leaves several of those behind and the
+        targeted run's own coverage reads worse than the full run's for no
+        reason but budget. Each rung of :data:`TARGETED_EFFORT_LADDER` is
+        tried only while the previous attempt still aborted something, and
+        the attempt with the fewest aborted faults is the one reported. Every
+        attempt is recorded on the run so the reader can see what it cost.
+        """
+        kwargs: dict[str, Any] = dict(
+            label=AnalysisMode.TARGETED.label,
+            targeted_faults=build_fault_lines(gates),
+            targeted_gates=gates,
+        )
+        best = self.runner.run(workspace, bench_text, backtrack_limit=backtrack_limit, **kwargs)
+        attempts = [_describe_attempt(best, backtrack_limit, None, False)]
+        best_index = 0
+        first_aborted = best.results.aborted_faults or 0
+
+        for phase1, phase2, learning in TARGETED_EFFORT_LADDER:
+            if not best.results.aborted_faults:
+                break
+            if backtrack_limit is not None and phase1 <= backtrack_limit:
+                # The caller already asked for at least this much effort.
+                continue
+            attempt = self.runner.run(
+                workspace,
+                bench_text,
+                backtrack_limit=phase1,
+                backtrack_limit_phase2=phase2,
+                static_learning=learning,
+                attempt_tag=f"b{phase1}",
+                **kwargs,
+            )
+            attempts.append(_describe_attempt(attempt, phase1, phase2, learning))
+            if (attempt.results.aborted_faults or 0) < (best.results.aborted_faults or 0):
+                best = attempt
+                best_index = len(attempts) - 1
+
+        if len(attempts) > 1:
+            for index, attempt_row in enumerate(attempts):
+                attempt_row["reported"] = index == best_index
+            best.attempts = attempts
+            remaining = best.results.aborted_faults or 0
+            outcome = (
+                "every fault in the list was resolved"
+                if remaining == 0
+                else f"{remaining} still aborted"
+            )
+            tried = ", ".join(a["label"] for a in attempts[1:])
+            notes.append(
+                f"Targeted run: {first_aborted} fault(s) aborted at the initial search "
+                f"budget, so the same fault list was re-run at higher backtrack limits "
+                f"({tried}); {outcome}. The reported targeted run is the attempt with "
+                "the fewest aborted faults. The non-targeted run keeps the requested "
+                "budget, as the plain-ATPG baseline."
+            )
+        return best
+
+    @staticmethod
+    def _score_patterns(parsed: ParsedCircuit, run: AtalantaRun) -> dict[str, Any]:
+        try:
+            result = simulate_pattern_coverage(
+                parsed.circuit,
+                run.test_vectors,
+                time_budget_s=PATTERN_SIMULATION_BUDGET_SECONDS,
+            )
+        except Exception as exc:  # noqa: BLE001 - a scoring failure must not fail the run
+            return {
+                "total_faults": 0,
+                "detected_faults": 0,
+                "patterns": run.test_vectors.count,
+                "coverage": None,
+                "unavailable_reason": f"Pattern simulation failed: {exc}",
+                "notes": [],
+            }
+        return result.to_dict()
 
     def _run_sequential(
         self,

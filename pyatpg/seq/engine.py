@@ -5,7 +5,10 @@ injected LLM-2 prioritizer) with the deterministic simulator as the sole
 arbiter of what actually got detected. No network/LLM code lives in this
 module -- ``candidate_ranker`` is a plain callable injected from
 :mod:`pyatpg.llm`, keeping prompts and the ATPG engine independent of each
-other (the engine works, and is fully tested, with no LLM at all).
+other (the engine works, and is fully tested, with no LLM at all). The one
+thing it knows about the LLM layer is :class:`LLMUnavailableError`, which
+it must let through: a ranker that *could not run* is not the same as a
+ranker that gave an unhelpful answer, and only the latter is degraded around.
 
 Optimisation objective is explicitly *not* "maximum coverage": the loop
 stops as soon as ``target_coverage`` is reached, or the budgets run out,
@@ -19,6 +22,7 @@ from dataclasses import dataclass, field
 from typing import Callable
 
 from pyatpg.core.netlist import Circuit
+from pyatpg.ranking.providers import LLMUnavailableError
 
 from .faultsim import checkpoint_fault_list, evaluate_coverage
 from .generator import mutate, random_sequence
@@ -209,7 +213,12 @@ class SequentialAtpgEngine:
 
         try:
             ranked = self.candidate_ranker(list(state.undetected), {"circuit_name": self.circuit_name})
-        except Exception as exc:  # noqa: BLE001 - degrade, never fail the run
+        except LLMUnavailableError:
+            # The provider itself failed (credits, rate limit, outage). The
+            # user asked for an LLM-assisted run, so stop and report that
+            # instead of quietly finishing without the model.
+            raise
+        except Exception as exc:  # noqa: BLE001 - ranker ran but its answer was unusable
             notes.append(f"LLM candidate ranking unavailable ({exc}); used natural fault order.")
             ranked = None
 

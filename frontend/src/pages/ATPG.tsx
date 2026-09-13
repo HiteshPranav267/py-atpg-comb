@@ -4,7 +4,7 @@ import { Activity, AlertTriangle, Cpu, Play, Zap } from 'lucide-react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { api } from '@/services/api';
 import { useAppStore } from '@/store';
-import type { AnalysisMode, AnalysisModeOption, AtpgReport } from '@/types';
+import type { AnalysisMode, AnalysisModeOption, AtpgReport, TargetingInfo } from '@/types';
 import { Section, Stat, Pill, KeyValue, metric } from '@/components/atpg/primitives';
 import { RunReport } from '@/components/atpg/RunReport';
 import { SequentialReport } from '@/components/atpg/SequentialReport';
@@ -12,6 +12,7 @@ import {
   CircuitAnalysisPanel,
   ComparisonPanel,
   CorrelationPanel,
+  LlmUsagePanel,
   VerdictPanel,
 } from '@/components/atpg/AnalysisPanels';
 
@@ -224,6 +225,12 @@ function ReportView({ report }: { report: AtpgReport }) {
       {report.verdict && <VerdictPanel verdict={report.verdict} />}
       {report.circuit_analysis && <CircuitAnalysisPanel analysis={report.circuit_analysis} />}
       {report.correlation && <CorrelationPanel correlation={report.correlation} />}
+      {report.llm_usage?.enabled && (
+        <LlmUsagePanel
+          usage={report.llm_usage}
+          targeting={'gate_count' in report.targeting ? (report.targeting as TargetingInfo) : null}
+        />
+      )}
     </div>
   );
 }

@@ -64,6 +64,9 @@ class AtalantaRunner:
         targeted_faults: list[str] | None = None,
         targeted_gates: list[str] | None = None,
         backtrack_limit: int | None = None,
+        backtrack_limit_phase2: int | None = None,
+        static_learning: bool = False,
+        attempt_tag: str | None = None,
     ) -> AtalantaRun:
         """Execute one Atalanta job.
 
@@ -84,6 +87,14 @@ class AtalantaRunner:
                 Raising it is how to tell a fault that aborted for lack of
                 search budget apart from one that is genuinely undetectable
                 within any reasonable budget.
+            backtrack_limit_phase2: Atalanta's ``-B``: enables its second
+                test-generation phase (dynamic unique-path sensitisation)
+                for faults phase 1 aborted, with this backtrack limit. None
+                leaves phase 2 off, which is Atalanta's default.
+            static_learning: Atalanta's ``-L``. Off by default, as in Atalanta.
+            attempt_tag: appended to every artifact name, so repeated runs of
+                the same fault list at different search budgets keep their
+                own logs and patterns instead of overwriting each other's.
 
         Raises:
             CyclicNetlistError: the netlist has a combinational feedback loop,
@@ -98,9 +109,16 @@ class AtalantaRunner:
         assert_atalanta_safe(bench_text, label=label)
 
         prefix = f"{workspace.circuit_name}_{'targeted' if targeted_faults is not None else 'full'}"
+        if attempt_tag:
+            prefix = f"{prefix}_{attempt_tag}"
 
         bench_path = workspace.write_text(f"{prefix}.bench", bench_text)
-        vec_path = workspace.path_for(f"{prefix}.vec")
+        # Atalanta writes its own scratch dump of the uncompacted patterns to
+        # "<bench stem>.vec" regardless of -t (Atalanta/sim.cpp), so the -t
+        # file must not share that name: the two writers would clobber each
+        # other and the parsed pattern set would come back empty or truncated
+        # for any circuit whose scratch dump outgrows the real one.
+        vec_path = workspace.path_for(f"{prefix}.test")
         ufaults_path = workspace.path_for(f"{prefix}.ufaults")
         # Atalanta's own -l log (distinct from log_path below, which is just
         # this wrapper's capture of stdout). Requesting it is what makes
@@ -117,6 +135,10 @@ class AtalantaRunner:
             command += ["-f", fault_path.name]
         if backtrack_limit is not None:
             command += ["-b", str(int(backtrack_limit))]
+        if backtrack_limit_phase2 is not None:
+            command += ["-B", str(int(backtrack_limit_phase2))]
+        if static_learning:
+            command += ["-L"]
         command += [
             "-t", vec_path.name,
             "-U", ufaults_path.name,

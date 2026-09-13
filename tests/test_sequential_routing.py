@@ -2,10 +2,10 @@
 
 Most scenarios here are decided before any LLM provider is ever
 constructed (no key configured; mode explicitly disables LLM assistance),
-so they stay fast, deterministic, and network-free. One test uses a fake
-key to exercise the actual GeminiProvider construction path; a fake key
-fails fast (not a slow timeout), and every layer downstream of it degrades
-gracefully by design, so this stays reliable without needing a real key.
+so they stay fast, deterministic, and network-free. The one test that
+needs a provider injects a stub: a provider that genuinely cannot be
+reached now *aborts* the run (see ``LLMUnavailableError``) rather than
+degrading, so a fake key against the real SDK is no longer a stand-in.
 """
 from __future__ import annotations
 
@@ -72,13 +72,21 @@ def test_sequential_compare_mode_without_a_key_explains_why_there_is_no_comparis
     assert any("no API key is configured" in note for note in d["notes"])
 
 
-def test_sequential_targeted_mode_with_a_key_shows_the_comparison_too():
+def test_sequential_targeted_mode_with_a_key_shows_the_comparison_too(monkeypatch):
     """Regression: only Compare mode used to build the deterministic-vs-
     LLM-assisted comparison, so picking "LLM Heuristic (Targeted)" -- the
     natural choice for "I want the LLM to help" -- silently showed just a
     single run with no comparison, which is what a user actually wants to
     see. TARGETED and COMPARE must behave identically for sequential
     circuits: there is no separate "targeted fault subset" concept here."""
+
+    class _Stub:
+        model_name = "stub"
+
+        def complete(self, prompt, *, json_mode=False):
+            return "stub circuit summary"
+
+    monkeypatch.setattr("pyatpg.seq.service.create_provider", lambda _cfg: _Stub())
     service = AtpgAnalysisService()
     analysis = service.run(
         source_text=_s27_v(), filename="s27.v", mode=AnalysisMode.TARGETED,
