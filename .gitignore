@@ -51,6 +51,13 @@ atpg testing/
 # Local investigation / bug-report write-ups
 reports/
 
+# Circuits dropped in for scripts/run_suite.py to pick up (see docs/automation.md) --
+# transient inputs, not part of the tracked benchmark corpus.
+benchmarks/incoming/*
+!benchmarks/incoming/.gitkeep
+
 # Atalanta build outputs (compiled from source by build.sh)
 Atalanta/atalanta
 Atalanta/*.o
+
+Capstone/

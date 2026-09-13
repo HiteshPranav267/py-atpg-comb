@@ -50,6 +50,19 @@ interface AppState {
    */
   llmApiKey: string | null;
   setLlmApiKey: (key: string | null) => void;
+  /**
+   * Which vendor the key belongs to. 'auto' lets the backend sniff it from
+   * the key's prefix (AIza -> Gemini, sk-ant- -> Anthropic, nvapi- -> NVIDIA,
+   * sk- -> OpenAI); anything else is a provider id from GET /api/llm/providers.
+   */
+  llmProvider: string;
+  setLlmProvider: (provider: string) => void;
+  /** Model id override; null means the provider's default. */
+  llmModel: string | null;
+  setLlmModel: (model: string | null) => void;
+  /** Endpoint override for OpenAI-compatible providers (Ollama, Groq, ...). */
+  llmBaseUrl: string | null;
+  setLlmBaseUrl: (url: string | null) => void;
 }
 
 export const useAppStore = create<AppState>()(
@@ -99,6 +112,12 @@ export const useAppStore = create<AppState>()(
       setApiBaseUrlOverride: (url) => set({ apiBaseUrlOverride: url }),
       llmApiKey: null,
       setLlmApiKey: (key) => set({ llmApiKey: key }),
+      llmProvider: 'auto',
+      setLlmProvider: (provider) => set({ llmProvider: provider }),
+      llmModel: null,
+      setLlmModel: (model) => set({ llmModel: model }),
+      llmBaseUrl: null,
+      setLlmBaseUrl: (url) => set({ llmBaseUrl: url }),
     }),
     {
       name: 'pyatpg-app-store',
@@ -109,6 +128,9 @@ export const useAppStore = create<AppState>()(
         defaultUseLlm: state.defaultUseLlm,
         apiBaseUrlOverride: state.apiBaseUrlOverride,
         llmApiKey: state.llmApiKey,
+        llmProvider: state.llmProvider,
+        llmModel: state.llmModel,
+        llmBaseUrl: state.llmBaseUrl,
       }),
     }
   )

@@ -356,7 +356,7 @@ export default function Help() {
                     <li><strong>RandomRanker</strong> — shuffles gates; a floor baseline other rankers must beat.</li>
                     <li><strong>ScoapRanker</strong> — scores by (CC0+CC1)×0.4 + CO×0.6.</li>
                     <li><strong>RareNodeRanker</strong> — scores by inverse toggle rate combined with fan-in/out and logic depth.</li>
-                    <li><strong>LLMRanker</strong> — sends each gate's full structural profile to Gemini for few-shot reasoning, returning a suspicion score and justification per gate.</li>
+                    <li><strong>LLMRanker</strong> — sends each gate's full structural profile to the configured LLM (Gemini, OpenAI, Anthropic, NVIDIA NIM, or any OpenAI-compatible endpoint — pick one in Settings) for few-shot reasoning, returning a suspicion score and justification per gate.</li>
                   </ul>
                 </div>
                 <div>

@@ -11,7 +11,8 @@ import type {
   AnalysisMode,
   AnalysisModeOption,
   TrojanGenerateResult,
-  AnalyticsSummary
+  AnalyticsSummary,
+  LlmProvidersResponse
 } from '@/types';
 import { useAppStore } from '@/store';
 
@@ -32,6 +33,23 @@ function resolveBaseRoot(): string {
  */
 function llmApiKey(): string | undefined {
   return useAppStore.getState().llmApiKey?.trim() || undefined;
+}
+
+/**
+ * Provider/model/endpoint the user picked in Settings, as the backend's
+ * field names. Blank values are omitted so the backend applies its own
+ * defaults (and 'auto' is omitted too — it is the backend's default).
+ */
+function llmSelection(): { llm_provider?: string; llm_model?: string; llm_base_url?: string } {
+  const { llmProvider, llmModel, llmBaseUrl } = useAppStore.getState();
+  const out: { llm_provider?: string; llm_model?: string; llm_base_url?: string } = {};
+  const provider = llmProvider?.trim();
+  if (provider && provider !== 'auto') out.llm_provider = provider;
+  const model = llmModel?.trim();
+  if (model) out.llm_model = model;
+  const baseUrl = llmBaseUrl?.trim();
+  if (baseUrl) out.llm_base_url = baseUrl;
+  return out;
 }
 
 const apiClient = axios.create({
@@ -85,7 +103,13 @@ export const api = {
   },
 
   runRanking: async (req: RankingRequest): Promise<RankingResult> => {
-    const res = await apiClient.post('/ranking/run', { ...req, api_key: llmApiKey() });
+    const res = await apiClient.post('/ranking/run', { ...req, api_key: llmApiKey(), ...llmSelection() });
+    return res.data;
+  },
+
+  // LLM providers the backend supports, for the Settings picker.
+  getLlmProviders: async (): Promise<LlmProvidersResponse> => {
+    const res = await apiClient.get('/llm/providers');
     return res.data;
   },
 
@@ -148,6 +172,9 @@ export const api = {
     formData.append('use_llm', String(params.use_llm ?? true));
     const key = llmApiKey();
     if (key) formData.append('api_key', key);
+    for (const [field, value] of Object.entries(llmSelection())) {
+      if (value) formData.append(field, value);
+    }
     const res = await apiClient.post('/atpg/run', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
       // Two ATPG runs plus toggle simulation on a large circuit.

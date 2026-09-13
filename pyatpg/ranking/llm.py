@@ -4,7 +4,7 @@ from pyatpg.ranking.base import GateRanker
 from pyatpg.ranking.models import RankingResult, RankedGate
 from pyatpg.ranking.prompt_builder import PromptBuilder
 from pyatpg.ranking.response_parser import ResponseParser
-from pyatpg.ranking.providers import LLMProvider, GeminiProvider
+from pyatpg.ranking.providers import LLMProvider, provider_from_request
 
 
 class LLMRanker(GateRanker):
@@ -15,7 +15,17 @@ class LLMRanker(GateRanker):
     """
 
     def __init__(self, provider: LLMProvider | None = None, template: str = "zero_shot"):
-        self.provider = provider or GeminiProvider()
+        if provider is None:
+            # No explicit provider: whichever the environment is configured
+            # for (LLM_PROVIDER / *_API_KEY). Fail here, not at rank time.
+            provider = provider_from_request()
+            if provider is None:
+                raise ValueError(
+                    "No LLM API key available: supply one with the request or set "
+                    "LLM_API_KEY (or a provider-specific variable such as "
+                    "GEMINI_API_KEY / OPENAI_API_KEY / ANTHROPIC_API_KEY)."
+                )
+        self.provider = provider
         self.template = template
         self.builder = PromptBuilder()
         self.parser = ResponseParser()

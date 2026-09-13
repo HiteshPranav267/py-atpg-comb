@@ -10,6 +10,7 @@ import sys
 from dataclasses import asdict
 
 from pyatpg.atpg import AnalysisMode, AtpgAnalysisService
+from pyatpg.ranking.providers import AUTO_PROVIDER, PROVIDER_ORDER
 
 #: Printed in place of any metric the ATPG tool did not report.
 UNREPORTED = "Not reported by the ATPG tool"
@@ -140,7 +141,23 @@ def main():
         default=AnalysisMode.COMPARE.value,
         help="Which run(s) to perform (default: compare)",
     )
-    parser.add_argument("--api-key", help="Gemini API key; structural analysis is used without one")
+    parser.add_argument(
+        "--api-key",
+        help="LLM API key (any supported vendor); structural analysis is used without one. "
+        "Falls back to LLM_API_KEY / GEMINI_API_KEY / OPENAI_API_KEY / ANTHROPIC_API_KEY / "
+        "NVIDIA_API_KEY in the environment.",
+    )
+    parser.add_argument(
+        "--llm-provider",
+        choices=[AUTO_PROVIDER, *PROVIDER_ORDER],
+        default=AUTO_PROVIDER,
+        help="Which vendor the key belongs to (default: auto, sniffed from the key's prefix)",
+    )
+    parser.add_argument("--llm-model", help="Model id override (each provider has a default)")
+    parser.add_argument(
+        "--llm-base-url",
+        help="Endpoint override for OpenAI-compatible providers (NVIDIA NIM, Ollama, Groq...)",
+    )
     parser.add_argument(
         "--patterns",
         type=int,
@@ -157,7 +174,12 @@ def main():
         print(f"Could not read {args.netlist}: {exc}")
         sys.exit(1)
 
-    service = AtpgAnalysisService(api_key=args.api_key)
+    service = AtpgAnalysisService(
+        api_key=args.api_key,
+        llm_provider=args.llm_provider,
+        llm_model=args.llm_model,
+        llm_base_url=args.llm_base_url,
+    )
     try:
         analysis = service.run(
             source_text=source_text,
