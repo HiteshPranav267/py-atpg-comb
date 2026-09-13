@@ -27,6 +27,14 @@ class Classification(str, Enum):
     #: Will succeed if tried again: a rate limit, a timeout, a dropped
     #: connection, a transient Atalanta failure.
     TRANSIENT = "transient"
+    #: The LLM account itself needs attention -- out of credits, quota
+    #: exceeded, or the key is invalid/revoked. Retrying immediately (or in
+    #: 15 minutes) is pointless until a human swaps the key or tops up
+    #: billing, but it's *not* the same as PERMANENT: once that happens, the
+    #: very next scheduled run should succeed without needing --force, so
+    #: this is tracked as its own, distinctly-notified category rather than
+    #: folded into either TRANSIENT or PERMANENT.
+    CREDENTIALS = "credentials"
     #: Will fail the same way every time: something about this specific
     #: circuit or request. Retrying wastes the budget other circuits need.
     PERMANENT = "permanent"
@@ -38,8 +46,23 @@ class Classification(str, Enum):
     FATAL = "fatal"
 
 
+#: Substrings (matched case-insensitively) that mean "the account needs
+#: attention", across every provider's own wording for it. Deliberately
+#: heuristic -- providers don't share an error taxonomy -- so a message that
+#: slips past this just gets treated as a plain transient failure, which is
+#: safe (it retries, a bit less usefully) rather than wrong.
+_CREDENTIALS_MARKERS = (
+    "insufficient_quota", "exceeded your current quota", "quota exceeded",
+    "credit balance", "billing", "invalid api key", "invalid_api_key",
+    "invalid x-api-key", "incorrect api key", "authentication_error",
+    "permission_denied", "unauthorized", "401", "403",
+    "no gemini api key available", "no openai api key available",
+    "no anthropic api key available", "no nvidia api key available",
+)
+
+
 def classify_error(exc: BaseException) -> Classification:
-    """Decide whether ``exc`` is worth retrying.
+    """Decide whether ``exc`` is worth retrying, and how urgently to say so.
 
     Import lazily: this module has no hard dependency on pyatpg.atpg, so
     the retry primitives stay usable (and testable) on their own.
@@ -51,6 +74,10 @@ def classify_error(exc: BaseException) -> Classification:
 
     if isinstance(exc, AtalantaNotAvailable):
         return Classification.FATAL
+
+    message = str(exc).lower()
+    if any(marker in message for marker in _CREDENTIALS_MARKERS):
+        return Classification.CREDENTIALS
 
     # ValueError covers both "this circuit is malformed" (bad netlist, a
     # combinational cycle Atalanta can't levelize, no targetable gates) and

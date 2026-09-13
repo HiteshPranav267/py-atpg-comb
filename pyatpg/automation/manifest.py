@@ -113,7 +113,12 @@ class Manifest:
             return False
         if record.classification == "permanent":
             return False
-        return True  # failed-transient, or left "running" by a crash
+        # "transient" (a 503, dropped connection) and "credentials" (out of
+        # quota, invalid key) both get a fresh attempt next run: the first
+        # might have cleared on its own, and the second might have been
+        # fixed by the human swapping a key or topping up billing in the
+        # meantime -- neither should need --force to try again.
+        return True  # failed-transient, failed-credentials, or crashed mid-run
 
     def start(self, key: str, fingerprint: str) -> None:
         self._records[key] = ManifestRecord(

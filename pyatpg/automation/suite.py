@@ -20,7 +20,8 @@ import time
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
-from .manifest import Manifest, fingerprint_file
+from .manifest import Manifest, ManifestRecord, fingerprint_file
+from .notify import Notifier, null_notifier
 from .retry import RetryOutcome, RetryPolicy, run_with_retries
 
 #: Extensions treated as circuit files when a directory (rather than a
@@ -65,6 +66,50 @@ def discover_circuits(patterns: Iterable[str]) -> list[Path]:
             add(match)
 
     return ordered
+
+
+def _notify_on_transition(
+    notifier: Notifier,
+    previous: ManifestRecord | None,
+    label: str,
+    classification: str,
+    error: str,
+) -> None:
+    """Alert on entering a new failure state, not on every repeat of it.
+
+    Without this, a circuit stuck on a rate limit or an exhausted quota
+    would fire the same notification every 15 minutes forever once
+    scheduled -- correct, but exactly the kind of noise that gets a channel
+    muted. Alerting once per *distinct* state (this classification, freshly
+    failed) still guarantees you hear about it, and hear about it again if
+    it changes (e.g. credentials -> transient after you swap the key).
+    """
+    already_known = (
+        previous is not None
+        and previous.status == "failed"
+        and previous.classification == classification
+    )
+    if already_known:
+        return
+    if classification == "credentials":
+        notifier.notify(
+            f"{label}: LLM account needs attention",
+            f"{error}\n\nThis will not fix itself by retrying -- swap the API key "
+            "or add credits/quota, then it will succeed on the next scheduled run.",
+            urgent=True,
+        )
+    elif classification == "transient":
+        notifier.notify(
+            f"{label}: still failing after retries this run",
+            f"{error}\n\nWill retry automatically on the next scheduled run. No "
+            "action needed unless this keeps happening.",
+            urgent=False,
+        )
+
+
+def _notify_recovery(notifier: Notifier, previous: ManifestRecord | None, label: str) -> None:
+    if previous is not None and previous.status == "failed":
+        notifier.notify(f"{label}: recovered", f"Succeeded after previously failing ({previous.classification}).")
 
 
 def _write_json(path: Path, payload: dict[str, Any]) -> None:
@@ -136,6 +181,7 @@ def run_atpg_suite(
     force: bool = False,
     llm_config_of: Callable[[Path], Any] | None = None,
     log: Callable[[str], None] = print,
+    notifier: Notifier | None = None,
 ) -> dict[str, int]:
     """Run ``run_one(circuit_path) -> AtpgAnalysis`` over every circuit.
 
@@ -148,10 +194,17 @@ def run_atpg_suite(
     means the engine itself is unusable, so every remaining circuit would
     fail the same way.
 
+    ``notifier`` (default: none) is told about a circuit entering a new
+    failure state -- urgently for a credentials/quota problem, otherwise
+    informationally -- and about a circuit recovering. See
+    :func:`_notify_on_transition` for why this fires once per distinct
+    state rather than on every repeat of it.
+
     Returns counts: ``{"done": n, "failed": n, "skipped": n}``.
     """
     output_dir.mkdir(parents=True, exist_ok=True)
     manifest = Manifest(output_dir / "manifest.json")
+    notifier = notifier or null_notifier()
     counts = {"done": 0, "failed": 0, "skipped": 0}
 
     for circuit in circuits:
@@ -162,19 +215,17 @@ def run_atpg_suite(
             log(f"[skip] {circuit.name} (already done)")
             continue
 
+        previous = manifest.get(key)
         manifest.start(key, fingerprint)
         log(f"[run]  {circuit.name}")
         started = time.monotonic()
-        attempt_log: list[str] = []
 
         def attempt() -> Any:
             return run_one(circuit)
 
         def on_attempt(n: int, error: BaseException | None) -> None:
             if error is not None:
-                msg = f"  attempt {n} failed: {error}"
-                attempt_log.append(msg)
-                log(msg)
+                log(f"  attempt {n} failed: {error}")
 
         outcome: RetryOutcome = run_with_retries(attempt, policy, on_attempt=on_attempt)
         elapsed = time.monotonic() - started
@@ -186,6 +237,7 @@ def run_atpg_suite(
             _write_json(output_dir / f"{circuit.stem}.json", analysis.to_dict())
             manifest.record_success(key, fingerprint, outcome.attempts, row)
             _rewrite_summary_csv(output_dir, manifest)
+            _notify_recovery(notifier, previous, circuit.name)
             counts["done"] += 1
             log(f"[done] {circuit.name} in {elapsed:.1f}s ({outcome.attempts} attempt(s))")
             continue
@@ -196,12 +248,17 @@ def run_atpg_suite(
             log("Stopping the run: this failure means the engine itself is unusable, "
                 "not that this circuit is bad -- every remaining circuit would fail "
                 "the same way.")
+            notifier.notify(
+                f"{circuit.name}: engine unusable, run stopped",
+                str(outcome.error or ""), urgent=True,
+            )
             break
 
         classification = outcome.classification.value if outcome.classification else "unknown"
         manifest.record_failure(key, fingerprint, outcome.attempts, classification, outcome.error or "")
+        _notify_on_transition(notifier, previous, circuit.name, classification, outcome.error or "")
         counts["failed"] += 1
-        verb = "will retry on next run" if classification == "transient" else "will NOT auto-retry"
+        verb = "will retry on next run" if classification in ("transient", "credentials") else "will NOT auto-retry"
         log(f"[fail] {circuit.name} ({classification}, {verb}): {outcome.error}")
 
     return counts
@@ -215,6 +272,7 @@ def run_ranking_suite(
     *,
     force: bool = False,
     log: Callable[[str], None] = print,
+    notifier: Notifier | None = None,
 ) -> dict[str, int]:
     """Run a whole-dataset ranking benchmark with retry-with-backoff.
 
@@ -224,6 +282,7 @@ def run_ranking_suite(
     """
     output_dir.mkdir(parents=True, exist_ok=True)
     manifest = Manifest(output_dir / "manifest.json")
+    notifier = notifier or null_notifier()
     key = str(dataset_dir)
     fingerprint = "dataset"  # whole-directory granularity: no per-file fingerprint
 
@@ -231,6 +290,7 @@ def run_ranking_suite(
         log(f"[skip] {dataset_dir} (already completed this dataset)")
         return {"done": 0, "failed": 0, "skipped": 1}
 
+    previous = manifest.get(key)
     manifest.start(key, fingerprint)
     log(f"[run]  ranking benchmark over {dataset_dir}")
 
@@ -243,10 +303,12 @@ def run_ranking_suite(
     if outcome.ok:
         results = outcome.value or []
         manifest.record_success(key, fingerprint, outcome.attempts, {"circuits_evaluated": len(results)})
+        _notify_recovery(notifier, previous, f"ranking benchmark ({dataset_dir.name})")
         log(f"[done] ranking benchmark: {len(results)} result(s) ({outcome.attempts} attempt(s))")
         return {"done": 1, "failed": 0, "skipped": 0}
 
     classification = outcome.classification.value if outcome.classification else "unknown"
     manifest.record_failure(key, fingerprint, outcome.attempts, classification, outcome.error or "")
+    _notify_on_transition(notifier, previous, f"ranking benchmark ({dataset_dir.name})", classification, outcome.error or "")
     log(f"[fail] ranking benchmark ({classification}): {outcome.error}")
     return {"done": 0, "failed": 1, "skipped": 0}

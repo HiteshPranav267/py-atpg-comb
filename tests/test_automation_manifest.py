@@ -71,3 +71,13 @@ class TestManifestPersistence:
         m.record_success("c17", "fp1", attempts=1, result={})
         leftovers = list(tmp_path.glob(".manifest-*.tmp"))
         assert leftovers == []
+
+
+def test_credentials_failure_is_retried_like_transient(tmp_path):
+    """Swapping a key or topping up billing should let the very next run
+    succeed without needing --force -- same retry eligibility as a plain
+    transient failure, just never retried within one invocation (that's
+    retry.run_with_retries' job, not the manifest's)."""
+    m = Manifest(tmp_path / "manifest.json")
+    m.record_failure("c17", "fp1", attempts=1, classification="credentials", error="insufficient_quota")
+    assert m.needs_run("c17", "fp1") is True

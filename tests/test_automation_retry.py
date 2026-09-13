@@ -125,3 +125,43 @@ class TestRetryPolicy:
         policy = RetryPolicy(max_attempts=5, base_delay=1.0, max_delay=100.0, jitter=0.9)
         for attempt in range(1, 6):
             assert policy.delay_for(attempt) >= 0.0
+
+
+class TestCredentialsClassification:
+    """A credit/quota/auth problem is not fixed by retrying -- and not the
+    same as a bad circuit either, since fixing it (swap the key, add
+    credits) makes the very next run succeed without needing --force."""
+
+    @pytest.mark.parametrize("message", [
+        "RuntimeError: OpenAI failure: You exceeded your current quota, please check your plan and billing details.",
+        "Error code: 429 - {'error': {'message': 'insufficient_quota', 'type': 'insufficient_quota_error'}}",
+        "anthropic.AuthenticationError: Your credit balance is too low to access the Anthropic API.",
+        "google.api_core.exceptions.PermissionDenied: 403 PERMISSION_DENIED: API key not valid.",
+        "openai.AuthenticationError: Error code: 401 - Incorrect API key provided",
+        "No Gemini API key available: none was supplied with the request and GEMINI_API_KEY is not set.",
+    ])
+    def test_known_quota_and_auth_messages_are_credentials(self, message):
+        assert classify_error(RuntimeError(message)) is Classification.CREDENTIALS
+
+    def test_plain_rate_limit_without_quota_wording_stays_transient(self):
+        # A per-minute rate limit is not the same problem as an exhausted
+        # quota, and clears up on its own -- it must not get the
+        # "swap your key" treatment.
+        assert classify_error(RuntimeError("Gemini failure: 503 UNAVAILABLE, server overloaded")) \
+            is Classification.TRANSIENT
+
+    def test_credentials_error_does_not_retry_within_one_run(self):
+        calls = {"n": 0}
+
+        def out_of_credits():
+            calls["n"] += 1
+            raise RuntimeError("insufficient_quota: you exceeded your current quota")
+
+        policy = RetryPolicy(max_attempts=4, base_delay=0.0, max_delay=0.0)
+        outcome = run_with_retries(
+            out_of_credits, policy, sleep=lambda s: pytest.fail("should not sleep for a credentials error"),
+        )
+        assert not outcome.ok
+        assert outcome.classification is Classification.CREDENTIALS
+        assert outcome.attempts == 1
+        assert calls["n"] == 1

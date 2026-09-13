@@ -8,7 +8,9 @@ scheduled re-run picks up only what is still pending.
 """
 from .retry import Classification, RetryOutcome, RetryPolicy, classify_error, run_with_retries
 from .manifest import Manifest, ManifestRecord, fingerprint_file
+from .notify import Notifier, null_notifier
 from .suite import discover_circuits, run_atpg_suite, run_ranking_suite
+from .research_pipeline import GenerationConfig, run_research_suite
 
 __all__ = [
     "Classification",
@@ -19,7 +21,11 @@ __all__ = [
     "Manifest",
     "ManifestRecord",
     "fingerprint_file",
+    "Notifier",
+    "null_notifier",
     "discover_circuits",
     "run_atpg_suite",
     "run_ranking_suite",
+    "GenerationConfig",
+    "run_research_suite",
 ]
