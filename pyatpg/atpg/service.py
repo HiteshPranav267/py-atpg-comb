@@ -6,7 +6,6 @@ structured result the API returns.
 """
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -18,8 +17,7 @@ from .runner import AtalantaRunner, build_fault_lines
 from .structural import ParsedCircuit, parse_circuit, profile_circuit
 from .workspace import JobWorkspace, prune_old_jobs
 
-#: Environment variable holding the Gemini credential.
-GEMINI_KEY_ENV_VAR = "GEMINI_API_KEY"
+from pyatpg.ranking.providers import LLMConfig, create_provider, resolve_llm_config
 
 
 #: Stand-in written over a credential before any text reaches a response.
@@ -129,24 +127,48 @@ class AtpgAnalysisService:
     TARGETED_KEY = "targeted"
     NON_TARGETED_KEY = "non_targeted"
 
-    def __init__(self, runner: AtalantaRunner | None = None, api_key: str | None = None):
+    def __init__(
+        self,
+        runner: AtalantaRunner | None = None,
+        api_key: str | None = None,
+        llm_provider: str | None = None,
+        llm_model: str | None = None,
+        llm_base_url: str | None = None,
+    ):
         self.runner = runner or AtalantaRunner()
         self._explicit_api_key = api_key
+        self._explicit_provider = llm_provider
+        self._explicit_model = llm_model
+        self._explicit_base_url = llm_base_url
 
-    def _api_key(self, use_llm: bool, request_key: str | None = None) -> str | None:
-        """Resolve the credential for this request.
+    def _llm_config(
+        self,
+        use_llm: bool,
+        request_key: str | None = None,
+        request_provider: str | None = None,
+        request_model: str | None = None,
+        request_base_url: str | None = None,
+    ) -> LLMConfig | None:
+        """Resolve which model (and credential) this request should use.
 
-        A key supplied with the request wins, so it can be changed without
-        restarting the service; otherwise the deployment's environment
-        variable is used. Never logged or echoed back in a response.
+        Values supplied with the request win, so a provider or key can be
+        changed without restarting the service; otherwise the values the
+        service was built with, then the deployment's environment variables
+        (``LLM_PROVIDER`` / ``LLM_API_KEY`` or a vendor-specific key such as
+        ``OPENAI_API_KEY``). The key is never logged or echoed back.
         """
         if not use_llm:
             return None
-        candidates = (request_key, self._explicit_api_key, os.environ.get(GEMINI_KEY_ENV_VAR))
-        for candidate in candidates:
-            if candidate and candidate.strip():
-                return candidate.strip()
-        return None
+        return resolve_llm_config(
+            provider=request_provider,
+            api_key=request_key,
+            model=request_model,
+            base_url=request_base_url,
+            fallback_api_key=self._explicit_api_key,
+            fallback_provider=self._explicit_provider,
+            fallback_model=self._explicit_model,
+            fallback_base_url=self._explicit_base_url,
+        )
 
     def run(
         self,
@@ -157,6 +179,9 @@ class AtpgAnalysisService:
         use_llm: bool = True,
         api_key: str | None = None,
         backtrack_limit: int | None = None,
+        llm_provider: str | None = None,
+        llm_model: str | None = None,
+        llm_base_url: str | None = None,
     ) -> AtpgAnalysis:
         """Execute an analysis.
 
@@ -172,6 +197,11 @@ class AtpgAnalysisService:
                 when this is False or no key is configured.
             api_key: credential for this request only, taking precedence over
                 the deployment's environment variable.
+            llm_provider: which vendor the key belongs to (``gemini``,
+                ``openai``, ``anthropic``, ``nvidia``, ``openai_compatible``);
+                None/"auto" sniffs it from the key's prefix.
+            llm_model: model id override; each provider has a sensible default.
+            llm_base_url: endpoint override for OpenAI-compatible providers.
             backtrack_limit: Atalanta's own search-effort cap (its -b flag),
                 applied to every run this call makes. None leaves Atalanta's
                 built-in default (10) in effect. Raising it lets a fault that
@@ -186,7 +216,10 @@ class AtpgAnalysisService:
             # Atalanta is a purely combinational engine; it cannot levelize a
             # netlist with state elements. Route to the native sequential
             # engine (pyatpg.seq) instead of rejecting the circuit.
-            return self._run_sequential(parsed, source_text, filename, mode, use_llm, api_key)
+            return self._run_sequential(
+                parsed, source_text, filename, mode, use_llm,
+                self._llm_config(use_llm, api_key, llm_provider, llm_model, llm_base_url),
+            )
 
         profile = profile_circuit(parsed, toggle_patterns=toggle_patterns)
         if not profile.statistics.get("is_dag", True):
@@ -195,7 +228,19 @@ class AtpgAnalysisService:
                 "DAG) with no flip-flop breaking it, so the ATPG tool cannot "
                 "levelize or generate patterns for it."
             )
-        api_key = self._api_key(use_llm, request_key=api_key)
+        llm_config = self._llm_config(use_llm, api_key, llm_provider, llm_model, llm_base_url)
+        # One provider instance serves both the target selector and the
+        # analyst, so a single request never authenticates twice.
+        provider = None
+        llm_unavailable_reason = ""
+        if llm_config is not None:
+            try:
+                provider = create_provider(llm_config)
+            except ImportError as exc:
+                # SDK for the chosen vendor is not installed on this
+                # deployment; run without the LLM and say why.
+                provider = None
+                llm_unavailable_reason = str(exc)
         workspace = JobWorkspace.create(parsed.name)
         bench_text = parsed.to_bench()
 
@@ -228,7 +273,7 @@ class AtpgAnalysisService:
         if mode.runs_targeted:
             from .targeting import FaultTargetSelector
 
-            selector = FaultTargetSelector(api_key=api_key)
+            selector = FaultTargetSelector(provider=provider)
             selection = selector.select(
                 profile.gate_profiles, summary="", graph=profile.graph
             )
@@ -293,7 +338,7 @@ class AtpgAnalysisService:
                 _targeted_scope_note(analysis.runs[self.TARGETED_KEY], selection.gates)
             )
 
-        analyst = CircuitAnalyst(api_key=api_key)
+        analyst = CircuitAnalyst(provider=provider)
         analysis.circuit_analysis = analyst.analyze(
             circuit_source=parsed.source_text,
             profiles=profile.gate_profiles,
@@ -313,8 +358,15 @@ class AtpgAnalysisService:
         # Provider errors are surfaced verbatim to explain a fallback. Scrub
         # the credential from them centrally, so no provider that happens to
         # echo the key back can put it in a response.
-        if api_key:
-            _redact_secret(analysis, api_key)
+        if llm_config is not None:
+            if provider is None:
+                analysis.notes.append(
+                    f"LLM assistance unavailable ({llm_unavailable_reason}); "
+                    "ran with deterministic structural methods instead."
+                )
+            else:
+                analysis.notes.append(f"LLM: {llm_config.describe()}.")
+            _redact_secret(analysis, llm_config.api_key)
         return analysis
 
     def _run_sequential(
@@ -324,7 +376,7 @@ class AtpgAnalysisService:
         filename: str,
         mode: AnalysisMode,
         use_llm: bool,
-        api_key: str | None,
+        llm_config: LLMConfig | None,
     ) -> AtpgAnalysis:
         """Sequential counterpart of ``run()``, delegating to pyatpg.seq.
 
@@ -343,21 +395,21 @@ class AtpgAnalysisService:
         from pyatpg.seq.service import SequentialAtpgService
 
         workspace = JobWorkspace.create(parsed.name)
-        resolved_key = self._api_key(use_llm, request_key=api_key)
         effective_use_llm = use_llm and mode.runs_targeted
 
         notes = [
             "Sequential circuit: routed to the native time-frame-expansion ATPG "
             "engine for circuits with flip-flops."
         ]
-        seq_service = SequentialAtpgService(api_key=self._explicit_api_key)
+        seq_service = SequentialAtpgService()
 
-        if effective_use_llm and resolved_key:
+        if effective_use_llm and llm_config is not None:
             # A real deterministic-only-vs-LLM-assisted comparison: two full
             # runs, same seed, so the difference is attributable to the LLM.
             comp = seq_service.run_comparison(
-                source_text=source_text, filename=filename, api_key=api_key
+                source_text=source_text, filename=filename, llm_config=llm_config
             )
+            notes.append(f"LLM: {llm_config.describe()}.")
             notes.extend(comp.comparison.notes)
             sequential = SequentialSummary(
                 circuit=comp.circuit,
@@ -373,7 +425,7 @@ class AtpgAnalysisService:
                     "(deterministic-only ATPG). Switch to a targeted or compare mode "
                     "to enable it."
                 )
-            elif effective_use_llm and not resolved_key:
+            elif effective_use_llm and llm_config is None:
                 notes.append(
                     "LLM assistance requested but no API key is configured; ran "
                     "deterministic-only ATPG. Add a key in Settings to see a "
@@ -384,7 +436,7 @@ class AtpgAnalysisService:
                 source_text=source_text,
                 filename=filename,
                 use_llm=effective_use_llm,
-                api_key=api_key,
+                llm_config=llm_config,
             )
             sequential = SequentialSummary(
                 circuit=result.circuit,
@@ -400,8 +452,8 @@ class AtpgAnalysisService:
             sequential=sequential,
             notes=notes,
         )
-        if resolved_key:
-            _redact_secret(analysis, resolved_key)
+        if llm_config is not None:
+            _redact_secret(analysis, llm_config.api_key)
         return analysis
 
     @staticmethod

@@ -12,12 +12,7 @@ import json
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
-try:  # pragma: no cover - exercised only where the SDK is installed
-    from google import genai
-    from google.genai import types as genai_types
-except ImportError:  # pragma: no cover
-    genai = None
-    genai_types = None
+from pyatpg.ranking.providers import LLMProvider, provider_from_request
 
 #: How many gate profiles to include as evidence in the prompt.
 _PROFILE_BUDGET = 120
@@ -80,9 +75,23 @@ class CircuitAnalysis:
 class CircuitAnalyst:
     """Produces a :class:`CircuitAnalysis` for a parsed circuit."""
 
-    def __init__(self, api_key: str | None = None, model: str = "gemini-flash-latest"):
-        self.api_key = api_key if (api_key and genai is not None) else None
-        self.model = model
+    def __init__(
+        self,
+        api_key: str | None = None,
+        model: str | None = None,
+        provider: LLMProvider | None = None,
+    ):
+        #: The model to ask, or None for the structural fallback. A ready
+        #: provider wins; a bare ``api_key`` is resolved against the
+        #: environment (provider sniffed from the key's prefix).
+        self.provider = provider
+        if self.provider is None and api_key:
+            try:
+                self.provider = provider_from_request(api_key=api_key, model=model)
+            except (ImportError, ValueError):
+                self.provider = None
+        #: Reported on the analysis so a result can be attributed.
+        self.model = self.provider.model_name if self.provider else (model or "")
 
     def analyze(
         self,
@@ -91,7 +100,7 @@ class CircuitAnalyst:
         stats: dict[str, Any],
         circuit_name: str,
     ) -> CircuitAnalysis:
-        if self.api_key:
+        if self.provider is not None:
             try:
                 return self._analyze_with_llm(circuit_source, profiles, stats, circuit_name)
             except Exception as exc:  # noqa: BLE001 - degrade to structural
@@ -208,8 +217,6 @@ class CircuitAnalyst:
         stats: dict[str, Any],
         circuit_name: str,
     ) -> CircuitAnalysis:
-        client = genai.Client(api_key=self.api_key)
-
         ranked = sorted(
             profiles,
             key=lambda p: (
@@ -247,16 +254,8 @@ Gate profiles (rarest-toggling first):
 {profile_block}
 """
 
-        config = None
-        if genai_types is not None:
-            config = genai_types.GenerateContentConfig(response_mime_type="application/json")
-
-        response = client.models.generate_content(
-            model=self.model,
-            contents=prompt + "\n" + _JSON_CONTRACT,
-            config=config,
-        )
-        payload = _load_json(response.text or "")
+        response_text = self.provider.complete(prompt + "\n" + _JSON_CONTRACT, json_mode=True)
+        payload = _load_json(response_text or "")
         known = {str(p["gate_id"]) for p in profiles}
         return self._build_from_payload(payload, known)
 

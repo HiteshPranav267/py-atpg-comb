@@ -63,6 +63,9 @@ async def run_atpg(
     use_llm: bool = Form(True),
     api_key: str = Form(""),
     backtrack_limit: int | None = Form(None),
+    llm_provider: str = Form(""),
+    llm_model: str = Form(""),
+    llm_base_url: str = Form(""),
 ) -> Dict[str, Any]:
     """Run an ATPG analysis over an uploaded circuit.
 
@@ -74,7 +77,11 @@ async def run_atpg(
 
     `api_key` is optional and applies to this request only, letting a
     credential be changed without restarting the service. It is never
-    logged, stored with the job, or returned in the response.
+    logged, stored with the job, or returned in the response. `llm_provider`
+    names the vendor the key belongs to (see `GET /api/llm/providers`);
+    blank or "auto" sniffs it from the key's prefix. `llm_model` and
+    `llm_base_url` override the provider's default model and, for
+    OpenAI-compatible providers, its endpoint.
 
     `backtrack_limit` is optional and forwarded to Atalanta's own `-b` flag
     on every run this request makes (combinational path only). Omitted, it
@@ -106,6 +113,9 @@ async def run_atpg(
             use_llm=use_llm,
             api_key=api_key or None,
             backtrack_limit=backtrack_limit,
+            llm_provider=llm_provider or None,
+            llm_model=llm_model or None,
+            llm_base_url=llm_base_url or None,
         )
     except (ValueError, NoTargetableGates) as exc:
         raise HTTPException(status_code=400, detail=str(exc))

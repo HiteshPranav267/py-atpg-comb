@@ -5,6 +5,21 @@ import pytest
 from pyatpg.atpg.structural import parse_circuit, profile_circuit
 from pyatpg.atpg.suspects import find_structural_suspects
 from pyatpg.atpg.targeting import FaultTargetSelector
+
+
+class _FakeProvider:
+    """Stands in for any LLMProvider: records the prompt, returns canned text."""
+
+    model_name = "fake-model"
+
+    def __init__(self, respond):
+        #: Either a fixed string or a callable taking the prompt.
+        self._respond = respond
+        self.prompts: list[str] = []
+
+    def complete(self, prompt, *, json_mode=False):
+        self.prompts.append(prompt)
+        return self._respond(prompt) if callable(self._respond) else self._respond
 from pyatpg.core.graph_analysis import CircuitGraph, DEFAULT_TOGGLE_SEED
 
 
@@ -141,28 +156,9 @@ class TestObfuscationInvariance:
     def _capture_prompt(self, profiles):
         from pyatpg.atpg import targeting as T
 
-        captured = {}
-
-        class FakeModels:
-            def generate_content(self, model, contents):
-                captured["prompt"] = contents
-
-                class R:
-                    text = "g0,g1,g2"
-
-                return R()
-
-        class FakeClient:
-            def __init__(self, api_key=None):
-                self.models = FakeModels()
-
-        original = T.genai
-        T.genai = type("X", (), {"Client": FakeClient})
-        try:
-            selection = T.FaultTargetSelector(api_key="fake").select(profiles)
-        finally:
-            T.genai = original
-        return captured["prompt"], selection
+        provider = _FakeProvider("g0,g1,g2")
+        selection = T.FaultTargetSelector(provider=provider).select(profiles)
+        return provider.prompts[0], selection
 
     def test_real_gate_names_never_reach_the_model(self):
         p = _profile(TROJAN, toggle_patterns=200)
@@ -184,23 +180,8 @@ class TestObfuscationInvariance:
 
         p = _profile(TROJAN, toggle_patterns=200)
 
-        class FakeModels:
-            def generate_content(self, model, contents):
-                class R:
-                    text = "g0, g99999, not_an_alias, ht_trig"
-
-                return R()
-
-        class FakeClient:
-            def __init__(self, api_key=None):
-                self.models = FakeModels()
-
-        original = T.genai
-        T.genai = type("X", (), {"Client": FakeClient})
-        try:
-            selection = T.FaultTargetSelector(api_key="fake").select(p.gate_profiles)
-        finally:
-            T.genai = original
+        provider = _FakeProvider("g0, g99999, not_an_alias, ht_trig")
+        selection = T.FaultTargetSelector(provider=provider).select(p.gate_profiles)
         # Only the one real alias survives; a raw gate name is not an alias.
         assert len(selection.gates) == 1
 
@@ -240,27 +221,13 @@ class TestConfidenceScoring:
 
         p = _profile(TROJAN, toggle_patterns=200)
 
-        class FakeModels:
-            def generate_content(self, model, contents):
-                import re
+        def respond(prompt):
+            import re
 
-                aliases = re.findall(r"Gate: (g\d+),", contents)
+            aliases = re.findall(r"Gate: (g\d+),", prompt)
+            return response_text.format(*aliases[:4])
 
-                class R:
-                    text = response_text.format(*aliases[:4])
-
-                return R()
-
-        class FakeClient:
-            def __init__(self, api_key=None):
-                self.models = FakeModels()
-
-        original = T.genai
-        T.genai = type("X", (), {"Client": FakeClient})
-        try:
-            return T.FaultTargetSelector(api_key="fake").select(p.gate_profiles)
-        finally:
-            T.genai = original
+        return T.FaultTargetSelector(provider=_FakeProvider(respond)).select(p.gate_profiles)
 
     def test_low_confidence_gates_are_dropped(self):
         sel = self._run("{0},0.9\n{1},0.1\n{2},0.8\n{3},0.05")

@@ -11,13 +11,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
-try:  # pragma: no cover - exercised only where the SDK is installed
-    from google import genai
-except ImportError:  # pragma: no cover
-    genai = None
-
-#: Transient Gemini failures worth retrying.
-_RETRYABLE_MARKERS = ("503", "UNAVAILABLE", "429", "RESOURCE_EXHAUSTED", "500", "INTERNAL")
+from pyatpg.ranking.providers import LLMProvider, provider_from_request
 
 #: Cap on how many gates the targeted fault list may contain, used verbatim
 #: when a caller passes an explicit ``max_gates``. Automatic selection (the
@@ -99,13 +93,24 @@ class FaultTargetSelector:
     configured, so the targeted mode works without credentials.
     """
 
-    def __init__(self, api_key: str | None = None, max_gates: int | None = None):
+    def __init__(
+        self,
+        api_key: str | None = None,
+        max_gates: int | None = None,
+        provider: LLMProvider | None = None,
+    ):
         #: None means "scale with circuit size" (the default); an explicit
         #: value pins the cap regardless of how many gates are profiled.
         self.max_gates = max_gates
-        self.api_key = api_key
-        if api_key and genai is None:
-            self.api_key = None
+        #: The model to ask, or None for the structural heuristic. A ready
+        #: provider wins; a bare ``api_key`` is resolved against the
+        #: environment (provider sniffed from the key's prefix).
+        self.provider = provider
+        if self.provider is None and api_key:
+            try:
+                self.provider = provider_from_request(api_key=api_key)
+            except (ImportError, ValueError):
+                self.provider = None
 
     def _effective_max_gates(self, profiles: list[dict[str, Any]]) -> int:
         if self.max_gates is not None:
@@ -129,7 +134,7 @@ class FaultTargetSelector:
         max_gates = self._effective_max_gates(profiles)
         suspects, reasons = self._find_suspects(profiles, graph)
 
-        if self.api_key:
+        if self.provider is not None:
             try:
                 gates = self._select_with_llm(profiles, summary, max_gates)
                 valid = self._keep_known_gates(gates, profiles)
@@ -333,8 +338,6 @@ class FaultTargetSelector:
     def _select_with_llm(
         self, profiles: list[dict[str, Any]], summary: str, max_gates: int
     ) -> list[str]:
-        client = genai.Client(api_key=self.api_key)
-
         # Rank by toggle-rate/CO so the most testability-relevant gates sort
         # to the front, but keep every gate in the prompt: truncating here
         # made the LLM blind to any gate outside the top slice, so a small
@@ -414,19 +417,6 @@ Gate profiles:
 {profile_block}
 """
 
-        last_error: Exception | None = None
-        for attempt in range(3):
-            try:
-                response = client.models.generate_content(
-                    model="gemini-flash-latest",
-                    contents=prompt,
-                )
-                return self._parse_scored_response(
-                    response.text or "", alias_to_gate
-                )
-            except Exception as exc:  # noqa: BLE001
-                last_error = exc
-                if not any(m in str(exc) for m in _RETRYABLE_MARKERS) or attempt == 2:
-                    raise
-                time.sleep(2**attempt)
-        raise RuntimeError(f"Gemini request failed: {last_error}")
+        # Retries on transient failures live inside the provider.
+        response_text = self.provider.complete(prompt)
+        return self._parse_scored_response(response_text or "", alias_to_gate)

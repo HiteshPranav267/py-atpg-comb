@@ -53,6 +53,13 @@ class RankingRequestSchema(BaseModel):
     #: Optional per-request credential for LLM-backed rankers. Applies to this
     #: call only and is never persisted or echoed back.
     api_key: str | None = None
+    #: Which vendor the key belongs to (gemini / openai / anthropic / nvidia /
+    #: openai_compatible). Omitted or "auto" sniffs it from the key's prefix.
+    llm_provider: str | None = None
+    #: Model id override; each provider has a default.
+    llm_model: str | None = None
+    #: Endpoint override for OpenAI-compatible providers (NVIDIA NIM, Ollama...).
+    llm_base_url: str | None = None
 
 
 class EvaluationResultSchema(BaseModel):

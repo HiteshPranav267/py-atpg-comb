@@ -98,7 +98,7 @@ See [`pyatpg/llm/`](#llm-assisted-sequential-atpg) below for the optional LLM-as
 | **Trojan Dataset**      | Automated Trojan insertion (`pyatpg/trojan`) with pluggable strategies  |
 | **Ranking Engine**      | Pluggable `GateRanker` interface for benchmarking                       |
 | **AI Prioritizer**      | LLM-based suspect-gate ranking for the audit pipeline (`pyatpg/agents`) |
-| **LLM Ranker**          | Gemini/OpenAI/Anthropic provider abstraction for benchmark evaluation     |
+| **LLM Ranker**          | Provider-agnostic (Gemini/OpenAI/Anthropic/NVIDIA/custom) ranker for benchmark evaluation |
 | **Evaluation**          | Top-K Accuracy, MRR, Precision/Recall, Search Space Reduction             |
 | **Benchmarking**        | Async batch benchmark runner over full dataset directories                |
 | **REST API**            | FastAPI backend exposing all modules as stateless endpoints               |
@@ -147,7 +147,10 @@ py-atpg-comb/
 - Python 3.11+
 - Node.js 20+ (for the research frontend)
 - ATALANTA compiled binary (inside `Atalanta/`)
-- `GEMINI_API_KEY` / `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` in your environment or `.env` for LLM-based ranking/prioritization
+- An LLM API key for LLM-based ranking/prioritization (optional; everything falls back to structural heuristics without one). Any of these work, in your environment or `.env`:
+  - `GEMINI_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY` or `NVIDIA_API_KEY` — the vendor is implied by the variable
+  - or the generic `LLM_API_KEY` plus `LLM_PROVIDER` (`gemini` / `openai` / `anthropic` / `nvidia` / `openai_compatible`), with optional `LLM_MODEL` and, for OpenAI-compatible endpoints such as Ollama/Groq/OpenRouter, `LLM_BASE_URL`
+  - or paste a key in the frontend's **Settings** dialog: pick a provider from the dropdown or leave it on *Auto* and the vendor is recognised from the key's prefix (`AIza` Gemini, `sk-ant-` Anthropic, `nvapi-` NVIDIA, `sk-` OpenAI). Per-request keys override the server's.
 
 ```bash
 pip install -r requirements.txt
@@ -187,6 +190,18 @@ python -m pyatpg benchmarks/s27.bench # sequential (has flip-flops) -> pyatpg/se
 ```bash
 python build_app.py   # runs PyInstaller against pyatpg.spec → dist/pyatpg/
 ```
+
+### Option E — Unattended batch runs (for collecting results across many circuits)
+
+```bash
+python scripts/run_suite.py atpg --circuits benchmarks/incoming --mode compare
+```
+
+Drop circuit files into `benchmarks/incoming/` (or point `--circuits` at any
+folder/glob) and it works through all of them, retrying transient failures
+(an LLM 503/429, a network blip) with backoff and skipping anything already
+finished on a re-run — see [docs/automation.md](docs/automation.md) for
+scheduling it unattended (Windows Task Scheduler / cron) and tuning retries.
 
 ---
 
@@ -231,7 +246,7 @@ The desktop app (`app.py`) exposes its own parallel Flask routes (`/api/circuit/
 | `RandomRanker`   | Uniform random baseline                            |
 | `ScoapRanker`    | Ranks by low controllability × high observability |
 | `RareNodeRanker` | Ranks by lowest toggle rate (rare activation)      |
-| `LLMRanker`      | Chain-of-thought reasoning via Gemini / OpenAI / Anthropic |
+| `LLMRanker`      | Chain-of-thought reasoning via any configured LLM provider |
 
 All rankers implement the same `GateRanker` interface and are auto-discovered by the API — no hardcoding required on the frontend.
 
@@ -264,7 +279,7 @@ Insertion strategies: `RandomStrategy`, `LowScoapStrategy`, `RareNodeStrategy`.
 
 ## Deployment (research platform)
 
-- **Backend** — Render.com, built via `bash build.sh` (installs `requirements.txt` and compiles `Atalanta/atalanta` from source against Render's own build image — a prebuilt binary drifts out of sync with the runtime image's glibc), started via `uvicorn pyatpg.api.app:app --host 0.0.0.0 --port $PORT`. Reads `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / `GEMINI_API_KEY` from Render environment variables.
+- **Backend** — Render.com, built via `bash build.sh` (installs `requirements.txt` and compiles `Atalanta/atalanta` from source against Render's own build image — a prebuilt binary drifts out of sync with the runtime image's glibc), started via `uvicorn pyatpg.api.app:app --host 0.0.0.0 --port $PORT`. Reads `LLM_PROVIDER` / `LLM_API_KEY` (or a vendor-specific `GEMINI_API_KEY` / `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / `NVIDIA_API_KEY`) from Render environment variables; users can also supply their own key and provider from the frontend's Settings dialog.
 - **Frontend** — Vercel.com, root directory `frontend`, built via `npm run build`. Bakes `VITE_API_URL` (the Render backend URL) into the static build.
 
 See [project_architecture.md](project_architecture.md) for the full request-flow writeup.
@@ -278,7 +293,7 @@ See [project_architecture.md](project_architecture.md) for the full request-flow
 **Research Frontend:** React 19 · TypeScript · Vite · TailwindCSS · TanStack Query/Table · Zustand · Recharts
 **Desktop Audit App:** Flask · Flask-SocketIO · pywebview · PyInstaller
 **Remote Execution:** Paramiko (SSH job dispatch to a lab server)
-**LLM Providers:** Google Gemini (`google-genai`) · OpenAI · Anthropic
+**LLM Providers:** Google Gemini (`google-genai`) · OpenAI · Anthropic Claude · NVIDIA NIM · any OpenAI-compatible endpoint (Ollama, Groq, OpenRouter, vLLM...) — selectable per request
 
 ---
 

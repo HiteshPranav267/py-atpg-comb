@@ -48,6 +48,36 @@ export interface RankingRequest {
   ranker_name: string;
 }
 
+/** A named endpoint offered as a dropdown choice for a custom base URL. */
+export interface LlmBaseUrlPreset {
+  label: string;
+  url: string;
+}
+
+/** One entry from GET /api/llm/providers. */
+export interface LlmProviderSpec {
+  id: string;
+  label: string;
+  env_vars: string[];
+  default_model: string;
+  key_prefix: string;
+  openai_compatible: boolean;
+  base_url: string | null;
+  hint: string;
+  /** Curated model ids for the dropdown, default first. Never exhaustive. */
+  models: string[];
+  /** Named endpoints for the base-URL dropdown (only used when openai_compatible). */
+  base_url_presets: LlmBaseUrlPreset[];
+}
+
+export interface LlmProvidersResponse {
+  auto: string;
+  default_provider: string;
+  providers: LlmProviderSpec[];
+  /** What the server falls back to when a request carries no key; null if nothing is configured. */
+  server_default: { provider: string; model: string } | null;
+}
+
 export interface EvaluationResult {
   ranker_name: string;
   circuit_name: string;
