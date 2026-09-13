@@ -174,8 +174,23 @@ PROVIDER_SPECS: dict[str, ProviderSpec] = {
         env_vars=("GEMINI_API_KEY", "GOOGLE_API_KEY"),
         default_model="gemini-flash-latest",
         key_prefix="AIza",
-        hint="Keys from aistudio.google.com start with AIza.",
-        models=("gemini-flash-latest", "gemini-2.5-pro", "gemini-2.5-flash-lite"),
+        hint=(
+            "Keys from aistudio.google.com start with AIza. Each model has its own "
+            "free-tier quota, so switching model is the way past a daily limit."
+        ),
+        # The -latest aliases track Google's current release of each tier;
+        # the pinned ids are the stable 2.5 family. Everything else the key
+        # can use (newer previews, Gemma) comes from list_models(), which
+        # returns the exact ids -- the AI Studio dashboard shows display
+        # names, not ids, so they are deliberately not guessed here.
+        models=(
+            "gemini-flash-latest",
+            "gemini-flash-lite-latest",
+            "gemini-pro-latest",
+            "gemini-2.5-flash",
+            "gemini-2.5-flash-lite",
+            "gemini-2.5-pro",
+        ),
     ),
     "openai": ProviderSpec(
         id="openai",
@@ -436,6 +451,17 @@ class LLMProvider(ABC):
         """
         ...
 
+    def list_models(self) -> list[dict[str, str]]:
+        """Models this credential can use for text generation.
+
+        Returns ``[{"id": ..., "label": ...}]`` in the vendor's own order.
+        Raises :class:`LLMUnavailableError` when the vendor cannot be asked
+        (bad key, quota, outage) -- the same failure the ATPG run would hit.
+        Providers that cannot tell text models from the rest return every
+        model and leave the choice to the user.
+        """
+        raise NotImplementedError
+
     def _note_usage(self, prompt_tokens: Any, completion_tokens: Any) -> None:
         """Record a usage report, ignoring anything that is not two ints."""
         if isinstance(prompt_tokens, int) and isinstance(completion_tokens, int):
@@ -504,6 +530,34 @@ class GeminiProvider(LLMProvider):
             self._client = genai.Client(api_key=api_key)
         return self._client
 
+    def list_models(self) -> list[dict[str, str]]:
+        client = self._get_client()
+
+        def call() -> list[dict[str, str]]:
+            found: list[dict[str, str]] = []
+            for model in client.models.list():
+                # The SDK names the capability list differently across
+                # versions; either way only generateContent models can run
+                # this project's prompts (embeddings, TTS, image and video
+                # models are listed under the same key).
+                actions = (
+                    getattr(model, "supported_actions", None)
+                    or getattr(model, "supported_generation_methods", None)
+                    or []
+                )
+                if actions and "generateContent" not in actions:
+                    continue
+                name = str(getattr(model, "name", "") or "")
+                model_id = name.split("/", 1)[1] if name.startswith("models/") else name
+                if not model_id:
+                    continue
+                found.append(
+                    {"id": model_id, "label": str(getattr(model, "display_name", "") or model_id)}
+                )
+            return found
+
+        return self._with_retry(call)
+
     def complete(self, prompt: str, *, json_mode: bool = False, max_retries: int = 3) -> str:
         client = self._get_client()
         config = None
@@ -566,6 +620,33 @@ class OpenAIProvider(LLMProvider):
             self._client = OpenAI(api_key=api_key, base_url=self._base_url)
         return self._client
 
+    #: Model-id fragments that mark a non-chat model on OpenAI's list. The
+    #: endpoint does not say what a model is for, so this is a courtesy
+    #: filter, not a guarantee; compatible servers are left unfiltered.
+    _NON_CHAT_MARKERS = (
+        "embedding", "whisper", "tts", "dall-e", "moderation", "realtime",
+        "audio", "transcribe", "image", "davinci", "babbage",
+    )
+
+    def list_models(self) -> list[dict[str, str]]:
+        client = self._get_client()
+
+        def call() -> list[dict[str, str]]:
+            found: list[dict[str, str]] = []
+            for model in client.models.list():
+                model_id = str(getattr(model, "id", "") or "")
+                if not model_id:
+                    continue
+                if self._base_url is None and any(
+                    marker in model_id.lower() for marker in self._NON_CHAT_MARKERS
+                ):
+                    continue
+                found.append({"id": model_id, "label": model_id})
+            found.sort(key=lambda m: m["id"])
+            return found
+
+        return self._with_retry(call)
+
     def complete(self, prompt: str, *, json_mode: bool = False, max_retries: int = 3) -> str:
         client = self._get_client()
         # Only the real OpenAI endpoint is guaranteed to honour
@@ -623,6 +704,21 @@ class AnthropicProvider(LLMProvider):
                 )
             self._client = Anthropic(api_key=api_key)
         return self._client
+
+    def list_models(self) -> list[dict[str, str]]:
+        client = self._get_client()
+
+        def call() -> list[dict[str, str]]:
+            found: list[dict[str, str]] = []
+            for model in client.models.list(limit=100):
+                model_id = str(getattr(model, "id", "") or "")
+                if model_id:
+                    found.append(
+                        {"id": model_id, "label": str(getattr(model, "display_name", "") or model_id)}
+                    )
+            return found
+
+        return self._with_retry(call)
 
     def complete(self, prompt: str, *, json_mode: bool = False, max_retries: int = 3) -> str:
         client = self._get_client()

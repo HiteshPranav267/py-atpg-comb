@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
-import { X, Trash2, RotateCcw, Eye, EyeOff } from 'lucide-react';
+import { X, Trash2, RotateCcw, Eye, EyeOff, RefreshCw } from 'lucide-react';
 import { useAppStore } from '@/store';
 import { api } from '@/services/api';
-import type { LlmProviderSpec, LlmProvidersResponse } from '@/types';
+import type { LlmModelInfo, LlmProviderSpec, LlmProvidersResponse } from '@/types';
 
 /**
  * Shown until (or instead of, if the backend is unreachable) the list from
@@ -10,7 +10,7 @@ import type { LlmProviderSpec, LlmProvidersResponse } from '@/types';
  * picker is usable offline; the backend's list wins once it loads.
  */
 const FALLBACK_PROVIDERS: LlmProviderSpec[] = [
-  { id: 'gemini', label: 'Google Gemini', env_vars: ['GEMINI_API_KEY'], default_model: 'gemini-flash-latest', key_prefix: 'AIza', openai_compatible: false, base_url: null, hint: 'Keys from aistudio.google.com start with AIza.', models: ['gemini-flash-latest', 'gemini-2.5-pro', 'gemini-2.5-flash-lite'], base_url_presets: [] },
+  { id: 'gemini', label: 'Google Gemini', env_vars: ['GEMINI_API_KEY'], default_model: 'gemini-flash-latest', key_prefix: 'AIza', openai_compatible: false, base_url: null, hint: 'Keys from aistudio.google.com start with AIza. Each model has its own free-tier quota, so switching model is the way past a daily limit.', models: ['gemini-flash-latest', 'gemini-flash-lite-latest', 'gemini-pro-latest', 'gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-2.5-pro'], base_url_presets: [] },
   { id: 'openai', label: 'OpenAI', env_vars: ['OPENAI_API_KEY'], default_model: 'gpt-4o-mini', key_prefix: 'sk-', openai_compatible: true, base_url: null, hint: 'Keys from platform.openai.com start with sk-.', models: ['gpt-4o-mini', 'gpt-4o', 'gpt-4.1', 'gpt-4.1-mini', 'o4-mini'], base_url_presets: [] },
   { id: 'anthropic', label: 'Anthropic Claude', env_vars: ['ANTHROPIC_API_KEY'], default_model: 'claude-sonnet-5', key_prefix: 'sk-ant-', openai_compatible: false, base_url: null, hint: 'Keys from console.anthropic.com start with sk-ant-.', models: ['claude-sonnet-5', 'claude-opus-5', 'claude-haiku-4-5-20251001'], base_url_presets: [] },
   { id: 'nvidia', label: 'NVIDIA NIM', env_vars: ['NVIDIA_API_KEY'], default_model: 'meta/llama-3.3-70b-instruct', key_prefix: 'nvapi-', openai_compatible: true, base_url: 'https://integrate.api.nvidia.com/v1', hint: 'Keys from build.nvidia.com start with nvapi-. Any NIM model id works.', models: ['meta/llama-3.3-70b-instruct', 'meta/llama-3.1-405b-instruct', 'nvidia/llama-3.1-nemotron-70b-instruct', 'mistralai/mixtral-8x22b-instruct-v0.1', 'deepseek-ai/deepseek-r1'], base_url_presets: [] },
@@ -55,6 +55,12 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
   const [keySaved, setKeySaved] = useState(false);
   const [cleared, setCleared] = useState(false);
   const [providerInfo, setProviderInfo] = useState<LlmProvidersResponse | null>(null);
+  // Models fetched from the vendor for the key in the box -- exact ids, and
+  // only the ones this credential can actually run. Keyed by the provider
+  // they were fetched for, so switching vendor never shows a stale list.
+  const [liveModels, setLiveModels] = useState<{ provider: string; models: LlmModelInfo[] } | null>(null);
+  const [modelsStatus, setModelsStatus] = useState<'idle' | 'loading' | 'error'>('idle');
+  const [modelsError, setModelsError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -71,9 +77,40 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
   const isCustomProvider = llmProvider === 'openai_compatible';
   const showBaseUrl = effectiveSpec?.openai_compatible ?? false;
 
+  const fetchModels = async () => {
+    setModelsStatus('loading');
+    setModelsError(null);
+    try {
+      const result = await api.listLlmModels({
+        provider: llmProvider === 'auto' ? undefined : llmProvider,
+        api_key: keyDraft.trim() || undefined,
+        base_url: baseUrlDraft.trim() || undefined,
+      });
+      setLiveModels({ provider: result.provider, models: result.models });
+      setModelsStatus('idle');
+    } catch (err: any) {
+      setLiveModels(null);
+      setModelsStatus('error');
+      setModelsError(err?.response?.data?.detail || err?.message || 'Could not list models');
+    }
+  };
+
+  // A stored key means the user has already committed to this account, so
+  // show what it can run without making them click.
+  useEffect(() => {
+    if (llmApiKey) void fetchModels();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const accountModels: LlmModelInfo[] =
+    liveModels && (!effectiveSpec || liveModels.provider === effectiveSpec.id) ? liveModels.models : [];
+  const accountIds = new Set(accountModels.map((m) => m.id));
+  // Curated suggestions, minus anything the account list already carries.
+  const suggestedModels = (effectiveSpec?.models ?? []).filter((m) => !accountIds.has(m));
+
   // The model/base-URL <select>s show one of: blank/"default", a known
   // option, or the custom sentinel (which reveals a free-text input below).
-  const knownModels = effectiveSpec?.models ?? [];
+  const knownModels = [...accountModels.map((m) => m.id), ...suggestedModels];
   const modelSelectValue = modelDraft === '' ? '' : knownModels.includes(modelDraft) ? modelDraft : CUSTOM;
   const basePresets = effectiveSpec?.base_url_presets ?? [];
   const baseSelectValue = baseUrlDraft === ''
@@ -235,9 +272,21 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
                 </select>
               </div>
               <div>
-                <label className="block text-xs font-medium mb-1.5">
-                  Model <span className="text-muted-foreground font-normal">(optional)</span>
-                </label>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="block text-xs font-medium">
+                    Model <span className="text-muted-foreground font-normal">(optional)</span>
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => void fetchModels()}
+                    disabled={modelsStatus === 'loading'}
+                    title="Ask the vendor which models this key can use (exact ids)"
+                    className="flex items-center gap-1 text-[11px] text-primary hover:underline disabled:opacity-50"
+                  >
+                    <RefreshCw className={`w-3 h-3 ${modelsStatus === 'loading' ? 'animate-spin' : ''}`} />
+                    {modelsStatus === 'loading' ? 'Loading…' : 'Load from account'}
+                  </button>
+                </div>
                 <select
                   value={modelSelectValue}
                   onChange={(e) => {
@@ -249,11 +298,32 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
                   <option value="">
                     Use provider default{effectiveSpec?.default_model ? ` (${effectiveSpec.default_model})` : ''}
                   </option>
-                  {knownModels.map((m) => (
-                    <option key={m} value={m}>{m}</option>
-                  ))}
+                  {accountModels.length > 0 && (
+                    <optgroup label="Available to your key">
+                      {accountModels.map((m) => (
+                        <option key={m.id} value={m.id}>
+                          {m.label !== m.id ? `${m.label} — ${m.id}` : m.id}
+                        </option>
+                      ))}
+                    </optgroup>
+                  )}
+                  {suggestedModels.length > 0 && (
+                    <optgroup label={accountModels.length > 0 ? 'Other suggestions' : 'Suggestions'}>
+                      {suggestedModels.map((m) => (
+                        <option key={m} value={m}>{m}</option>
+                      ))}
+                    </optgroup>
+                  )}
                   <option value={CUSTOM}>Custom model id...</option>
                 </select>
+                {modelsStatus === 'error' && modelsError && (
+                  <p className="text-[11px] text-destructive mt-1">{modelsError}</p>
+                )}
+                {accountModels.length > 0 && modelsStatus !== 'error' && (
+                  <p className="text-[11px] text-muted-foreground mt-1">
+                    {accountModels.length} text-generation model(s) reported by {effectiveSpec?.label ?? 'the vendor'} for this key.
+                  </p>
+                )}
                 {modelSelectValue === CUSTOM && (
                   <input
                     type="text"

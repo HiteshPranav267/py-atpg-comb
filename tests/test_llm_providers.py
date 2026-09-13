@@ -183,3 +183,78 @@ class TestServicesAcceptAnyProvider:
 
         with pytest.raises(ValueError, match="No LLM API key"):
             RankingService.get_ranker("LLMRanker")
+
+
+class TestListModels:
+    """The Settings picker asks the vendor for exact model ids."""
+
+    def test_gemini_keeps_only_generate_content_models(self):
+        from types import SimpleNamespace as NS
+        from unittest.mock import patch
+
+        from pyatpg.ranking.providers import GeminiProvider
+
+        listed = [
+            NS(name="models/gemini-2.5-flash", display_name="Gemini 2.5 Flash",
+               supported_actions=["generateContent", "countTokens"]),
+            NS(name="models/gemini-embedding-001", display_name="Embedding",
+               supported_actions=["embedContent"]),
+            NS(name="models/gemini-3.1-flash-lite", display_name="Gemini 3.1 Flash Lite",
+               supported_actions=["generateContent"]),
+        ]
+        provider = GeminiProvider(api_key="AIzaTEST")
+        fake_client = NS(models=NS(list=lambda: listed))
+        with patch.object(GeminiProvider, "_get_client", return_value=fake_client):
+            models = provider.list_models()
+        assert [m["id"] for m in models] == ["gemini-2.5-flash", "gemini-3.1-flash-lite"]
+        assert models[0]["label"] == "Gemini 2.5 Flash"
+
+    def test_endpoint_uses_the_request_key_and_sniffs_the_vendor(self):
+        from unittest.mock import patch
+
+        from fastapi.testclient import TestClient
+
+        from pyatpg.api.app import app
+
+        class Fake:
+            model_name = "x"
+
+            def list_models(self):
+                return [{"id": "gemini-2.5-flash", "label": "Gemini 2.5 Flash"}]
+
+        with patch("pyatpg.api.routes.llm.create_provider", lambda cfg: Fake()):
+            res = TestClient(app).post("/api/llm/models", json={"api_key": "AIzaTEST"})
+        assert res.status_code == 200
+        body = res.json()
+        assert body["provider"] == "gemini"
+        assert body["models"][0]["id"] == "gemini-2.5-flash"
+
+    def test_endpoint_without_any_key_is_a_400(self, monkeypatch):
+        from fastapi.testclient import TestClient
+
+        from pyatpg.api.app import app
+        from pyatpg.ranking import providers as P
+
+        for spec in P.PROVIDER_SPECS.values():
+            for var in spec.env_vars:
+                monkeypatch.delenv(var, raising=False)
+        monkeypatch.delenv(P.LLM_API_KEY_ENV_VAR, raising=False)
+        res = TestClient(app).post("/api/llm/models", json={"provider": "gemini"})
+        assert res.status_code == 400
+
+    def test_endpoint_reports_a_vendor_failure_as_502(self):
+        from unittest.mock import patch
+
+        from fastapi.testclient import TestClient
+
+        from pyatpg.api.app import app
+        from pyatpg.ranking.providers import LLMUnavailableError
+
+        class Broken:
+            def list_models(self):
+                raise LLMUnavailableError("Gemini", "401 invalid api key")
+
+        with patch("pyatpg.api.routes.llm.create_provider", lambda cfg: Broken()):
+            res = TestClient(app).post("/api/llm/models", json={"api_key": "AIzaTEST"})
+        assert res.status_code == 502
+        assert "rejected the API key" in res.json()["detail"]

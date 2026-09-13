@@ -70,6 +70,19 @@ export interface LlmProviderSpec {
   base_url_presets: LlmBaseUrlPreset[];
 }
 
+export interface LlmModelInfo {
+  id: string;
+  /** Vendor's display name, or the id again when it has none. */
+  label: string;
+}
+
+export interface LlmModelsResponse {
+  provider: string;
+  default_model: string;
+  /** Text-generation models the credential can use, exact ids. */
+  models: LlmModelInfo[];
+}
+
 export interface LlmProvidersResponse {
   auto: string;
   default_provider: string;

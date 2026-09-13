@@ -12,7 +12,8 @@ import type {
   AnalysisModeOption,
   TrojanGenerateResult,
   AnalyticsSummary,
-  LlmProvidersResponse
+  LlmProvidersResponse,
+  LlmModelsResponse,
 } from '@/types';
 import { useAppStore } from '@/store';
 
