@@ -193,15 +193,35 @@ python build_app.py   # runs PyInstaller against pyatpg.spec → dist/pyatpg/
 
 ### Option E — Unattended batch runs (for collecting results across many circuits)
 
+Two ways to run the same pipeline (generate trojan variants → ATPG → rank
+against ground truth) over a batch of circuits, differing in where the
+actual Atalanta/LLM work happens:
+
 ```bash
-python scripts/run_suite.py atpg --circuits benchmarks/incoming --mode compare
+# Lightest: drives the *deployed* backend's own API. No Atalanta, no LLM
+# SDK needed locally -- just `pip install -r requirements-api-client.txt`.
+python scripts/run_via_api.py --circuits benchmarks/incoming --api-key YOUR_KEY
+
+# Fully offline: everything runs on this machine (needs requirements.txt
+# and a working Atalanta binary -- already checked in for Windows).
+python scripts/run_suite.py research --circuits benchmarks/incoming
 ```
 
 Drop circuit files into `benchmarks/incoming/` (or point `--circuits` at any
-folder/glob) and it works through all of them, retrying transient failures
-(an LLM 503/429, a network blip) with backoff and skipping anything already
-finished on a re-run — see [docs/automation.md](docs/automation.md) for
-scheduling it unattended (Windows Task Scheduler / cron) and tuning retries.
+folder/glob) and either one works through all of them — retrying transient
+failures (a 503/429, a network blip) with backoff, detecting an exhausted
+API key/quota separately (with a Discord/email ping if configured), and
+skipping anything already finished on a re-run. See
+[docs/automation.md](docs/automation.md) for scheduling either one
+unattended, notifications, and tuning retries.
+
+**Splitting circuits across multiple people's laptops:** each person runs
+one of these independently on their own machine — no shared server to set
+up, each uses their own LLM key. Give collaborators
+[docs/friend-quickstart.md](docs/friend-quickstart.md) instead of this
+README if they don't need the rest of the project context — it leads with
+the lighter `run_via_api.py` path; `.\scripts\friend_setup.ps1` (Windows)
+automates the fully-offline path's setup interactively.
 
 ---
 

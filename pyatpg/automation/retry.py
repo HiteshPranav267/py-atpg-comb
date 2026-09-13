@@ -58,6 +58,7 @@ _CREDENTIALS_MARKERS = (
     "permission_denied", "unauthorized", "401", "403",
     "no gemini api key available", "no openai api key available",
     "no anthropic api key available", "no nvidia api key available",
+    "no llm api key available",
 )
 
 

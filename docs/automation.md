@@ -239,6 +239,32 @@ person's own `NOTIFY_*` env vars (or a shared Discord webhook, if you want
 one channel for the whole group) is the natural way to have everyone get
 their own "your circuits are done" / "your key ran out" pings.
 
+**Getting collaborators set up:** each person runs a driver on their own
+machine against their own slice of circuits, using their own LLM key —
+two options, depending on where the actual ATPG/LLM compute should happen:
+
+- **`scripts/run_via_api.py`** (lightest, recommended) — drives the
+  *deployed* backend's own API: uploads each circuit, the server generates
+  trojan variants, runs Atalanta, and ranks them; this script just
+  orchestrates the calls, retries the flaky ones, and evaluates results
+  locally against ground truth. Needs only `pip install -r
+  requirements-api-client.txt` (`requests` + `networkx`) — no Atalanta, no
+  LLM SDK, no compiling, on the collaborator's machine at all.
+  ```bash
+  python scripts/run_via_api.py --circuits benchmarks/incoming --api-key YOUR_KEY
+  ```
+- **`scripts/run_suite.py research`** (fully offline) — everything
+  described above in this file, running entirely locally: needs the full
+  `requirements.txt` and a working Atalanta binary on that machine (already
+  checked into the repo for Windows — `scripts/friend_setup.ps1` automates
+  that whole setup interactively). Use this if you'd rather not depend on
+  the shared backend at all.
+
+Both share the same manifest/resumability/notification model. Point
+collaborators at [docs/friend-quickstart.md](friend-quickstart.md) instead
+of this file if they just need "how do I run my circuits," not the rest of
+this doc — it leads with the `run_via_api.py` path.
+
 ## Tuning the retry behavior
 
 - `--max-attempts N` (default 6) — retries per circuit *within one
