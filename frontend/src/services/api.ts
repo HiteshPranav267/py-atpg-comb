@@ -114,6 +114,16 @@ export const api = {
     return res.data;
   },
 
+  // Models the given credential can actually use, for the Settings picker.
+  listLlmModels: async (params: {
+    provider?: string;
+    api_key?: string;
+    base_url?: string;
+  }): Promise<LlmModelsResponse> => {
+    const res = await apiClient.post('/llm/models', params);
+    return res.data;
+  },
+
   // Trojan
   generateTrojanDataset: async (params: { file: File; variants?: number; strategy?: string }): Promise<TrojanGenerateResult> => {
     const formData = new FormData();
