@@ -281,7 +281,17 @@ class AtpgAnalysisService:
                 "DAG) with no flip-flop breaking it, so the ATPG tool cannot "
                 "levelize or generate patterns for it."
             )
-        llm_config = self._llm_config(use_llm, api_key, llm_provider, llm_model, llm_base_url)
+        # NON_TARGETED means "no LLM assistance", the same as on the
+        # sequential path (see _run_sequential): only TARGETED/COMPARE ever
+        # consult the model, for fault targeting *and* for the circuit
+        # analyst below. Without this gate, a non-targeted run still built a
+        # provider and handed it to CircuitAnalyst, so a quota/rate-limit
+        # failure there aborted a run that was never supposed to touch the
+        # LLM at all.
+        effective_use_llm = use_llm and mode.runs_targeted
+        llm_config = self._llm_config(
+            effective_use_llm, api_key, llm_provider, llm_model, llm_base_url
+        )
         # One provider instance serves both the target selector and the
         # analyst, so a single request never authenticates twice.
         provider = None
@@ -418,6 +428,12 @@ class AtpgAnalysisService:
             list(analysis.runs.values()),
             targeted_gates=(selection.gates if selection else []),
         )
+
+        if use_llm and not mode.runs_targeted:
+            analysis.notes.append(
+                "LLM assistance skipped: mode is set to non-targeted (deterministic-only "
+                "ATPG). Switch to a targeted or compare mode to enable it."
+            )
 
         # Provider errors are surfaced verbatim to explain a fallback. Scrub
         # the credential from them centrally, so no provider that happens to
