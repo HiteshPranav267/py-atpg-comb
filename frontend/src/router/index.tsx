@@ -12,11 +12,13 @@ import Results from '@/pages/Results';
 import Reports from '@/pages/Reports';
 import Analytics from '@/pages/Analytics';
 import Help from '@/pages/Help';
+import NotFound from '@/pages/NotFound';
 
 export const router = createBrowserRouter([
   {
     path: '/',
     element: <AppLayout />,
+    errorElement: <NotFound />,
     children: [
       { path: '/', element: <Dashboard /> },
       { path: '/circuits', element: <Circuits /> },
@@ -29,6 +31,7 @@ export const router = createBrowserRouter([
       { path: '/reports', element: <Reports /> },
       { path: '/analytics', element: <Analytics /> },
       { path: '/help', element: <Help /> },
+      { path: '*', element: <NotFound /> },
     ],
   },
 ]);
