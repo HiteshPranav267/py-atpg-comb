@@ -18,6 +18,15 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any
 
+from dotenv import load_dotenv
+
+# python-dotenv is a declared dependency specifically so a local .env can
+# supply these credentials; every entry point (CLI, API server, automation
+# scripts, tests) resolves keys through this module, so loading it once here
+# covers all of them. Does not override variables already set in the
+# environment.
+load_dotenv()
+
 # Transient failures (over capacity, rate limited, gateway hiccups) worth
 # retrying. Matched as substrings against the exception text, which is the
 # lowest common denominator across the SDKs.
@@ -30,10 +39,21 @@ _RETRYABLE_MARKERS = (
 # rejected, or no key at all -- across every provider's own wording for it.
 # Matched case-insensitively. Deliberately heuristic: providers don't share
 # an error taxonomy, so a message that slips past these is just described
-# generically, which is safe rather than wrong.
+# generically, which is safe rather than wrong. Deliberately *not* a bare
+# "billing": Groq's per-request TPM error links to its billing/upgrade page
+# in the same message, so that alone would misreport a request-too-large
+# error as an exhausted account -- a different problem with a different fix.
 _QUOTA_MARKERS = (
     "insufficient_quota", "exceeded your current quota", "quota exceeded",
-    "credit balance", "billing",
+    "credit balance",
+)
+# One request exceeded a per-request or per-minute size limit -- distinct
+# from being rate-limited generally (retrying the identical request just
+# fails the same way again) and from an exhausted account (no billing
+# action fixes it; the request itself needs to be smaller).
+_REQUEST_TOO_LARGE_MARKERS = (
+    "reduce the length", "reduce your message size", "request too large",
+    "context_length_exceeded", "maximum context length",
 )
 _AUTH_MARKERS = (
     "invalid api key", "invalid_api_key", "invalid x-api-key", "incorrect api key",
@@ -76,6 +96,17 @@ class LLMUnavailableError(RuntimeError):
         )
 
 
+def is_request_too_large(message: str) -> bool:
+    """Whether a provider's error text means "this one request was too big".
+
+    The remedy is a smaller request, not a retry and not a billing change,
+    so callers that *can* resend something smaller (see
+    :class:`~pyatpg.ranking.llm.LLMRanker`) branch on this.
+    """
+    text = message.lower()
+    return any(m.lower() in text for m in _REQUEST_TOO_LARGE_MARKERS)
+
+
 def describe_llm_failure(message: str) -> str:
     """Turn a provider's error text into one short plain-English cause.
 
@@ -94,6 +125,13 @@ def describe_llm_failure(message: str) -> str:
         return "the LLM account is out of credits or over its quota"
     if has(*_AUTH_MARKERS):
         return "the LLM provider rejected the API key (authentication failed)"
+    if has(*_REQUEST_TOO_LARGE_MARKERS):
+        return (
+            "the request was too large for the provider's per-request or "
+            "per-minute token limit (not an account problem -- lower "
+            "LLM_REQUEST_TOKEN_BUDGET to make every stage send less, or use "
+            "a provider without so tight a per-request cap)"
+        )
     if has("429", "resource_exhausted", "rate limit", "ratelimit"):
         return "the LLM provider rate-limited the request (HTTP 429)"
     if has("503", "unavailable", "overloaded"):
@@ -442,12 +480,21 @@ class LLMProvider(ABC):
     last_usage: dict[str, int] | None = None
 
     @abstractmethod
-    def complete(self, prompt: str, *, json_mode: bool = False) -> str:
+    def complete(
+        self, prompt: str, *, json_mode: bool = False, max_output_tokens: int | None = None
+    ) -> str:
         """Send the prompt and return the raw text response.
 
         ``json_mode`` asks the backend for a JSON object response where the
         provider supports it; callers must still validate the result, since
         not every provider can enforce it.
+
+        ``max_output_tokens`` bounds the completion. Left unset, some
+        endpoints reserve a large default against a per-minute token budget
+        even though the model never gets close to using it -- Groq's free
+        tier rejects a request outright once prompt-plus-reservation crosses
+        its TPM limit, before the model runs at all. A caller that knows
+        roughly how long its answer should be should pass a bound.
         """
         ...
 
@@ -558,13 +605,23 @@ class GeminiProvider(LLMProvider):
 
         return self._with_retry(call)
 
-    def complete(self, prompt: str, *, json_mode: bool = False, max_retries: int = 3) -> str:
+    def complete(
+        self,
+        prompt: str,
+        *,
+        json_mode: bool = False,
+        max_output_tokens: int | None = None,
+        max_retries: int = 3,
+    ) -> str:
         client = self._get_client()
         config = None
-        if json_mode:
+        if json_mode or max_output_tokens:
             from google.genai import types as genai_types
 
-            config = genai_types.GenerateContentConfig(response_mime_type="application/json")
+            config = genai_types.GenerateContentConfig(
+                response_mime_type="application/json" if json_mode else None,
+                max_output_tokens=max_output_tokens,
+            )
 
         def call() -> str:
             response = client.models.generate_content(
@@ -647,7 +704,14 @@ class OpenAIProvider(LLMProvider):
 
         return self._with_retry(call)
 
-    def complete(self, prompt: str, *, json_mode: bool = False, max_retries: int = 3) -> str:
+    def complete(
+        self,
+        prompt: str,
+        *,
+        json_mode: bool = False,
+        max_output_tokens: int | None = None,
+        max_retries: int = 3,
+    ) -> str:
         client = self._get_client()
         # Only the real OpenAI endpoint is guaranteed to honour
         # response_format; compatible servers frequently reject it, and the
@@ -655,6 +719,21 @@ class OpenAIProvider(LLMProvider):
         kwargs: dict[str, Any] = {}
         if json_mode and self._base_url is None:
             kwargs["response_format"] = {"type": "json_object"}
+        if max_output_tokens:
+            # Several free tiers (Groq's, notably) rate-limit on tokens-per-
+            # minute and, with no cap given, reserve a large default against
+            # that budget before the model even runs -- rejecting an
+            # otherwise-small prompt outright. Bounding it here is what
+            # keeps a capped-gate ranking prompt under that ceiling.
+            kwargs["max_tokens"] = max_output_tokens
+            if "gpt-oss" in self.model_name.lower():
+                # gpt-oss reasons before answering, and by default spends
+                # tokens on that hidden trace as freely as on the answer --
+                # against a tight max_tokens it can exhaust the whole budget
+                # mid-thought and never emit the JSON. Only this family is
+                # known to accept the knob; other OpenAI-compatible backends
+                # (Ollama included) 400 on it for non-reasoning models.
+                kwargs["reasoning_effort"] = "low"
 
         def call() -> str:
             response = client.chat.completions.create(
@@ -720,7 +799,14 @@ class AnthropicProvider(LLMProvider):
 
         return self._with_retry(call)
 
-    def complete(self, prompt: str, *, json_mode: bool = False, max_retries: int = 3) -> str:
+    def complete(
+        self,
+        prompt: str,
+        *,
+        json_mode: bool = False,
+        max_output_tokens: int | None = None,
+        max_retries: int = 3,
+    ) -> str:
         client = self._get_client()
         system = None
         if json_mode:
@@ -735,7 +821,7 @@ class AnthropicProvider(LLMProvider):
                 kwargs["system"] = system
             response = client.messages.create(
                 model=self.model_name,
-                max_tokens=self.max_tokens,
+                max_tokens=max_output_tokens or self.max_tokens,
                 messages=[{"role": "user", "content": prompt}],
                 **kwargs,
             )

@@ -15,6 +15,15 @@ from pyatpg.atpg import AnalysisMode, AtpgAnalysisService
 
 BENCHMARKS = Path(__file__).parent.parent / "benchmarks"
 
+#: Every env var providers.py's ``resolve_llm_config`` checks. A "no key
+#: configured" test clears these -- providers.py loads .env, so a
+#: developer's real local credentials would otherwise leak in.
+_LLM_ENV_VARS = (
+    "GEMINI_API_KEY", "GOOGLE_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY",
+    "NVIDIA_API_KEY", "OPENAI_COMPATIBLE_API_KEY", "LLM_API_KEY", "LLM_PROVIDER",
+    "LLM_MODEL", "LLM_BASE_URL",
+)
+
 
 def _s27_v() -> str:
     return (BENCHMARKS / "s27.v").read_text()
@@ -43,7 +52,10 @@ def test_sequential_non_targeted_mode_explicitly_skips_llm():
     assert any("non-targeted" in note for note in d["notes"])
 
 
-def test_sequential_targeted_mode_without_a_key_explains_why_llm_did_not_run():
+def test_sequential_targeted_mode_without_a_key_explains_why_llm_did_not_run(monkeypatch):
+    for var in _LLM_ENV_VARS:
+        monkeypatch.delenv(var, raising=False)
+
     service = AtpgAnalysisService()
     analysis = service.run(
         source_text=_s27_v(), filename="s27.v", mode=AnalysisMode.TARGETED, use_llm=True
@@ -62,7 +74,10 @@ def test_sequential_response_still_has_full_coverage_regardless_of_mode():
         assert d["sequential"]["analysis"]["results"]["fault_coverage"] == 100.0
 
 
-def test_sequential_compare_mode_without_a_key_explains_why_there_is_no_comparison():
+def test_sequential_compare_mode_without_a_key_explains_why_there_is_no_comparison(monkeypatch):
+    for var in _LLM_ENV_VARS:
+        monkeypatch.delenv(var, raising=False)
+
     service = AtpgAnalysisService()
     analysis = service.run(
         source_text=_s27_v(), filename="s27.v", mode=AnalysisMode.COMPARE, use_llm=True
@@ -83,7 +98,7 @@ def test_sequential_targeted_mode_with_a_key_shows_the_comparison_too(monkeypatc
     class _Stub:
         model_name = "stub"
 
-        def complete(self, prompt, *, json_mode=False):
+        def complete(self, prompt, *, json_mode=False, max_output_tokens=None):
             return "stub circuit summary"
 
     monkeypatch.setattr("pyatpg.seq.service.create_provider", lambda _cfg: _Stub())

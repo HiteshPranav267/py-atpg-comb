@@ -58,6 +58,68 @@ COMPACT_LEGEND = (
 )
 
 
+#: Ceiling on one request's prompt-plus-reply tokens, used by any stage
+#: that can send less when it must. This is a property of the provider and
+#: tier rather than of the circuit: Groq's free tier refuses a single
+#: request over 8000 tokens per minute, while Gemini or a local Ollama has
+#: no comparable limit. 0 disables the check entirely.
+#: ``LLM_REQUEST_TOKEN_BUDGET`` overrides the default.
+DEFAULT_REQUEST_TOKEN_BUDGET = 7000
+REQUEST_TOKEN_BUDGET_ENV_VAR = "LLM_REQUEST_TOKEN_BUDGET"
+
+#: Characters per token, deliberately on the low (= token-count-high) side
+#: so the estimate errs toward sending less. Measured against what the
+#: provider actually billed, not a local tokenizer: a c7552 targeting
+#: prompt came back at 4313 real tokens for what 2.3 chars/token had
+#: estimated at 3620, so the compact CSV encoding -- short numeric fields,
+#: many separators -- runs denser than prose. Under-counting here is the
+#: dangerous direction, since it is what lets an over-budget request
+#: through to be refused.
+_CHARS_PER_TOKEN = 1.9
+
+
+def request_token_budget(explicit: int | None = None) -> int:
+    """Resolve the per-request ceiling: explicit, else environment, else default."""
+    if explicit is not None:
+        return max(0, int(explicit))
+    raw = os.environ.get(REQUEST_TOKEN_BUDGET_ENV_VAR, "").strip()
+    if raw:
+        try:
+            return max(0, int(raw))
+        except ValueError:
+            pass
+    return DEFAULT_REQUEST_TOKEN_BUDGET
+
+
+def estimate_prompt_tokens(text: str) -> int:
+    """Pessimistic token count for a built prompt.
+
+    Not a real tokenizer -- there is no single one across providers -- just
+    a conservative proxy, good enough to decide whether to send less before
+    the provider refuses the request outright.
+    """
+    return int(len(text) / _CHARS_PER_TOKEN)
+
+
+#: Headroom added to every stage's reply budget for a reasoning model's
+#: hidden trace. gpt-oss spends real tokens thinking before it answers
+#: (~700 measured on Groq) and that trace counts against the same budget
+#: even though it never appears in the response, so a reply bound sized
+#: only to the visible answer truncates it mid-output.
+REPLY_OVERHEAD_TOKENS = 1200
+
+
+def reply_budget(answer_tokens: int) -> int:
+    """Completion bound for a stage expecting ``answer_tokens`` of answer.
+
+    Every stage passes one. Left unset, some endpoints reserve a large
+    default against a per-minute token budget and refuse the request
+    outright before the model runs -- Groq's free tier rejects a ~6k-token
+    prompt that way, reporting ~9.9k "requested" against an 8k limit.
+    """
+    return max(0, int(answer_tokens)) + REPLY_OVERHEAD_TOKENS
+
+
 #: Where cached model outputs for the combinational stages live. Same
 #: on-disk pattern as the sequential path's ``seq_llm1_cache.json``.
 DEFAULT_CACHE_PATH = os.path.join(os.getcwd(), "outputs", "comb_llm_cache.json")

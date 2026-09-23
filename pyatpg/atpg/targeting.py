@@ -7,6 +7,7 @@ whether a fault is detectable.
 """
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -15,12 +16,25 @@ from pyatpg.ranking.providers import LLMProvider, LLMUnavailableError, provider_
 
 from .llm_context import (
     COMPACT_LEGEND,
+    REQUEST_TOKEN_BUDGET_ENV_VAR,
     LLMResultCache,
     build_candidate_pool,
     cache_enabled,
     compact_profile_block,
     context_gate_limit,
+    estimate_prompt_tokens,
+    reply_budget,
+    request_token_budget,
 )
+
+#: Reply cost of one "gate_id,confidence" line, the only thing this stage
+#: asks the model to return.
+_TOKENS_PER_TARGET_LINE = 12
+
+#: Never shrink the candidate pool below this, whatever the token budget
+#: says: past some point the pool stops containing the answer at all, and
+#: failing loudly beats a selection made from too little evidence.
+_MIN_CONTEXT_POOL = 40
 
 #: Stage name this selector's calls are logged under in the TokenTracker.
 TOKEN_STAGE = "targeting"
@@ -386,30 +400,22 @@ class FaultTargetSelector:
                 kept.append(clean)
         return kept
 
-    def _select_with_llm(
+    def _compose_prompt(
         self,
         profiles: list[dict[str, Any]],
         summary: str,
         max_gates: int,
-        graph: Any = None,
-        suspects: list[str] | None = None,
-        source_text: str | None = None,
-    ) -> tuple[list[str], dict[str, Any], bool]:
-        """Ask the model, returning (gates, context description, was_cached)."""
-        # Decide what the model sees. Everything, for a circuit within the
-        # cap; otherwise a pool built from several deterministic views so a
-        # gate ranked just below any single cutoff is not invisible (see
-        # llm_context for why a plain top-N truncation was not good enough).
-        limit = context_gate_limit(self.context_gate_limit)
-        # The model must be able to answer with max_gates distinct gates.
-        limit = max(limit, max_gates) if limit else 0
+        graph: Any,
+        suspects: list[str] | None,
+        limit: int,
+    ) -> tuple[str, list[dict[str, Any]], list[str], dict[str, str]]:
+        """Build the pool and the prompt carrying it, for one pool ``limit``.
+
+        Separate from :meth:`_select_with_llm` so the caller can rebuild at
+        a smaller limit when the result would not fit the request budget.
+        Returns (prompt, pool, pool notes, alias -> real gate id).
+        """
         pool, pool_notes = build_candidate_pool(profiles, graph, limit, suspects)
-        context = {
-            "gates_sent": len(pool),
-            "gates_total": len(profiles),
-            "gate_limit": limit,
-            "notes": pool_notes,
-        }
 
         # Anonymise gate names before they reach the model.
         #
@@ -475,11 +481,87 @@ Rarest-toggling first.
 
 {profile_block}
 """
+        return prompt, pool, pool_notes, alias_to_gate
 
+    def _select_with_llm(
+        self,
+        profiles: list[dict[str, Any]],
+        summary: str,
+        max_gates: int,
+        graph: Any = None,
+        suspects: list[str] | None = None,
+        source_text: str | None = None,
+    ) -> tuple[list[str], dict[str, Any], bool]:
+        """Ask the model, returning (gates, context description, was_cached)."""
+        # Decide what the model sees. Everything, for a circuit within the
+        # cap; otherwise a pool built from several deterministic views so a
+        # gate ranked just below any single cutoff is not invisible (see
+        # llm_context for why a plain top-N truncation was not good enough).
+        limit = context_gate_limit(self.context_gate_limit)
+        # The model must be able to answer with max_gates distinct gates.
+        limit = max(limit, max_gates) if limit else 0
+        prompt, pool, pool_notes, alias_to_gate = self._compose_prompt(
+            profiles, summary, max_gates, graph, suspects, limit
+        )
+
+        # A gate *count* is only a rough proxy for what a request costs, and
+        # a provider that refuses an oversized one (Groq's free tier caps a
+        # single request at 8000 tokens) rejects it before the model runs.
+        # So measure what was actually built and, if it will not fit, ask
+        # for less -- of both kinds, because the two costs are independent:
+        # the pool is what the prompt carries, while max_gates sets how long
+        # the answer may be, and a reply bound is reserved against the same
+        # budget whether or not the model uses it. On a tight budget,
+        # shrinking only the pool cannot help once its floor is the number
+        # of gates the answer still has to be able to name.
+        budget = request_token_budget()
+        effective_max_gates = max_gates
+        if limit > 0 and budget > 0:
+            pool_limit = limit
+            while (
+                estimate_prompt_tokens(prompt)
+                + reply_budget(effective_max_gates * _TOKENS_PER_TARGET_LINE)
+                > budget
+            ):
+                at_gate_floor = effective_max_gates <= _MIN_TARGET_GATES
+                at_pool_floor = len(pool) <= max(effective_max_gates, _MIN_CONTEXT_POOL)
+                if at_gate_floor and at_pool_floor:
+                    break
+                effective_max_gates = max(
+                    _MIN_TARGET_GATES, int(effective_max_gates * 0.7)
+                )
+                pool_limit = max(
+                    effective_max_gates, _MIN_CONTEXT_POOL, int(pool_limit * 0.7)
+                )
+                prompt, pool, pool_notes, alias_to_gate = self._compose_prompt(
+                    profiles, summary, effective_max_gates, graph, suspects, pool_limit
+                )
+            if effective_max_gates != max_gates or len(pool) < limit:
+                pool_notes = [
+                    *pool_notes,
+                    f"Trimmed to {len(pool)} gates of context and at most "
+                    f"{effective_max_gates} targeted gates to fit a {budget}-token "
+                    f"request budget. Set {REQUEST_TOKEN_BUDGET_ENV_VAR}=0 to "
+                    "disable this, or raise it on a provider whose per-request "
+                    "limit is larger than Groq's free tier.",
+                ]
+
+        context = {
+            "gates_sent": len(pool),
+            "gates_total": len(profiles),
+            "gate_limit": limit,
+            "notes": pool_notes,
+        }
         # An identical netlist through the same model with the same pool
         # settings would get the same answer at full price.
+        # Keyed on what was actually sent: a budget-trimmed request asks a
+        # different question than the full one, and must not read back its
+        # answer from the cache (or leave its own answer where the full one
+        # would be found).
         cache_params = dict(
-            model=self.provider.model_name, max_gates=max_gates, limit=limit
+            model=self.provider.model_name,
+            max_gates=effective_max_gates,
+            limit=len(pool),
         )
         cache = self.cache
         if cache is None and source_text is not None and cache_enabled():
@@ -497,9 +579,17 @@ Rarest-toggling first.
                 )
 
         # Retries on transient failures live inside the provider.
-        response_text = self.provider.complete(prompt) or ""
+        started = time.perf_counter()
+        response_text = self.provider.complete(
+            prompt,
+            max_output_tokens=reply_budget(
+                effective_max_gates * _TOKENS_PER_TARGET_LINE
+            ),
+        ) or ""
+        elapsed = time.perf_counter() - started
         self.tracker.record(
-            TOKEN_STAGE, prompt, response_text, usage=getattr(self.provider, "last_usage", None)
+            TOKEN_STAGE, prompt, response_text,
+            usage=getattr(self.provider, "last_usage", None), duration_s=elapsed,
         )
         if cache is not None and source_text is not None:
             cache.put(TOKEN_STAGE, source_text, {"response": response_text}, **cache_params)

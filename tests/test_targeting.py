@@ -17,7 +17,7 @@ class _FakeProvider:
         self._respond = respond
         self.prompts: list[str] = []
 
-    def complete(self, prompt, *, json_mode=False):
+    def complete(self, prompt, *, json_mode=False, max_output_tokens=None):
         self.prompts.append(prompt)
         return self._respond(prompt) if callable(self._respond) else self._respond
 from pyatpg.core.graph_analysis import CircuitGraph, DEFAULT_TOGGLE_SEED
@@ -187,6 +187,72 @@ class TestObfuscationInvariance:
         selection = T.FaultTargetSelector(provider=provider).select(p.gate_profiles)
         # Only the one real alias survives; a raw gate name is not an alias.
         assert len(selection.gates) == 1
+
+
+class TestRequestTokenBudget:
+    """A provider that refuses an oversized request rejects it before the
+    model runs, so the stage has to ask for less rather than find out the
+    hard way. Groq's free tier caps one request at 8000 tokens; a c3540-
+    sized circuit went over that on the pool and the reply reservation
+    together, and shrinking only the pool could not help because its floor
+    is however many gates the answer still has to be able to name."""
+
+    @staticmethod
+    def _big_profiles(count=400):
+        """Enough gates to sit above the pool and target-count floors."""
+        return [
+            {
+                "gate_id": f"net{i}_inst_G{i}",
+                "features": {
+                    "gate_type": "NAND", "node_type": "gate",
+                    "fan_in": 2, "fan_out": 3, "level": i % 90,
+                    "cc0": 1000 + i, "cc1": 2000 + i, "co": 3000 + i,
+                    "toggle_rate": (i % 100) / 1000.0,
+                },
+            }
+            for i in range(count)
+        ]
+
+    def _run_with_budget(self, monkeypatch, budget):
+        from pyatpg.atpg import targeting as T
+
+        monkeypatch.setenv("LLM_REQUEST_TOKEN_BUDGET", str(budget))
+        provider = _FakeProvider("g0,0.9\ng1,0.8")
+        T.FaultTargetSelector(provider=provider).select(self._big_profiles())
+        return provider.prompts[0]
+
+    def test_a_tight_budget_produces_a_smaller_prompt(self, monkeypatch):
+        generous = self._run_with_budget(monkeypatch, 0)  # 0 disables the check
+        tight = self._run_with_budget(monkeypatch, 4000)
+        assert len(tight) < len(generous)
+
+    def test_the_trim_is_reported_rather_than_silent(self, monkeypatch):
+        from pyatpg.atpg import targeting as T
+
+        monkeypatch.setenv("LLM_REQUEST_TOKEN_BUDGET", "4000")
+        provider = _FakeProvider("g0,0.9")
+        selection = T.FaultTargetSelector(provider=provider).select(self._big_profiles())
+        notes = " ".join(selection.notes)
+        assert "request budget" in notes
+
+    def test_the_reply_bound_is_sent_and_scales_with_the_request(self, monkeypatch):
+        from pyatpg.atpg import targeting as T
+
+        seen = {}
+
+        class _Recording(_FakeProvider):
+            def complete(self, prompt, *, json_mode=False, max_output_tokens=None):
+                seen["max_output_tokens"] = max_output_tokens
+                return super().complete(prompt, json_mode=json_mode)
+
+        monkeypatch.setenv("LLM_REQUEST_TOKEN_BUDGET", "1500")
+        p = _profile(TROJAN, toggle_patterns=200)
+        T.FaultTargetSelector(provider=_Recording("g0,0.9")).select(p.gate_profiles)
+
+        # Left unset, some providers reserve a large default against the
+        # same budget and refuse the request outright.
+        assert seen["max_output_tokens"] is not None
+        assert seen["max_output_tokens"] > 0
 
 
 class TestSuspectMerging:

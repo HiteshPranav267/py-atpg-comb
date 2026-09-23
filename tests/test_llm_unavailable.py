@@ -48,7 +48,7 @@ class _FailingProvider(LLMProvider):
     def label(self) -> str:
         return "Stub"
 
-    def complete(self, prompt: str, *, json_mode: bool = False) -> str:
+    def complete(self, prompt: str, *, json_mode: bool = False, max_output_tokens: int | None = None) -> str:
         def call() -> str:
             self.calls += 1
             raise RuntimeError(self.sdk_message)
@@ -61,7 +61,7 @@ class _GarbageProvider:
 
     model_name = "garbage-model"
 
-    def complete(self, prompt, *, json_mode=False):
+    def complete(self, prompt, *, json_mode=False, max_output_tokens=None):
         return "<<not json, not gate ids>>"
 
 

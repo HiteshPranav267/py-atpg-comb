@@ -151,7 +151,7 @@ class TestServicesAcceptAnyProvider:
         def __init__(self, text):
             self.text = text
 
-        def complete(self, prompt, *, json_mode=False):
+        def complete(self, prompt, *, json_mode=False, max_output_tokens=None):
             return self.text
 
     def test_circuit_analyst_uses_injected_provider(self):

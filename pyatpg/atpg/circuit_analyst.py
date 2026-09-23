@@ -9,6 +9,7 @@ signal name cannot put that name in front of the user.
 from __future__ import annotations
 
 import json
+import time
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
@@ -17,11 +18,26 @@ from pyatpg.ranking.providers import LLMProvider, LLMUnavailableError, provider_
 
 from .llm_context import (
     COMPACT_LEGEND,
+    REPLY_OVERHEAD_TOKENS,
     LLMResultCache,
     cache_enabled,
     compact_profile_block,
+    estimate_prompt_tokens,
     rarity_key,
+    reply_budget,
+    request_token_budget,
 )
+
+#: Room for this stage's visible answer: a prose JSON object of a summary,
+#: a handful of observations and suspicious regions, and its reasoning
+#: list. Generous, since truncating it mid-object loses the whole analysis.
+_ANSWER_TOKEN_BUDGET = 2500
+
+#: Floor on that reply when a per-request budget forces it down. Below
+#: this the JSON object cannot be completed at all, so there is nothing to
+#: gain from squeezing further -- better to send the request and let the
+#: provider's own answer decide.
+_MIN_ANSWER_TOKEN_BUDGET = 1500
 
 #: Stage name this analyst's calls are logged under in the TokenTracker.
 TOKEN_STAGE = "analysis"
@@ -299,12 +315,29 @@ Gate profiles, rarest-toggling first ({len(ranked[:_PROFILE_BUDGET])} of {len(ra
                 cached = True
                 self.tracker.record_cached(TOKEN_STAGE)
         if response_text is None:
-            response_text = self.provider.complete(full_prompt, json_mode=True) or ""
+            started = time.perf_counter()
+            # Spend whatever the per-request budget has left after the
+            # prompt, rather than a fixed reservation: a bound is counted
+            # against that budget whether or not the model uses it, so a
+            # fixed one large enough to be safe is also large enough to get
+            # the whole request refused (Groq's free tier caps it at 8000).
+            budget = request_token_budget()
+            answer_tokens = _ANSWER_TOKEN_BUDGET
+            if budget > 0:
+                spare = budget - estimate_prompt_tokens(full_prompt) - REPLY_OVERHEAD_TOKENS
+                answer_tokens = max(
+                    _MIN_ANSWER_TOKEN_BUDGET, min(_ANSWER_TOKEN_BUDGET, spare)
+                )
+            response_text = self.provider.complete(
+                full_prompt, json_mode=True, max_output_tokens=reply_budget(answer_tokens)
+            ) or ""
+            elapsed = time.perf_counter() - started
             self.tracker.record(
                 TOKEN_STAGE,
                 full_prompt,
                 response_text,
                 usage=getattr(self.provider, "last_usage", None),
+                duration_s=elapsed,
             )
 
         payload = _load_json(response_text)

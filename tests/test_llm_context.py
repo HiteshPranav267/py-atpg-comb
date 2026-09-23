@@ -26,7 +26,7 @@ class _Fake(LLMProvider):
         self.prompts = []
         self._usage = usage
 
-    def complete(self, prompt, *, json_mode=False):
+    def complete(self, prompt, *, json_mode=False, max_output_tokens=None):
         self.prompts.append(prompt)
         self.last_usage = self._usage
         aliases = re.findall(r"^(g\d+),", prompt, flags=re.MULTILINE)
