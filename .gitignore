@@ -51,6 +51,10 @@ atpg testing/
 # Local investigation / bug-report write-ups
 reports/
 
+# Experiment *results* are generated; the trojan instances under
+# experiments/*/variants/ are the fixed experimental population and stay tracked.
+experiments/*/results/
+
 # Circuits dropped in for scripts/run_suite.py to pick up (see docs/automation.md) --
 # transient inputs, not part of the tracked benchmark corpus.
 benchmarks/incoming/*
@@ -61,3 +65,5 @@ Atalanta/atalanta
 Atalanta/*.o
 
 Capstone/
+scripts/
+tests/

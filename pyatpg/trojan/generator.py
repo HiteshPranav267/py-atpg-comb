@@ -82,8 +82,16 @@ class TrojanDatasetGenerator:
             "BENCH netlist is named .bench and a Verilog netlist .v."
         )
 
-    def generate(self, circuit_path: str, variants: int = 100) -> int:
+    def generate(self, circuit_path: str, variants: int = 100,
+                 num_trigger_inputs: int = 2) -> int:
         """Generate variants of compromised circuits from the base circuit.
+
+        ``num_trigger_inputs`` is how many nets the trigger gate ANDs (ORs,
+        etc.) together to form its activation condition. A wider trigger is a
+        rarer, harder-to-activate condition -- the joint probability of every
+        input landing on its rare value falls with each extra input -- which
+        is a direct knob on how stealthy/hard-to-detect the inserted trojan
+        is, independent of which insertion strategy picked the nets.
 
         Returns the number of variants actually written, which can be fewer
         than requested: a strategy may legitimately find no acyclic payload
@@ -117,7 +125,7 @@ class TrojanDatasetGenerator:
                 compromised, metadata = self.inserter.insert(
                     circuit=base_circuit,
                     trojan_id=i,
-                    num_trigger_inputs=2
+                    num_trigger_inputs=num_trigger_inputs,
                 )
 
                 metadata.circuit = circuit_name

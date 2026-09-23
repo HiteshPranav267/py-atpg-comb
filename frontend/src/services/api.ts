@@ -125,11 +125,27 @@ export const api = {
   },
 
   // Trojan
-  generateTrojanDataset: async (params: { file: File; variants?: number; strategy?: string }): Promise<TrojanGenerateResult> => {
+  generateTrojanDataset: async (params: {
+    file: File;
+    variants?: number;
+    strategy?: string;
+    seed?: number;
+    verifyActivation?: boolean;
+    triggerInputs?: number;
+    triggerType?: string;
+    payloadType?: string;
+  }): Promise<TrojanGenerateResult> => {
     const formData = new FormData();
     formData.append('file', params.file);
     formData.append('variants', String(params.variants ?? 10));
     formData.append('strategy', params.strategy ?? 'random');
+    if (params.seed !== undefined && params.seed !== null) {
+      formData.append('seed', String(params.seed));
+    }
+    formData.append('verify_activation', String(params.verifyActivation ?? false));
+    formData.append('num_trigger_inputs', String(params.triggerInputs ?? 2));
+    formData.append('trigger_type', params.triggerType ?? 'AND');
+    formData.append('payload_type', params.payloadType ?? 'XOR');
     const res = await apiClient.post('/trojan/generate', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
       responseType: 'blob',
@@ -145,6 +161,9 @@ export const api = {
       circuit: res.headers['x-circuit-name'] || params.file.name,
       variantsGenerated: parseInt(res.headers['x-variants-generated'] || '0', 10),
       strategy: res.headers['x-strategy'] || params.strategy || 'random',
+      triggerInputs: parseInt(res.headers['x-trigger-inputs'] || String(params.triggerInputs ?? 2), 10),
+      triggerType: res.headers['x-trigger-type'] || params.triggerType || 'AND',
+      payloadType: res.headers['x-payload-type'] || params.payloadType || 'XOR',
     };
   },
 

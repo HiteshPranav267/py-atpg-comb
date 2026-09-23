@@ -1,17 +1,14 @@
 # PyATPG — Hardware Trojan Localization Framework
 
-> A modular Python framework for Hardware Trojan localization using ATPG testability metrics, structural circuit analysis, heuristic & LLM-based gate ranking — shipped as both a research benchmarking platform (FastAPI + React) and a standalone security-audit desktop app (Flask + pywebview). Combinational circuits run through the ATALANTA ATPG engine; circuits with flip-flops run through a native sequential ATPG engine (time-frame expansion + PODEM + deterministic multi-cycle fault simulation), both with optional context-reduced LLM assistance.
+> A modular Python framework for Hardware Trojan localization using ATPG testability metrics, structural circuit analysis, heuristic & LLM-based gate ranking — shipped as a research benchmarking platform (FastAPI + React). Combinational circuits run through the ATALANTA ATPG engine; circuits with flip-flops run through a native sequential ATPG engine (time-frame expansion + PODEM + deterministic multi-cycle fault simulation), both with optional context-reduced LLM assistance.
 
 ---
 
 ## Overview
 
-PyATPG identifies Hardware Trojans inside gate-level Verilog/`.bench` netlists, **combinational or sequential**. It combines classic EDA testability analysis (SCOAP, toggle simulation) with a pluggable ranking engine (deterministic heuristics, statistical methods, LLM-based reasoning), and generates targeted test patterns for suspect gates — via ATALANTA (locally or on a remote lab server over SSH) for combinational circuits, and via a native sequential ATPG engine (`pyatpg/seq`) for circuits with flip-flops, since ATALANTA cannot levelize state-holding logic.
+PyATPG identifies Hardware Trojans inside gate-level Verilog/`.bench` netlists, **combinational or sequential**. It combines classic EDA testability analysis (SCOAP, toggle simulation) with a pluggable ranking engine (deterministic heuristics, statistical methods, LLM-based reasoning), and generates targeted test patterns for suspect gates — via ATALANTA for combinational circuits, and via a native sequential ATPG engine (`pyatpg/seq`) for circuits with flip-flops, since ATALANTA cannot levelize state-holding logic.
 
-The repo currently contains **two applications** built on the same `pyatpg` core:
-
-1. **Research/benchmarking platform** — a stateless FastAPI backend + React/Vite EDA-style frontend for running rankers across a dataset and comparing accuracy/MRR/search-space-reduction metrics. Deployed to Render (API) and Vercel (frontend).
-2. **Security-audit desktop app** — a Flask + Socket.IO app (`app.py`) wrapped in a native `pywebview` window (`main.py`), running the full `Structural → AI → ATALANTA → Validation` pipeline against a single netlist and producing a pass/fail Trojan report. Packageable into a standalone executable via PyInstaller (`build_app.py`, `pyatpg.spec`).
+The repo is one application built on the `pyatpg` core: a stateless FastAPI backend + React/Vite EDA-style frontend for running the ATPG pipeline on a single netlist, generating Trojan datasets, and running rankers across a dataset to compare accuracy/MRR/search-space-reduction metrics. Deployed to Render (API) and Vercel (frontend). The same core is also reachable from the terminal (`python -m pyatpg`) and from the unattended batch scripts under `scripts/`.
 
 ---
 
@@ -120,19 +117,15 @@ See [`pyatpg/llm/`](#llm-assisted-sequential-atpg) below for the optional LLM-as
 | **ATPG Integration**    | ATALANTA wrapper — targeted vs. baseline fault coverage, redundancy info |
 | **Sequential ATPG**     | Native engine (`pyatpg/seq`) for circuits with flip-flops — time-frame expansion, PODEM, deterministic multi-cycle fault simulation, minimal test-sequence generation |
 | **Context-Reduced LLM** | Two-stage LLM-1 (cached circuit summary) / LLM-2 (compact per-call fault-prioritization context) layer for sequential ATPG, with token/call usage tracking (`pyatpg/llm`) |
-| **Remote Execution**    | SSH job dispatch to a lab server (upload → run ATALANTA → pull results) |
 | **Feature Extraction**  | Unified `FeatureSet` from structural + ATPG features                    |
 | **Trojan Dataset**      | Automated Trojan insertion (`pyatpg/trojan`) with pluggable strategies  |
 | **Ranking Engine**      | Pluggable `GateRanker` interface for benchmarking                       |
-| **AI Prioritizer**      | LLM-based suspect-gate ranking for the audit pipeline (`pyatpg/agents`) |
 | **LLM Ranker**          | Provider-agnostic (Gemini/OpenAI/Anthropic/NVIDIA/custom) ranker for benchmark evaluation |
 | **Evaluation**          | Top-K Accuracy, MRR, Precision/Recall, Search Space Reduction             |
 | **Benchmarking**        | Async batch benchmark runner over full dataset directories                |
 | **REST API**            | FastAPI backend exposing all modules as stateless endpoints               |
 | **Research Frontend**  | React + Vite desktop-style EDA application                                |
-| **Desktop Audit App**  | Flask + Socket.IO + pywebview single-netlist Trojan audit tool            |
 | **CLI**                 | `python -m pyatpg <netlist>` full-pipeline audit report in the terminal |
-| **Standalone Build**    | PyInstaller packaging of the desktop app into a native executable         |
 
 ---
 
@@ -145,7 +138,6 @@ py-atpg-comb/
 │   ├── analysis/           # FeatureExtractor, adapters, feature models
 │   ├── trojan/             # Trojan insertion engine, triggers/payloads, dataset generator
 │   ├── ranking/            # GateRanker interface, heuristic rankers, LLM provider abstraction
-│   ├── agents/             # LLMAnalyzer (AI prioritizer) + RemoteRunner (SSH job dispatch)
 │   ├── atpg/               # Atalanta integration (combinational): runner, parsers, targeting, analysis
 │   ├── seq/                # Sequential ATPG engine: time-frame expansion, PODEM, deterministic fault sim
 │   ├── llm/                # Context-reduced LLM-1/LLM-2 layer for sequential ATPG
@@ -153,12 +145,7 @@ py-atpg-comb/
 │   ├── api/                # FastAPI app, routes, services, schemas (research platform)
 │   └── cli.py               # `python -m pyatpg` terminal audit report
 ├── frontend/                # React + Vite + TailwindCSS EDA UI (research platform)
-├── templates/, static/      # Flask templates/assets for the desktop audit app
-├── app.py                   # Flask + Socket.IO server for the desktop audit app
-├── main.py                  # pywebview wrapper that launches app.py as a native window
-├── build_app.py, pyatpg.spec # PyInstaller packaging for the standalone desktop build
-├── list_ssh.py, download_ssh.py # One-off scripts for pulling benchmark netlists from the lab server
-├── generate_test.py, get_s35932.py, test_scan.py, test_s35932.py # Ad-hoc scan/trojan experiment scripts
+├── scripts/                 # Unattended batch runners (run_suite.py, run_via_api.py, experiments)
 ├── tests/                   # Unit tests + real Atalanta output fixtures (tests/fixtures)
 ├── benchmarks/              # ISCAS85/89 benchmark circuits (.v / .bench)
 ├── Atalanta/                # ATALANTA 2.0 C++ source (compiled by build.sh at deploy time)
@@ -197,7 +184,7 @@ py-atpg-comb/
 pip install -r requirements.txt
 ```
 
-### Option A — Research/benchmarking platform (FastAPI + React)
+### Option A — Web platform (FastAPI + React)
 
 ```bash
 # Backend
@@ -211,28 +198,14 @@ npm run dev
 # → http://localhost:5173
 ```
 
-### Option B — Desktop security-audit app (Flask + pywebview)
-
-```bash
-python main.py       # native desktop window, served from a local Flask instance on :5005
-# or
-python app.py         # same app in your default browser
-```
-
-### Option C — CLI audit report
+### Option B — CLI audit report
 
 ```bash
 python -m pyatpg benchmarks/c432.v    # combinational -> Atalanta
 python -m pyatpg benchmarks/s27.bench # sequential (has flip-flops) -> pyatpg/seq automatically
 ```
 
-### Option D — Standalone executable
-
-```bash
-python build_app.py   # runs PyInstaller against pyatpg.spec → dist/pyatpg/
-```
-
-### Option E — Unattended batch runs (for collecting results across many circuits)
+### Option C — Unattended batch runs (for collecting results across many circuits)
 
 Two ways to run the same pipeline (generate trojan variants → ATPG → rank
 against ground truth) over a batch of circuits, differing in where the
@@ -284,8 +257,6 @@ automates the fully-offline path's setup interactively.
 | `GET`  | `/api/atpg/jobs/{id}/artifacts/{file}` | Download a raw Atalanta artifact (BENCH, fault list, vectors, log) — combinational runs only |
 
 Interactive docs available at `http://127.0.0.1:8000/docs`.
-
-The desktop app (`app.py`) exposes its own parallel Flask routes (`/api/circuit/load`, `/api/circuit/analyze`, `/api/jobs/dispatch`, `/api/jobs/status`, `/api/circuit/graph`) plus Socket.IO events for live job progress, and can dispatch ATALANTA (combinational) or the sequential engine (circuits with flip-flops) either locally or to a remote lab server over SSH.
 
 ---
 
@@ -352,8 +323,6 @@ See [project_architecture.md](project_architecture.md) for the full request-flow
 **Core:** Python · NetworkX · ATALANTA (combinational ATPG) · native sequential ATPG engine (`pyatpg/seq`)
 **Research API:** FastAPI · Pydantic · Uvicorn
 **Research Frontend:** React 19 · TypeScript · Vite · TailwindCSS · TanStack Query/Table · Zustand · Recharts
-**Desktop Audit App:** Flask · Flask-SocketIO · pywebview · PyInstaller
-**Remote Execution:** Paramiko (SSH job dispatch to a lab server)
 **LLM Providers:** Google Gemini (`google-genai`) · OpenAI · Anthropic Claude · NVIDIA NIM · any OpenAI-compatible endpoint (Ollama, Groq, OpenRouter, vLLM...) — selectable per request
 
 ---

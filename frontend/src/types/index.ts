@@ -139,6 +139,9 @@ export interface TrojanGenerateResult {
   circuit: string;
   variantsGenerated: number;
   strategy: string;
+  triggerInputs: number;
+  triggerType: string;
+  payloadType: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -490,6 +493,28 @@ export interface AnalyticsSummary {
   recent_activity: AnalyticsActivityEvent[];
 }
 
+export interface CpuTimeByRun {
+  atpg_s: number | null;
+  extraction_s: number;
+  llm_s: number;
+  total_s: number;
+  note: string;
+}
+
+export interface CpuTimeBreakdown {
+  extraction_s: number;
+  llm_s: number;
+  by_run: Partial<Record<'targeted' | 'non_targeted', CpuTimeByRun>>;
+}
+
+export interface SystemInfo {
+  cpu_model: string;
+  physical_cores: number | null;
+  logical_cores: number | null;
+  os: string;
+  python_version: string;
+}
+
 export interface AtpgReport {
   job_id: string;
   mode: AnalysisMode;
@@ -506,6 +531,12 @@ export interface AtpgReport {
   // Model calls and token counts for the combinational path (the
   // sequential path carries its own under `sequential.llm_usage`).
   llm_usage?: LlmUsage;
+  // Feature-extraction and per-run CPU time, split so a non-targeted run's
+  // total never includes work it didn't actually do (see the backend's
+  // _cpu_time_breakdown). Empty on the sequential path.
+  cpu_time?: CpuTimeBreakdown;
+  // The machine that actually produced every timing number in this report.
+  system_info?: SystemInfo;
 }
 
 export interface VerdictSuspect {

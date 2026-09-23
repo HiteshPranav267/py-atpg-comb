@@ -10,6 +10,10 @@ export default function Reports() {
   const handleDownload = () => {
     const report = {
       generated_at: new Date().toISOString(),
+      // Pulled to the top level, not just nested in atpg_report, so it's the
+      // first thing visible when comparing timing numbers across exports
+      // taken on different machines.
+      system_info: activeAtpgReport?.system_info ?? null,
       circuit: activeCircuit,
       feature_extraction: activeFeatureSet ? {
         gate_count: activeFeatureSet.gate_features.length,
@@ -70,6 +74,14 @@ export default function Reports() {
                 })()}
               />
               <SummaryRow label="Benchmark Runs (session)" value={String(benchmarkHistory.length)} />
+              <SummaryRow
+                label="CPU (this run)"
+                value={
+                  activeAtpgReport?.system_info
+                    ? `${activeAtpgReport.system_info.cpu_model} (${activeAtpgReport.system_info.logical_cores ?? '?'} cores)`
+                    : 'Not run'
+                }
+              />
             </div>
           </div>
 

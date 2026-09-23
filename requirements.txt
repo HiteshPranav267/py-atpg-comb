@@ -1,7 +1,4 @@
-flask
-flask-socketio
 networkx
-paramiko
 openai
 anthropic
 python-dotenv

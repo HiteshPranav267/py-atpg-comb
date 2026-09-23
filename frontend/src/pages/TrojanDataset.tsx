@@ -6,10 +6,18 @@ import { api } from '@/services/api';
 import { useAppStore } from '@/store';
 import type { TrojanGenerateResult } from '@/types';
 
+const GATE_TYPES = ['AND', 'OR', 'NAND', 'NOR', 'XOR'];
+
 export default function TrojanDataset() {
   const { activeCircuit, activeCircuitFile } = useAppStore();
   const [variants, setVariants] = useState(10);
   const [strategy, setStrategy] = useState('random');
+  const [seedText, setSeedText] = useState('');
+  const [verifyActivation, setVerifyActivation] = useState(false);
+  const [triggerInputs, setTriggerInputs] = useState(2);
+  const [triggerType, setTriggerType] = useState('AND');
+  const [payloadType, setPayloadType] = useState('XOR');
+  const [showAdvanced, setShowAdvanced] = useState(false);
 
   const generateMutation = useMutation({
     mutationFn: api.generateTrojanDataset,
@@ -23,9 +31,21 @@ export default function TrojanDataset() {
     },
   });
 
+  const parsedSeed = seedText.trim() === '' ? undefined : Number(seedText);
+  const seedIsValid = parsedSeed === undefined || Number.isFinite(parsedSeed);
+
   const handleGenerate = () => {
-    if (activeCircuitFile) {
-      generateMutation.mutate({ file: activeCircuitFile, variants, strategy });
+    if (activeCircuitFile && seedIsValid) {
+      generateMutation.mutate({
+        file: activeCircuitFile,
+        variants,
+        strategy,
+        seed: parsedSeed,
+        verifyActivation,
+        triggerInputs,
+        triggerType,
+        payloadType,
+      });
     }
   };
 
@@ -82,9 +102,93 @@ export default function TrojanDataset() {
           </div>
         </div>
 
+        <div className="border-t border-border pt-4">
+          <button
+            type="button"
+            onClick={() => setShowAdvanced(v => !v)}
+            className="text-sm font-medium text-primary hover:underline"
+          >
+            {showAdvanced ? '− Hide' : '+ Show'} advanced options (trigger shape, seed, activation check)
+          </button>
+
+          {showAdvanced && (
+            <div className="grid grid-cols-2 gap-6 mt-4">
+              <div>
+                <label className="block text-sm font-medium mb-2">
+                  Trigger Inputs
+                  <span className="text-muted-foreground font-normal ml-1">(nets the trigger combines)</span>
+                </label>
+                <input
+                  type="number"
+                  min={1}
+                  step={1}
+                  value={triggerInputs}
+                  onChange={e => {
+                    const parsed = parseInt(e.target.value, 10);
+                    setTriggerInputs(Number.isFinite(parsed) ? Math.max(1, parsed) : 2);
+                  }}
+                  className="w-full bg-background border border-border rounded px-3 py-2 focus:border-primary focus:outline-none"
+                />
+                <p className="text-xs text-muted-foreground mt-1">
+                  Higher = rarer joint condition = stealthier trigger. 2 is the literature default.
+                </p>
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-2">Seed (optional)</label>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  placeholder="random each run"
+                  value={seedText}
+                  onChange={e => setSeedText(e.target.value)}
+                  className={`w-full bg-background border rounded px-3 py-2 focus:outline-none ${
+                    seedIsValid ? 'border-border focus:border-primary' : 'border-red-500'
+                  }`}
+                />
+                <p className="text-xs text-muted-foreground mt-1">
+                  Same seed + same circuit + same strategy reproduces the identical dataset.
+                </p>
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-2">Trigger Gate Type</label>
+                <select
+                  value={triggerType}
+                  onChange={e => setTriggerType(e.target.value)}
+                  className="w-full bg-background border border-border rounded px-3 py-2 focus:border-primary focus:outline-none"
+                >
+                  {GATE_TYPES.map(g => <option key={g} value={g}>{g}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-2">Payload Gate Type</label>
+                <select
+                  value={payloadType}
+                  onChange={e => setPayloadType(e.target.value)}
+                  className="w-full bg-background border border-border rounded px-3 py-2 focus:border-primary focus:outline-none"
+                >
+                  {GATE_TYPES.map(g => <option key={g} value={g}>{g}</option>)}
+                </select>
+              </div>
+              <div className="col-span-2 flex items-center gap-2">
+                <input
+                  id="verify-activation"
+                  type="checkbox"
+                  checked={verifyActivation}
+                  onChange={e => setVerifyActivation(e.target.checked)}
+                  className="w-4 h-4 accent-primary"
+                />
+                <label htmlFor="verify-activation" className="text-sm">
+                  Verify each trigger is actually activatable before keeping it
+                  <span className="text-muted-foreground"> (runs one extra Atalanta job per variant; drops any variant whose trigger fault isn't reachable/observable — roughly doubles generation time)</span>
+                </label>
+              </div>
+            </div>
+          )}
+        </div>
+
         <button
           onClick={handleGenerate}
-          disabled={!activeCircuitFile || variants < 1 || generateMutation.isPending}
+          disabled={!activeCircuitFile || variants < 1 || !seedIsValid || generateMutation.isPending}
           className="flex items-center justify-center gap-2 bg-primary hover:bg-primary/90 text-primary-foreground px-4 py-2 rounded-md font-medium transition-colors disabled:opacity-50"
         >
           {generateMutation.isPending ? <Activity className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
@@ -94,7 +198,8 @@ export default function TrojanDataset() {
         {result && (
           <div className="p-4 rounded-md border border-green-500/50 bg-green-500/10 text-green-400 text-sm">
             Downloaded <span className="font-mono font-bold">{result.filename}</span> — {result.variantsGenerated} variant
-            {result.variantsGenerated !== 1 ? 's' : ''} of "{result.circuit}" using the {result.strategy} strategy.
+            {result.variantsGenerated !== 1 ? 's' : ''} of "{result.circuit}" using the {result.strategy} strategy
+            ({result.triggerInputs}-input {result.triggerType} trigger, {result.payloadType} payload).
             {' '}The zip also includes a clean (uninfected) copy, each as both Verilog (.v) and .bench, for comparison.
             <br />
             <span className="text-muted-foreground">
@@ -126,10 +231,12 @@ function InsertionExplainer() {
       <div className="grid md:grid-cols-[minmax(0,1fr)_280px] gap-5 items-center">
         <div className="text-sm text-muted-foreground leading-relaxed flex flex-col gap-2">
           <p>
-            Every inserted Trojan has two parts: a <strong className="text-foreground">trigger</strong> (an AND gate
-            watching a few existing signals) and a <strong className="text-foreground">payload</strong> (an XOR gate
-            spliced into a target signal). The payload only flips its target's value when every trigger input happens
-            to be 1 at the same time — otherwise the circuit behaves exactly as before.
+            Every inserted Trojan has two parts: a <strong className="text-foreground">trigger</strong> gate
+            (default: 2-input AND) watching a few existing signals, and a <strong className="text-foreground">payload</strong> gate
+            (default: XOR) spliced into a target signal. The payload only flips its target's value when the
+            trigger's condition is satisfied — otherwise the circuit behaves exactly as before. Under "advanced
+            options" you can widen the trigger to more inputs (a rarer, stealthier joint condition) or swap either
+            gate's type.
           </p>
           <p>
             <span className="font-medium text-foreground">Random</span> picks trigger and target signals with no

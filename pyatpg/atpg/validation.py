@@ -8,13 +8,13 @@ its levelisation pass and dies with SIGSEGV -- exit code 139 on Linux, or
 fault".
 
 The check therefore lives here, on the exact text Atalanta is about to read,
-rather than on some upstream in-memory Circuit. There are two independent
-entry points into :class:`~pyatpg.atpg.runner.AtalantaRunner` -- the FastAPI
-``AtpgAnalysisService`` and the Flask desktop app's ``/api/jobs/dispatch`` --
-and only the first one carried a DAG guard, so a cyclic netlist loaded in the
-desktop app reached the engine unchecked. Validating the bench text closes
-that gap for every caller, present and future, and cannot drift from what the
-engine sees the way a check on a separately-parsed Circuit can.
+rather than on some upstream in-memory Circuit. :class:`~pyatpg.atpg.runner.AtalantaRunner`
+has more than one caller (``AtpgAnalysisService``, the trojan activation
+check, the batch scripts), and historically only one of them carried a DAG
+guard, so a cyclic netlist could reach the engine unchecked through another.
+Validating the bench text closes that gap for every caller, present and
+future, and cannot drift from what the engine sees the way a check on a
+separately-parsed Circuit can.
 """
 from __future__ import annotations
 

@@ -220,7 +220,14 @@ function ReportView({ report }: { report: AtpgReport }) {
         </div>
       )}
 
-      {current && <RunReport run={current} jobId={report.job_id} />}
+      {current && (
+        <RunReport
+          run={current}
+          jobId={report.job_id}
+          cpuTime={report.cpu_time?.by_run[activeRun]}
+          systemInfo={report.system_info}
+        />
+      )}
 
       {report.verdict && <VerdictPanel verdict={report.verdict} />}
       {report.circuit_analysis && <CircuitAnalysisPanel analysis={report.circuit_analysis} />}

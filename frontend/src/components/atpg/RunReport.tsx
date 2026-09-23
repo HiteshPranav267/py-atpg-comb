@@ -1,6 +1,6 @@
 import { useState } from 'react';
-import { Download } from 'lucide-react';
-import type { AtpgRun } from '@/types';
+import { Cpu, Download } from 'lucide-react';
+import type { AtpgRun, CpuTimeByRun, SystemInfo } from '@/types';
 import { api } from '@/services/api';
 import { KeyValue, Paginator, Pill, Section, Stat, metric } from './primitives';
 
@@ -16,10 +16,20 @@ const ARTIFACT_LABELS: Record<string, string> = {
   stderr: 'ATPG tool stderr',
 };
 
-export function RunReport({ run, jobId }: { run: AtpgRun; jobId: string }) {
+export function RunReport({
+  run,
+  jobId,
+  cpuTime,
+  systemInfo,
+}: {
+  run: AtpgRun;
+  jobId: string;
+  cpuTime?: CpuTimeByRun;
+  systemInfo?: SystemInfo;
+}) {
   return (
     <div className="flex flex-col gap-6">
-      <AtpgSummary run={run} />
+      <AtpgSummary run={run} cpuTime={cpuTime} systemInfo={systemInfo} />
       <CircuitAsRead run={run} />
       <RunParameters run={run} />
       <SearchEffort run={run} />
@@ -31,7 +41,15 @@ export function RunReport({ run, jobId }: { run: AtpgRun; jobId: string }) {
   );
 }
 
-function AtpgSummary({ run }: { run: AtpgRun }) {
+function AtpgSummary({
+  run,
+  cpuTime,
+  systemInfo,
+}: {
+  run: AtpgRun;
+  cpuTime?: CpuTimeByRun;
+  systemInfo?: SystemInfo;
+}) {
   const r = run.results;
   return (
     <Section
@@ -82,10 +100,59 @@ function AtpgSummary({ run }: { run: AtpgRun }) {
         <Stat label="Initialization" value={metric(run.timing.initialization, { suffix: ' s' })} />
         <Stat label="Fault simulation" value={metric(run.timing.fault_simulation, { suffix: ' s' })} />
         <Stat label="FAN" value={metric(run.timing.fan, { suffix: ' s' })} />
-        <Stat label="Total CPU" value={metric(run.timing.total, { suffix: ' s' })} />
+        <Stat label="ATPG (Atalanta) CPU" value={metric(run.timing.total, { suffix: ' s' })} />
         <Stat label="Memory used" value={metric(run.memory_mb, { suffix: ' MB' })} />
       </div>
+
+      {cpuTime && <ReportedCpuTime run={run} cpuTime={cpuTime} />}
+      {systemInfo && <SystemInfoLine systemInfo={systemInfo} />}
     </Section>
+  );
+}
+
+/**
+ * The honest "how long did this actually take" figure, separate from
+ * Atalanta's own self-reported CPU time above. A non-targeted run's total
+ * is that same Atalanta figure and nothing else, because it never ranks
+ * gates and so never pays for the features that ranking needs. A targeted
+ * run's total adds feature extraction and LLM wall-clock time, because it
+ * genuinely depends on both -- see pyatpg/atpg/service.py's
+ * _cpu_time_breakdown, which computes every number here.
+ */
+function ReportedCpuTime({ run, cpuTime }: { run: AtpgRun; cpuTime: CpuTimeByRun }) {
+  return (
+    <div className="mt-4 border-t border-border pt-4">
+      <div className="flex items-center gap-2 text-sm font-medium mb-3">
+        <Cpu className="w-4 h-4 text-primary" /> Reported CPU time
+        <span className="text-xs font-normal text-muted-foreground">
+          ({run.targeted ? 'includes feature extraction + LLM' : 'ATPG only — this mode never ranks gates'})
+        </span>
+      </div>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <Stat
+          label="Feature extraction"
+          value={metric(cpuTime.extraction_s, { suffix: ' s' })}
+          hint={run.targeted ? 'SCOAP / toggle / centrality, needed for ranking' : 'excluded — not needed for a full run'}
+        />
+        <Stat
+          label="LLM"
+          value={metric(cpuTime.llm_s, { suffix: ' s' })}
+          hint={run.targeted ? 'targeting + circuit-analysis calls' : 'excluded — no LLM was consulted'}
+        />
+        <Stat label="ATPG" value={metric(cpuTime.atpg_s, { suffix: ' s' })} hint="Atalanta's own CPU time" />
+        <Stat label="Total" value={metric(cpuTime.total_s, { suffix: ' s' })} emphasis />
+      </div>
+      <p className="text-xs text-muted-foreground mt-2">{cpuTime.note}</p>
+    </div>
+  );
+}
+
+function SystemInfoLine({ systemInfo }: { systemInfo: SystemInfo }) {
+  return (
+    <p className="text-xs text-muted-foreground mt-3 border-t border-border pt-3 font-mono">
+      Measured on: {systemInfo.cpu_model} · {systemInfo.logical_cores ?? '?'} logical core
+      {systemInfo.logical_cores === 1 ? '' : 's'} · {systemInfo.os} · Python {systemInfo.python_version}
+    </p>
   );
 }
 

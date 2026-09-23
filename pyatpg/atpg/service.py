@@ -16,6 +16,7 @@ from .verdict import TrojanVerdict, build_verdict
 from .models import AnalysisMode, AtalantaRun, RunComparison, SequentialSummary, build_comparison
 from .runner import AtalantaRunner, build_fault_lines
 from .structural import ParsedCircuit, parse_circuit, profile_circuit
+from .system_info import get_system_info
 from .workspace import JobWorkspace, prune_old_jobs
 
 from pyatpg.llm.token_tracker import TokenTracker
@@ -73,6 +74,50 @@ def _targeted_scope_note(run: AtalantaRun, gates: list[str]) -> str:
         "tested -- it means the selected faults were detectable. Use the "
         "compare mode to see this alongside whole-circuit coverage."
     )
+
+
+def _cpu_time_breakdown(
+    extraction_s: float, llm_s: float, runs: dict[str, "AtalantaRun"]
+) -> dict[str, Any]:
+    """Per-run CPU time, honest about what each mode actually paid for.
+
+    ``extraction_s`` (SCOAP/toggle/centrality) is computed once up front for
+    every mode -- the structural trojan detector and the circuit payload
+    stats need it even on a non-targeted run -- but only a targeted run's
+    *ranking* depends on it. ``llm_s`` is 0.0 whenever no model was
+    consulted, which non-targeted runs never do (see the ``effective_use_llm``
+    gate above), so it never contaminates that figure either. A non-targeted
+    run's total is therefore Atalanta's own reported CPU time and nothing
+    else; a targeted run's total is that same Atalanta figure plus the two
+    costs it genuinely incurred.
+    """
+    by_run: dict[str, Any] = {}
+    for key, run in runs.items():
+        atpg_s = run.timing.total or 0.0
+        if key == AtpgAnalysisService.TARGETED_KEY:
+            by_run[key] = {
+                "atpg_s": atpg_s,
+                "extraction_s": round(extraction_s, 3),
+                "llm_s": round(llm_s, 3),
+                "total_s": round(extraction_s + llm_s + atpg_s, 3),
+                "note": "Feature extraction and LLM time are included: this "
+                        "run's fault selection depends on both.",
+            }
+        else:
+            by_run[key] = {
+                "atpg_s": atpg_s,
+                "extraction_s": 0.0,
+                "llm_s": 0.0,
+                "total_s": round(atpg_s, 3),
+                "note": "Atalanta's own CPU time only. A non-targeted run "
+                        "never ranks gates, so feature extraction and LLM "
+                        "time are excluded rather than charged to it.",
+            }
+    return {
+        "extraction_s": round(extraction_s, 3),
+        "llm_s": round(llm_s, 3),
+        "by_run": by_run,
+    }
 
 
 def _redact_secret(analysis: "AtpgAnalysis", secret: str) -> None:
@@ -147,6 +192,16 @@ class AtpgAnalysis:
     #: provider's own where it reported them), per stage. ``enabled`` is
     #: False when no model was consulted at all.
     llm_usage: dict[str, Any] = field(default_factory=lambda: {"enabled": False})
+    #: Structural-feature-extraction time and per-run CPU totals. A
+    #: non-targeted run's total is Atalanta's own CPU time alone: it never
+    #: ranks gates, so it never pays for the features that ranking needs. A
+    #: targeted run's total adds feature extraction and LLM wall-clock time
+    #: to that same Atalanta figure, because it genuinely depends on both.
+    #: See ``_cpu_time_breakdown``.
+    cpu_time: dict[str, Any] = field(default_factory=dict)
+    #: The host machine this analysis actually ran on, so a CPU-time figure
+    #: can be read next to the hardware that produced it.
+    system_info: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         from dataclasses import asdict
@@ -165,6 +220,8 @@ class AtpgAnalysis:
             "notes": self.notes,
             "sequential": self.sequential.to_dict() if self.sequential else None,
             "llm_usage": self.llm_usage,
+            "cpu_time": self.cpu_time,
+            "system_info": self.system_info,
         }
 
 
@@ -182,12 +239,20 @@ class AtpgAnalysisService:
         llm_provider: str | None = None,
         llm_model: str | None = None,
         llm_base_url: str | None = None,
+        effort_ladder: tuple[tuple[int, int, bool], ...] | None = None,
     ):
         self.runner = runner or AtalantaRunner()
         self._explicit_api_key = api_key
         self._explicit_provider = llm_provider
         self._explicit_model = llm_model
         self._explicit_base_url = llm_base_url
+        #: Budgets a targeted run climbs while faults still abort. Defaults
+        #: to TARGETED_EFFORT_LADDER; pass () to pin the targeted run to the
+        #: caller's own backtrack limit, which is what an equal-per-fault
+        #: budget comparison against the non-targeted run requires.
+        self.effort_ladder = (
+            TARGETED_EFFORT_LADDER if effort_ladder is None else tuple(effort_ladder)
+        )
 
     def _llm_config(
         self,
@@ -453,6 +518,13 @@ class AtpgAnalysisService:
                     **tracker.summary(),
                 }
             _redact_secret(analysis, llm_config.api_key)
+
+        analysis.system_info = get_system_info().to_dict()
+        analysis.cpu_time = _cpu_time_breakdown(
+            extraction_s=profile.extraction_time_s,
+            llm_s=tracker.total_duration_s,
+            runs=analysis.runs,
+        )
         return analysis
 
     def _run_targeted(
@@ -484,7 +556,7 @@ class AtpgAnalysisService:
         best_index = 0
         first_aborted = best.results.aborted_faults or 0
 
-        for phase1, phase2, learning in TARGETED_EFFORT_LADDER:
+        for phase1, phase2, learning in self.effort_ladder:
             if not best.results.aborted_faults:
                 break
             if backtrack_limit is not None and phase1 <= backtrack_limit:
@@ -625,6 +697,7 @@ class AtpgAnalysisService:
             circuit=circuit_payload,
             sequential=sequential,
             notes=notes,
+            system_info=get_system_info().to_dict(),
         )
         if llm_config is not None:
             _redact_secret(analysis, llm_config.api_key)

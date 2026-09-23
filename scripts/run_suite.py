@@ -198,6 +198,7 @@ def _cmd_research(args: argparse.Namespace) -> int:
     service = AtpgAnalysisService(
         api_key=args.api_key, llm_provider=args.llm_provider,
         llm_model=args.llm_model, llm_base_url=args.llm_base_url,
+        effort_ladder=() if args.no_targeted_escalation else None,
     )
     mode = AnalysisMode(args.mode)
 
@@ -305,6 +306,11 @@ def main(argv: list[str] | None = None) -> int:
     research.add_argument("--mode", choices=["targeted", "non_targeted", "compare"], default="compare")
     research.add_argument("--patterns", type=int, default=3000)
     research.add_argument("--backtrack-limit", type=int, default=None)
+    research.add_argument(
+        "--no-targeted-escalation", action="store_true",
+        help="Pin the targeted run to --backtrack-limit instead of climbing the "
+        "targeted effort ladder. Needed for a controlled comparison where both "
+        "runs get the same per-fault search budget.")
     research.add_argument("--no-llm", action="store_true",
                            help="Skip LLM assistance in the ATPG step (the ranking step still needs an LLM "
                            "ranker unless --ranker names a non-LLM one, e.g. ScoapRanker).")

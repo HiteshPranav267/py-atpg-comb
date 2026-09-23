@@ -5,6 +5,7 @@ rather than introducing a second representation of a circuit.
 """
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -64,6 +65,15 @@ class StructuralProfile:
     #: Recorded so a run's gate ranking can be reproduced exactly.
     toggle_seed: int | None = DEFAULT_TOGGLE_SEED
     toggle_patterns: int = 3000
+    #: Wall-clock seconds spent computing SCOAP/toggle/centrality/topology
+    #: (the CircuitGraph build, get_stats, compute_toggle_rates and
+    #: to_llm_feature_profiles calls in profile_circuit below). A
+    #: non-targeted run pays this cost too -- it is computed unconditionally,
+    #: for the structural trojan-shape detector and the circuit payload
+    #: stats -- but a non-targeted run never uses the *ranking* those
+    #: features would drive, so this is reported separately rather than
+    #: folded into either run's Atalanta timing.
+    extraction_time_s: float = 0.0
 
 
 def parse_circuit(source_text: str, filename: str) -> ParsedCircuit:
@@ -107,13 +117,17 @@ def profile_circuit(
     ``toggle_seed`` fixes the toggle-rate stimulus so the resulting gate
     ranking is reproducible; pass None for nondeterministic sampling.
     """
+    started = time.perf_counter()
     graph = CircuitGraph(parsed.circuit)
     statistics = graph.get_stats()
     graph.compute_toggle_rates(num_patterns=toggle_patterns, seed=toggle_seed)
+    gate_profiles = graph.to_llm_feature_profiles()
+    elapsed = time.perf_counter() - started
     return StructuralProfile(
         statistics=statistics,
-        gate_profiles=graph.to_llm_feature_profiles(),
+        gate_profiles=gate_profiles,
         graph=graph,
         toggle_seed=toggle_seed,
         toggle_patterns=toggle_patterns,
+        extraction_time_s=elapsed,
     )

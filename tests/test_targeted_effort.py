@@ -88,3 +88,38 @@ def test_caller_budget_at_or_above_a_rung_skips_it():
     assert runner.calls[0]["backtrack_limit"] == 1000
     assert runner.calls[1]["backtrack_limit"] == 10000
     assert run.results.aborted_faults == 0
+
+
+def test_empty_ladder_pins_the_targeted_run_to_the_callers_budget():
+    """``effort_ladder=()`` makes the targeted run a same-budget comparison.
+
+    Measuring whether targeting itself helps means giving both runs the same
+    per-fault search budget. With the ladder on, a targeted run that aborts
+    climbs to 10000 backtracks while the non-targeted baseline stays at the
+    requested limit, so any detection difference is confounded by budget.
+    Pinned, the targeted run must issue exactly one attempt at exactly the
+    caller's limit even though faults are still aborting.
+    """
+    runner = _ScriptedRunner([7, 0, 0])
+    notes = []
+    svc = AtpgAnalysisService(runner=runner, effort_ladder=())
+    run = svc._run_targeted(None, "", ["g1"], 5, notes)
+
+    assert len(runner.calls) == 1
+    assert runner.calls[0]["backtrack_limit"] == 5
+    assert "backtrack_limit_phase2" not in runner.calls[0]
+    assert "static_learning" not in runner.calls[0]
+    # Aborted faults are reported as they are, not escalated away.
+    assert run.results.aborted_faults == 7
+    # A single attempt records no ladder history and adds no escalation note.
+    assert run.attempts == []
+    assert notes == []
+
+
+def test_default_service_still_climbs_the_ladder():
+    """The pinning option must not change any existing caller's behaviour."""
+    runner = _ScriptedRunner([6, 5, 0])
+    svc = AtpgAnalysisService(runner=runner)
+    assert svc.effort_ladder == TARGETED_EFFORT_LADDER
+    svc._run_targeted(None, "", ["g1"], None, [])
+    assert len(runner.calls) == 1 + len(TARGETED_EFFORT_LADDER)

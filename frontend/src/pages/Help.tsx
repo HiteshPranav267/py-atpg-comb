@@ -4,6 +4,7 @@ import { Link } from 'react-router-dom';
 import {
   ShieldAlert, BarChart2, Zap, ListOrdered, Target,
   ArrowRight, ChevronDown, Sparkles, Wrench, HelpCircle as HelpIcon, CircuitBoard,
+  GitBranch, BookOpen, Sigma,
 } from 'lucide-react';
 
 const NAV_SECTIONS = [
@@ -11,8 +12,11 @@ const NAV_SECTIONS = [
   { id: 'workflow', label: 'Workflow' },
   { id: 'concepts', label: 'Concepts' },
   { id: 'results', label: 'Understanding Results' },
+  { id: 'benchmark-explained', label: 'The Benchmark Page' },
+  { id: 'math', label: 'Mathematical Foundations' },
   { id: 'faq', label: 'FAQ' },
   { id: 'technical', label: 'Technical Details' },
+  { id: 'links', label: 'Project & Links' },
 ];
 
 export default function Help() {
@@ -291,6 +295,250 @@ export default function Help() {
             </div>
           </section>
 
+          {/* ---------------------------------------------- Benchmark page */}
+          <section id="benchmark-explained" className="scroll-mt-6 flex flex-col gap-4">
+            <SectionHeading
+              title="Understanding the Benchmark Page"
+              subtitle="It answers a different question than every other page in the app — this explains what, and why it's here at all."
+            />
+
+            <div className="border border-border bg-secondary/20 rounded-lg p-5 flex flex-col gap-3">
+              <p className="text-sm text-muted-foreground leading-relaxed">
+                Every other page answers <em className="text-foreground">"is this specific circuit I loaded suspicious?"</em>{' '}
+                The <Link to="/benchmark" className="text-primary hover:underline font-medium">Benchmark</Link> page
+                answers a completely different question: <em className="text-foreground">"if I hand a gate ranker a pile
+                of circuits where I already know exactly where the Trojans are, how often does it actually find them?"</em>{' '}
+                It exists because a ranker's suspicion scores are only useful if they're calibrated against ground
+                truth — otherwise "flagged as suspicious" is just an opinion. This is also literally the evaluation
+                methodology the accompanying research paper uses to report accuracy numbers for each ranker.
+              </p>
+            </div>
+
+            <div className="flex flex-col gap-3">
+              <h3 className="font-semibold text-sm">Step by step</h3>
+              <ol className="flex flex-col gap-3">
+                <li className="flex gap-3 text-sm">
+                  <span className="w-6 h-6 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-xs font-bold shrink-0">1</span>
+                  <span className="text-muted-foreground">
+                    <strong className="text-foreground">Build an answer key first, on the{' '}
+                    <Link to="/trojan" className="text-primary hover:underline">Trojan Dataset</Link> page.</strong>{' '}
+                    Upload a clean circuit and generate, say, 20 variants. Each variant is that circuit with one
+                    synthetic Trojan inserted, plus a <code className="font-mono text-xs bg-secondary px-1 rounded">metadata.json</code>{' '}
+                    recording <em>exactly</em> which gates are the trigger and payload — the ground truth. This is
+                    saved on the server under <code className="font-mono text-xs bg-secondary px-1 rounded">datasets/&lt;circuit&gt;/</code>.
+                  </span>
+                </li>
+                <li className="flex gap-3 text-sm">
+                  <span className="w-6 h-6 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-xs font-bold shrink-0">2</span>
+                  <span className="text-muted-foreground">
+                    <strong className="text-foreground">Point Benchmark at that directory.</strong> The "Dataset
+                    Directory" field is a server-side path — <code className="font-mono text-xs bg-secondary px-1 rounded">datasets</code>{' '}
+                    to sweep everything you've generated, or a narrower path for one circuit's variants only.
+                  </span>
+                </li>
+                <li className="flex gap-3 text-sm">
+                  <span className="w-6 h-6 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-xs font-bold shrink-0">3</span>
+                  <span className="text-muted-foreground">
+                    <strong className="text-foreground">Pick a ranker and a Top-K</strong>, then start. The
+                    ranker (RandomRanker as a floor baseline, ScoapRanker, RareNodeRanker, or the LLM ranker) is run
+                    against <em>every</em> variant in the directory, blind — it never sees the metadata, only the
+                    infected netlist. Top-K is how far down the ranked list counts as "found" (K=10 means: did the
+                    real trigger/payload gate land somewhere in the ranker's top 10 most-suspicious guesses?).
+                  </span>
+                </li>
+                <li className="flex gap-3 text-sm">
+                  <span className="w-6 h-6 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-xs font-bold shrink-0">4</span>
+                  <span className="text-muted-foreground">
+                    <strong className="text-foreground">Read the results table.</strong> One row per circuit, columns
+                    Top-1/5/10 accuracy, Recall@K, Precision@K, MRR, and SSR — each is defined exactly in{' '}
+                    <a href="#math" className="text-primary hover:underline">Mathematical Foundations</a> below.
+                  </span>
+                </li>
+              </ol>
+            </div>
+
+            <div className="border border-dashed border-border rounded-lg p-4 bg-secondary/10">
+              <p className="text-xs text-muted-foreground leading-relaxed">
+                <strong className="text-foreground">Worked example:</strong> you generate 20 low-SCOAP-strategy
+                variants of c880, run ScoapRanker at K=10 against them, and the table shows Top-10 accuracy = 0.85.
+                That means in 17 of the 20 infected circuits, the real Trojan gate was somewhere in ScoapRanker's 10
+                most-suspicious picks — a concrete, checkable number, not a guess about whether the ranker "seems
+                good."
+              </p>
+            </div>
+          </section>
+
+          {/* ------------------------------------------------------ Math */}
+          <section id="math" className="scroll-mt-6 flex flex-col gap-6">
+            <SectionHeading
+              title="Mathematical Foundations"
+              subtitle="Every formula the pipeline actually runs, verified against the source. This is the deep-dive — skip it if the plain-language sections above already answered your question."
+            />
+
+            <MathSubsection title="1. SCOAP testability metrics" anchor="scoap">
+              <p>
+                For every node <Var>v</Var>, three costs are computed in a single forward topological pass
+                (controllability) followed by one backward pass (observability). <Var>CC0(v)</Var>/<Var>CC1(v)</Var> are
+                the minimum number of signal assignments needed to force <Var>v</Var> to 0 or 1 from the primary
+                inputs; <Var>CO(v)</Var> is the minimum cost to propagate a fault at <Var>v</Var> to a primary output.
+                Primary inputs, flip-flop outputs, and any node with no predecessors start at{' '}
+                <Formula inline>CC0 = CC1 = 1</Formula>.
+              </p>
+              <Formula>
+{`For an AND gate with predecessors p₁ … pₖ:
+  CC1(AND) = Σᵢ CC1(pᵢ) + 1        CC0(AND) = minᵢ CC0(pᵢ) + 1
+
+OR is the dual (sum on CC0, min on CC1); NAND/NOR swap CC0↔CC1 relative
+to AND/OR; NOT and BUF pass the opposite/same cost through plus 1:
+  CC0(NOT) = CC1(p) + 1            CC1(NOT) = CC0(p) + 1
+  CC0(BUF) = CC0(p) + 1            CC1(BUF) = CC1(p) + 1
+
+For a 2-input XOR with predecessors a, b:
+  same  = min(CC0(a)+CC0(b), CC1(a)+CC1(b)) + 1   → CC0(XOR)
+  differ = min(CC0(a)+CC1(b), CC1(a)+CC0(b)) + 1  → CC1(XOR)
+(XNOR swaps the two results — its output is XOR inverted.)`}
+              </Formula>
+              <p>
+                Observability runs backward from the outputs, where <Var>CO = 0</Var>. For a predecessor{' '}
+                <Var>p</Var> of an AND/NAND gate with the other inputs <Var>others</Var>:
+              </p>
+              <Formula>
+{`CO(p) = min( CO(p),  CO(gate) + Σ_{q ∈ others} CC1(q) + 1 )   [AND, NAND]
+CO(p) = min( CO(p),  CO(gate) + Σ_{q ∈ others} CC0(q) + 1 )   [OR, NOR]
+CO(p) = CO(gate) + 1                                          [NOT, BUF]
+CO(p) = min( CO(p),  CO(gate) + min_{q∈others} min(CC0(q),CC1(q)) + 1 )  [XOR/XNOR]`}
+              </Formula>
+              <p>
+                Interpretation: a gate with <Var>CC0(v)+CC1(v) ≫ 50</Var> is expensive to drive to either value from
+                the inputs, and one with <Var>CO(v) ≫ 50</Var> is expensive to see at an output — exactly the two
+                properties a Trojan trigger and payload are built to have.
+              </p>
+            </MathSubsection>
+
+            <MathSubsection title="2. Dynamic toggle-rate estimation" anchor="toggle">
+              <p>
+                <Var>N</Var> random input vectors are simulated in sequence; every 0→1 and 1→0 transition at every
+                gate is counted. With <Var>N</Var> patterns there are <Var>N−1</Var> consecutive pairs, and each pair
+                can toggle in either direction, so:
+              </p>
+              <Formula>
+{`ToggleRate(v) = ( transitions₀₁(v) + transitions₁₀(v) ) / ( 2·(N − 1) )`}
+              </Formula>
+              <p>
+                A gate with <Var>ToggleRate(v) &lt; 0.01</Var> almost never changes value under random stimulus —
+                "dynamically stealthy," the dynamic-activity half of the suspicion signal (SCOAP is the static half).
+              </p>
+            </MathSubsection>
+
+            <MathSubsection title="3. Graph topology: centrality" anchor="centrality">
+              <p>
+                Betweenness centrality of node <Var>v</Var> is the fraction of shortest paths between other node
+                pairs that pass through it:
+              </p>
+              <Formula>
+{`C_B(v) = Σ_{s≠v≠t}  σ_st(v) / σ_st
+
+σ_st = number of shortest paths from s to t
+σ_st(v) = number of those paths passing through v`}
+              </Formula>
+              <p>
+                Computed with <Var>k = min(|V|, 100)</Var> sampled source nodes rather than all pairs (the exact
+                computation is <Var>O(|V|·|E|)</Var>, too slow to repeat per analysis on large circuits) — so on
+                circuits over 100 nodes this is an unseeded statistical estimate, not a deterministic value; see{' '}
+                <a href="#technical" className="text-primary hover:underline">Technical Details</a> for the measured
+                consequence of that.
+              </p>
+            </MathSubsection>
+
+            <MathSubsection title="4. Offline heuristic ranking (no LLM key required)" anchor="rankers">
+              <p>
+                Two deterministic scorers combine the features above into a single suspicion number per gate,
+                sorted descending. <strong className="text-foreground">ScoapRanker</strong>:
+              </p>
+              <Formula>
+{`suspicion(v) = 0.4·( CC0(v) + CC1(v) ) + 0.6·CO(v)`}
+              </Formula>
+              <p><strong className="text-foreground">RareNodeRanker</strong> combines three normalized signals:</p>
+              <Formula>
+{`toggle_rarity(v)     = 1 − min(ToggleRate(v), 1)
+structural_rarity(v) = fan_in(v) / ( fan_out(v) + 1 )
+depth_factor(v)      = pi_distance(v) / max( pi_distance(v) + po_distance(v), 1 )
+
+suspicion(v) = 0.50·toggle_rarity(v) + 0.25·structural_rarity(v) + 0.25·depth_factor(v)`}
+              </Formula>
+            </MathSubsection>
+
+            <MathSubsection title="5. Structural fault-list targeting (the LLM's deterministic fallback)" anchor="targeting">
+              <p>
+                When no API key is configured, the exact same targeting step that would otherwise call an LLM
+                instead applies a fixed structural filter. The list size is bounded relative to circuit size:
+              </p>
+              <Formula>
+{`max_gates = clamp( round(0.3 · |gates|),  20,  200 )
+
+A gate is "structurally interesting" iff ALL three hold:
+  ToggleRate(v) < 0.1   AND   fan_in(v) ≥ 2   AND   CO(v) > 5
+
+Interesting gates are sorted by ( ToggleRate(v) ascending, CO(v) descending )
+and the first max_gates are kept. If fewer than min(20, max_gates, |gates|)
+qualify, the list is topped up from the same ranking so a targeted run is
+never left testing only one or two faults.`}
+              </Formula>
+              <p>
+                This is exactly the heuristic that produced the reported gate counts in the paper's evaluation
+                whenever an LLM key wasn't available for that run — not a separate, lesser fallback.
+              </p>
+            </MathSubsection>
+
+            <MathSubsection title="6. Trojan insertion strategy math" anchor="trojan-math">
+              <p>
+                Every generated Trojan is a <Var>k</Var>-input trigger gate (default AND, <Var>k=2</Var>) whose
+                output feeds a payload gate (default XOR) spliced into an existing net. Boolean form, with trigger
+                inputs <Var>x₁ … xₖ</Var> and target net <Var>y</Var>:
+              </p>
+              <Formula>
+{`trigger  = x₁ ∧ x₂ ∧ … ∧ xₖ                    (generalizes to the chosen gate type)
+y′       = y ⊕ trigger                          (XOR payload: flips y only when trigger = 1)`}
+              </Formula>
+              <p>
+                Where the strategy picks <Var>x₁…xₖ</Var> and <Var>y</Var> from is itself a formula. Nets are ranked
+                by a rarity criterion, then <em>sampled</em> — not the single rarest — from a pool sized:
+              </p>
+              <Formula>
+{`pool_size = max( 8,  k,  round(0.05 · |nets|) )   ("rarest 5%, at least 8")
+
+rare_node strategy:  rank nets by ToggleRate(v) ascending  → sample k for the trigger
+low_scoap strategy:  rank nets by CC0(v)+CC1(v) descending → sample k for the trigger
+                      (payload target ranked by CO(v) descending instead)`}
+              </Formula>
+              <p>
+                Sampling instead of taking the strict argmax means regenerating the same circuit produces a{' '}
+                <em>dataset</em> of differently-placed Trojans, not the same one repeated — and every payload target
+                is checked against the trigger's ancestor set first, since splicing onto an ancestor of the trigger
+                would close a combinational feedback loop that Atalanta cannot levelize.
+              </p>
+            </MathSubsection>
+
+            <MathSubsection title="7. Cross-reference verdict logic" anchor="verdict">
+              <p>
+                Let <Var>F</Var> be the AI/heuristic-flagged gate set and <Var>U</Var> the set of gates whose faults
+                the ATPG run could not detect (undetected, redundant, or aborted). The verdict per gate{' '}
+                <Var>g</Var> is:
+              </p>
+              <Formula>
+{`g ∈ F  ∧  g ∈ U   →  TROJAN_CANDIDATE   (flagged, and the oracle couldn't clear it)
+g ∈ F  ∧  g ∉ U   →  CLEARED            (flagged, but the oracle detected it fine)
+g ∉ F  ∧  g ∈ U   →  NO_DATA            (never flagged — no suspicion to confirm or deny)
+g ∉ F  ∧  g ∉ U   →  (not reported — nothing suspicious, nothing undetected)`}
+              </Formula>
+              <p>
+                Only the first row is ever surfaced as a positive verdict: agreement between two independent
+                sources of evidence (structural/semantic suspicion, and a real generated test pattern's failure to
+                detect it) is what the framework treats as signal.
+              </p>
+            </MathSubsection>
+          </section>
+
           {/* ------------------------------------------------------ FAQ */}
           <section id="faq" className="scroll-mt-6 flex flex-col gap-4">
             <SectionHeading title="FAQ & Troubleshooting" />
@@ -387,6 +635,52 @@ export default function Help() {
                 </div>
               </div>
             </details>
+          </section>
+
+          {/* ------------------------------------------------------ Links */}
+          <section id="links" className="scroll-mt-6 flex flex-col gap-4">
+            <SectionHeading title="Project & Links" subtitle="Source code, the paper, and how the pieces fit together." />
+            <div className="grid sm:grid-cols-2 gap-4">
+              <a
+                href="https://github.com/HiteshPranav267/py-atpg-comb"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="group border border-border bg-card rounded-lg p-5 flex flex-col gap-2 hover:border-primary/50 transition-colors"
+              >
+                <div className="w-9 h-9 rounded-md bg-secondary flex items-center justify-center text-primary">
+                  <GitBranch className="w-4 h-4" />
+                </div>
+                <h3 className="font-semibold">Source code (GitHub)</h3>
+                <p className="text-sm text-muted-foreground leading-relaxed flex-1">
+                  Full implementation — the ATPG service, both rankers, the sequential engine, the Trojan
+                  insertion strategies, and this frontend. Every formula on this page traces to a file here.
+                </p>
+                <span className="text-sm font-medium text-primary flex items-center gap-1 mt-1">
+                  github.com/HiteshPranav267/py-atpg-comb
+                  <ArrowRight className="w-3.5 h-3.5 group-hover:translate-x-0.5 transition-transform" />
+                </span>
+              </a>
+              <div className="border border-border bg-card rounded-lg p-5 flex flex-col gap-2">
+                <div className="w-9 h-9 rounded-md bg-secondary flex items-center justify-center text-primary">
+                  <BookOpen className="w-4 h-4" />
+                </div>
+                <h3 className="font-semibold">The research paper</h3>
+                <p className="text-sm text-muted-foreground leading-relaxed flex-1">
+                  "Few-Shot LLM-Guided ATPG Prioritization for Scalable Hardware Trojan Detection via Agentic
+                  EDA Workflows" — the multi-circuit evaluation this tool's targeted-mode design is based on,
+                  including the honest accounting of what's proven (pattern-count reduction at equal detection
+                  accuracy) versus what remains future work.
+                </p>
+              </div>
+            </div>
+            <div className="border border-dashed border-border rounded-lg p-4 bg-secondary/10">
+              <p className="text-xs text-muted-foreground leading-relaxed">
+                <strong className="text-foreground">Tech stack:</strong> Python 3 backend (FastAPI, NetworkX)
+                driving ATALANTA for combinational ATPG and a native time-frame-expansion/PODEM engine for
+                sequential circuits, with Gemini/OpenAI/Anthropic/NVIDIA NIM/any-OpenAI-compatible-endpoint as
+                pluggable LLM providers; this frontend is React + TypeScript + Vite + Tailwind.
+              </p>
+            </div>
           </section>
         </div>
       </div>
@@ -512,4 +806,44 @@ function FaqItem({ q, children }: { q: string; children: ReactNode }) {
       <div className="px-4 pb-4 text-sm text-muted-foreground leading-relaxed">{children}</div>
     </details>
   );
+}
+
+/**
+ * One numbered subsection of the Mathematical Foundations section: a
+ * heading, then prose/Formula blocks in document order (an ordered list of
+ * children, not a grid — these read top to bottom like a paper section).
+ */
+function MathSubsection({ title, anchor, children }: { title: string; anchor: string; children: ReactNode }) {
+  return (
+    <div id={anchor} className="border border-border bg-card rounded-lg p-5 flex flex-col gap-3 scroll-mt-20">
+      <h3 className="font-semibold text-sm flex items-center gap-2">
+        <Sigma className="w-4 h-4 text-primary shrink-0" /> {title}
+      </h3>
+      <div className="text-sm text-muted-foreground leading-relaxed flex flex-col gap-3">{children}</div>
+    </div>
+  );
+}
+
+/**
+ * A block of formula text, verbatim monospace. `inline` renders it as a
+ * short inline span (for a one-liner mid-sentence) instead of its own block.
+ */
+function Formula({ children, inline }: { children: ReactNode; inline?: boolean }) {
+  if (inline) {
+    return (
+      <code className="font-mono text-xs bg-secondary text-foreground px-1.5 py-0.5 rounded">
+        {children}
+      </code>
+    );
+  }
+  return (
+    <pre className="font-mono text-xs md:text-[13px] leading-relaxed text-foreground bg-secondary/50 border border-border rounded-md px-4 py-3 overflow-x-auto whitespace-pre">
+      {children}
+    </pre>
+  );
+}
+
+/** A math variable/symbol, set apart from surrounding prose. */
+function Var({ children }: { children: ReactNode }) {
+  return <span className="font-mono text-foreground">{children}</span>;
 }

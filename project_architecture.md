@@ -32,8 +32,8 @@ The backend is completely stateless and designed as a REST API using FastAPI.
   * `netlist.py`: Data classes representing the raw circuit elements.
   * `graph_analysis.py`: Converts the parsed netlist into a `NetworkX` Directed Acyclic Graph (DAG). It runs Monte Carlo toggle simulations, calculates structural centrality, and computes SCOAP (Controllability/Observability) metrics.
 
-* **`agents/` & `ranking/` (AI & Heuristics)**
-  * Contains the logic for the `GateRanker` interface. This includes baseline heuristic rankers (ScoapRanker, RareNodeRanker) as well as the `LLMAnalyzer`/`LLMRanker` which connects to OpenAI/Anthropic APIs via the keys in your `.env` file to semantically rank hardware Trojans.
+* **`ranking/` (AI & Heuristics)**
+  * Contains the logic for the `GateRanker` interface. This includes baseline heuristic rankers (ScoapRanker, RareNodeRanker) as well as the `LLMRanker`, plus the provider abstraction (`ranking/providers.py`) every LLM call in the project goes through (Gemini / OpenAI / Anthropic / NVIDIA / any OpenAI-compatible endpoint, resolved from the request or `.env`).
 
 * **`seq/` (Sequential ATPG Engine)**
   * Native Python engine for circuits with flip-flops, since Atalanta is combinational-only. `timeframe.py` unrolls the circuit into an iterative array (time-frame expansion); `dalgebra.py` supplies 5-value (0/1/X/D/D') logic; `podem.py` is a PODEM search over the unrolled netlist; `simulator.py` is a deterministic, reset-driven, multi-cycle functional/fault simulator — the sole source of truth for detection and coverage; `engine.py` orchestrates candidate generation (PODEM + random-fill + mutation, optionally LLM-prioritized) into a minimal test-sequence set; `service.py` mirrors `atpg/service.py`'s orchestration shape. `atpg/service.py` routes any circuit with flip-flops here automatically instead of rejecting it.
@@ -43,7 +43,7 @@ The backend is completely stateless and designed as a REST API using FastAPI.
 
 * **Root Level Files**
   * `Atalanta/`: Directory containing the compiled C binary for Atalanta ATPG.
-  * `requirements.txt`: Defines the Python dependencies (FastAPI, NetworkX, python-multipart, etc.) required for Render to build the environment. (Note: Desktop GUI libraries like PyQt6 were removed to ensure headless server compatibility).
+  * `requirements.txt`: Defines the Python dependencies (FastAPI, NetworkX, python-multipart, the LLM SDKs) required for Render to build the environment.
 
 ### Frontend (`/py-atpg/frontend/`)
 The frontend is a standard Vite-powered React application.

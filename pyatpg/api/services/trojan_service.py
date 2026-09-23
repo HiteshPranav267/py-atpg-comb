@@ -40,6 +40,9 @@ class TrojanService:
         output_dir: str = DEFAULT_OUTPUT_DIR,
         seed: int | None = None,
         verify_activation: bool = False,
+        num_trigger_inputs: int = 2,
+        trigger_type: str = "AND",
+        payload_type: str = "XOR",
     ) -> dict:
         """Generate `variants` trojan-inserted copies of an uploaded circuit.
 
@@ -63,6 +66,15 @@ class TrojanService:
                 working Atalanta binary and roughly doubles the work per
                 variant (one extra ATPG job), and every existing caller of
                 this service predates the guarantee existing at all.
+            num_trigger_inputs: how many nets the trigger gate combines to
+                form its activation condition. 2 is the literature default;
+                raising it makes the trigger's activation condition rarer
+                (and the trojan correspondingly stealthier/harder to test
+                for), at the cost of the insertion strategy needing that many
+                distinct rare/hard-to-control nets to draw from.
+            trigger_type: gate type for the trigger (AND, OR, NAND, NOR, XOR).
+            payload_type: gate type for the payload splice (AND, OR, NAND,
+                NOR, XOR).
         """
         if strategy == "rare_node":
             strat = RareNodeStrategy(seed=seed)
@@ -71,7 +83,10 @@ class TrojanService:
         else:
             strat = RandomStrategy(seed=seed)
 
-        inserter = TrojanInserter(strategy=strat, verify_activation=verify_activation)
+        inserter = TrojanInserter(
+            trigger=trigger_type, payload=payload_type,
+            strategy=strat, verify_activation=verify_activation,
+        )
         generator = TrojanDatasetGenerator(inserter=inserter, output_dir=output_dir)
 
         # TrojanDatasetGenerator reads circuits from disk, derives the dataset
@@ -88,7 +103,10 @@ class TrojanService:
             # inputs into 10 -- a wrong but entirely plausible-looking dataset.
             with open(tmp_path, 'w', encoding='utf-8', newline='') as f:
                 f.write(source_text)
-            generated = generator.generate(circuit_path=tmp_path, variants=variants)
+            generated = generator.generate(
+                circuit_path=tmp_path, variants=variants,
+                num_trigger_inputs=num_trigger_inputs,
+            )
         finally:
             shutil.rmtree(tmp_dir, ignore_errors=True)
 
@@ -103,5 +121,8 @@ class TrojanService:
             "strategy": strategy,
             "seed": seed,
             "verify_activation": verify_activation,
+            "num_trigger_inputs": num_trigger_inputs,
+            "trigger_type": trigger_type,
+            "payload_type": payload_type,
             "output_dir": os.path.join(output_dir, circuit_name),
         }

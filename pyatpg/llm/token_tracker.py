@@ -25,6 +25,10 @@ class CallRecord:
     #: True when the token counts came from the provider's usage report
     #: rather than the character heuristic.
     exact: bool = False
+    #: Wall-clock seconds the provider call itself took, measured by the
+    #: caller around ``provider.complete(...)``. 0.0 for a cache hit -- the
+    #: whole point of the cache is that no call happened.
+    duration_s: float = 0.0
 
 
 @dataclass
@@ -40,9 +44,12 @@ class TokenTracker:
         response: str,
         cached: bool = False,
         usage: dict | None = None,
+        duration_s: float = 0.0,
     ) -> CallRecord:
         """Log one call. ``usage`` is the provider's report, when it gave one:
-        a dict with ``prompt_tokens`` and ``completion_tokens``."""
+        a dict with ``prompt_tokens`` and ``completion_tokens``. ``duration_s``
+        is wall-clock time the caller measured around the ``provider.complete``
+        call -- this module has no way to measure it itself."""
         prompt_tokens = approx_tokens(prompt)
         response_tokens = approx_tokens(response)
         exact = False
@@ -59,6 +66,7 @@ class TokenTracker:
             response_tokens_est=response_tokens,
             cached=cached,
             exact=exact,
+            duration_s=duration_s,
         )
         self.calls.append(rec)
         return rec
@@ -82,6 +90,18 @@ class TokenTracker:
         return sum(c.response_tokens_est for c in self.calls)
 
     @property
+    def total_duration_s(self) -> float:
+        """Wall-clock seconds actually spent waiting on the provider.
+
+        Sums only measured call durations; a call recorded with no timer
+        around it (duration_s left at its 0.0 default) silently contributes
+        nothing rather than understating the total as if it were free -- the
+        caller distinguishes the two by checking whether every call it made
+        was measured.
+        """
+        return sum(c.duration_s for c in self.calls)
+
+    @property
     def tokens_exact(self) -> bool:
         """Every counted call carried a provider usage report.
 
@@ -98,6 +118,7 @@ class TokenTracker:
             "response_tokens_est": self.total_response_tokens,
             "total_tokens_est": self.total_prompt_tokens + self.total_response_tokens,
             "tokens_exact": self.tokens_exact,
+            "total_duration_s": round(self.total_duration_s, 3),
             "by_stage": {
                 stage: {
                     "calls": len([c for c in self.calls if c.stage == stage and not c.cached]),
