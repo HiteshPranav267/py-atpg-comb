@@ -18,6 +18,7 @@ found that hits the target, not the largest one it could produce.
 from __future__ import annotations
 
 import random
+import time
 from dataclasses import dataclass, field
 from typing import Callable
 
@@ -27,7 +28,7 @@ from pyatpg.ranking.providers import LLMUnavailableError
 from .faultsim import checkpoint_fault_list, evaluate_coverage
 from .generator import mutate, random_sequence
 from .models import SequentialAnalysis, SequentialFault, SequentialResults, TestSequence
-from .podem import podem
+from .podem import _topo_sort_gates, podem
 from .timeframe import build_unrolled_circuit
 
 #: A candidate_ranker takes the current undetected faults plus a small
@@ -55,6 +56,14 @@ class EngineConfig:
     #: consulted at all -- keeps LLM involvement to genuinely hard faults.
     llm_activation_threshold: int = 1
     rng_seed: int | None = 1234
+    #: Wall-clock seconds one run may spend searching before it stops and
+    #: reports the coverage reached so far (None = unlimited). PODEM on a
+    #: large unrolled circuit can otherwise run for many minutes -- past the
+    #: web UI's request timeout, which then shows nothing at all. The
+    #: deterministic phases get ``deterministic_share`` of it, so an
+    #: LLM-assisted run still has time left for its own phase.
+    time_budget_s: float | None = 100.0
+    deterministic_share: float = 0.6
 
 
 @dataclass
@@ -149,19 +158,41 @@ class SequentialAtpgEngine:
         )
 
     def _budget_left(self, state: _RunState) -> bool:
-        return len(state.sequences) < self.config.max_sequences
+        if len(state.sequences) >= self.config.max_sequences:
+            return False
+        deadline = getattr(self, "_deadline", None)
+        if deadline is not None and time.monotonic() >= deadline:
+            self._timed_out = True
+            return False
+        return True
+
+    def _unrolled(self, n_frames: int):
+        """The ``n_frames``-deep unrolled circuit, its PO set and gate order.
+
+        Built once per depth and reused for every fault: the unrolled netlist
+        depends only on the circuit and the depth, never on the fault.
+        """
+        cache = self.__dict__.setdefault("_unrolled_cache", {})
+        if n_frames not in cache:
+            unrolled = build_unrolled_circuit(self.circuit, n_frames)
+            cache[n_frames] = (
+                unrolled,
+                set(unrolled.po_frames.keys()),
+                _topo_sort_gates(unrolled.circuit),
+            )
+        return cache[n_frames]
 
     def _podem_candidate(self, fault: SequentialFault) -> TestSequence | None:
         for n_frames in range(1, self.config.podem_max_frames + 1):
-            unrolled = build_unrolled_circuit(self.circuit, n_frames)
+            unrolled, po_names, topo_order = self._unrolled(n_frames)
             fault_node = f"f0_{fault.node}"
-            po_names = set(unrolled.po_frames.keys())
             result = podem(
                 unrolled.circuit,
                 fault_node,
                 fault.stuck_at,
                 po_names,
                 max_backtracks=self.config.podem_max_backtracks,
+                topo_order=topo_order,
             )
             if result.success:
                 vectors: list[dict[str, int]] = [dict() for _ in range(n_frames)]
@@ -249,12 +280,23 @@ class SequentialAtpgEngine:
         faults = checkpoint_fault_list(self.circuit)
         state = _RunState(faults=faults, undetected=list(faults))
         notes: list[str] = []
+        budget = self.config.time_budget_s
+        start = time.monotonic()
+        self._timed_out = False
 
+        self._deadline = start + budget * self.config.deterministic_share if budget else None
         self._phase_random_fill(state)
         if not self._at_target(state) and self._budget_left(state):
             self._phase_podem(state)
+        self._deadline = start + budget if budget else None
         if not self._at_target(state) and self._budget_left(state):
             notes.extend(self._phase_llm(state))
+        if self._timed_out:
+            notes.append(
+                f"Stopped at the {budget:g}s search time budget; the coverage shown is "
+                f"what was reached by then, not the engine's final result."
+            )
+        self._deadline = None
 
         results = state.results or SequentialResults(
             total_faults=len(faults),

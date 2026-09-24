@@ -26,13 +26,57 @@ _GATE_EVAL = {
 }
 
 
+def _gate_order(circuit: Circuit) -> list[tuple[str, object, list[str]]]:
+    """Gates in topological order, computed once per circuit and cached.
+
+    Re-discovering the order on every evaluation (repeated passes over the
+    unresolved gates) dominated sequential ATPG runtime: the fault simulator
+    evaluates the circuit once per fault, per candidate sequence, per cycle.
+    The cache is keyed on the gate dict's identity and size so a circuit
+    edited after a run is re-levelized rather than evaluated stale.
+    """
+    key = (id(circuit.gates), len(circuit.gates))
+    cached = getattr(circuit, "_seq_gate_order", None)
+    if cached is not None and cached[0] == key:
+        return cached[1]
+
+    gate_outputs = set(circuit.gates)
+    indegree: dict[str, int] = {}
+    fanout: dict[str, list[str]] = {}
+    for name, gate in circuit.gates.items():
+        deps = [i for i in gate.inputs if i in gate_outputs]
+        indegree[name] = len(deps)
+        for d in deps:
+            fanout.setdefault(d, []).append(name)
+    ready = [n for n, deg in indegree.items() if deg == 0]
+    order: list[tuple[str, object, list[str]]] = []
+    while ready:
+        name = ready.pop()
+        gate = circuit.gates[name]
+        fn = _GATE_EVAL.get(gate.gtype)
+        if fn is None:
+            raise ValueError(f"Unsupported gate type: {gate.gtype}")
+        order.append((name, fn, gate.inputs))
+        for succ in fanout.get(name, ()):
+            indegree[succ] -= 1
+            if indegree[succ] == 0:
+                ready.append(succ)
+    if len(order) != len(circuit.gates):
+        raise RuntimeError(
+            "Combinational loop or unresolved signal inside one time frame; "
+            "sequential ATPG requires an acyclic combinational part."
+        )
+    circuit._seq_gate_order = (key, order)
+    return order
+
+
 def _eval_combinational(
     circuit: Circuit,
     base_values: dict[str, int],
     fault_node: str | None = None,
     fault_stuck_at: int | None = None,
 ) -> dict[str, int]:
-    """Evaluate every gate to a fixpoint, optionally forcing one net stuck.
+    """Evaluate every gate in topological order, optionally forcing one net stuck.
 
     ``base_values`` must already contain every primary input and flip-flop Q
     value for this cycle. A stuck-at fault on a PI/FF-Q is forced before
@@ -44,28 +88,16 @@ def _eval_combinational(
     if fault_node is not None and fault_node in values:
         values[fault_node] = fault_stuck_at
 
-    unresolved = dict(circuit.gates)
-    while unresolved:
-        progress = False
-        for name, gate in list(unresolved.items()):
-            try:
-                ins = [values[i] for i in gate.inputs]
-            except KeyError:
-                continue
-            fn = _GATE_EVAL.get(gate.gtype)
-            if fn is None:
-                raise ValueError(f"Unsupported gate type: {gate.gtype}")
-            value = fn(ins)
-            if fault_node is not None and name == fault_node:
-                value = fault_stuck_at
-            values[name] = value
-            del unresolved[name]
-            progress = True
-        if not progress:
-            raise RuntimeError(
-                "Combinational loop or unresolved signal inside one time frame; "
-                "sequential ATPG requires an acyclic combinational part."
-            )
+    try:
+        for name, fn, inputs in _gate_order(circuit):
+            values[name] = fn([values[i] for i in inputs])
+            if name == fault_node:
+                values[name] = fault_stuck_at
+    except KeyError as exc:
+        raise RuntimeError(
+            f"Combinational loop or unresolved signal inside one time frame ({exc}); "
+            "sequential ATPG requires an acyclic combinational part."
+        ) from None
     return values
 
 
@@ -101,6 +133,30 @@ def simulate(
         trace.append(CycleTrace(primary_outputs=pos, next_state=next_state))
         state = next_state
     return trace
+
+
+def first_divergence(
+    circuit: Circuit,
+    vectors: list[dict[str, int]],
+    good: list[CycleTrace],
+    fault_node: str,
+    fault_stuck_at: int,
+) -> int | None:
+    """Simulate under a fault, stopping at the first cycle whose outputs differ.
+
+    Equivalent to ``traces_diverge(good, simulate(..., fault))`` but skips the
+    cycles after detection, which is most of them for an easily detected fault.
+    """
+    state = {ff.q: 0 for ff in circuit.flipflops}
+    for cycle, (vector, good_cycle) in enumerate(zip(vectors, good)):
+        values = dict(vector)
+        values.update(state)
+        resolved = _eval_combinational(circuit, values, fault_node, fault_stuck_at)
+        for po, v in good_cycle.primary_outputs.items():
+            if resolved[po] != v:
+                return cycle
+        state = {ff.q: resolved[ff.d] for ff in circuit.flipflops}
+    return None
 
 
 def traces_diverge(good: list[CycleTrace], faulty: list[CycleTrace]) -> int | None:

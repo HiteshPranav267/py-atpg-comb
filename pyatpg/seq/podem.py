@@ -119,6 +119,7 @@ def podem(
     stuck_at: int,
     observable_outputs: set[str],
     max_backtracks: int = 300,
+    topo_order: list[str] | None = None,
 ) -> PodemResult:
     """Search for a PI assignment that activates and propagates the fault.
 
@@ -126,8 +127,13 @@ def podem(
     tester" -- for the unrolled multi-cycle netlist this is every primary
     output copy across every frame, since a sequential fault may only show
     up several cycles after activation.
+
+    ``topo_order`` may be passed in (from :func:`_topo_sort_gates`) when the
+    same circuit is searched for many faults, to avoid re-levelizing it on
+    every call.
     """
-    topo_order = _topo_sort_gates(circuit)
+    if topo_order is None:
+        topo_order = _topo_sort_gates(circuit)
     pi_values: dict[str, int] = {}
     decision_stack: list[tuple[str, int, bool]] = []
     backtracks = 0
