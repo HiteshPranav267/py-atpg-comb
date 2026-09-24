@@ -74,9 +74,9 @@ class SequentialAtpgService:
     @staticmethod
     def _implicit_input_notes(parsed: ParsedCircuit) -> list[str]:
         if not parsed.implicit_inputs:
-            return []
+            return list(parsed.parse_notes)
         names = ", ".join(parsed.implicit_inputs)
-        return [
+        return list(parsed.parse_notes) + [
             f"This netlist references signal(s) that are never driven by any gate or "
             f"flip-flop ({names}) -- treated as free primary inputs, since an undriven "
             f"net's value is exactly as unconstrained as a real one's."

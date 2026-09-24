@@ -31,10 +31,15 @@ class ParsedCircuit:
     #: free primary inputs during parsing. See
     #: Circuit.promote_undefined_signals_to_inputs for why.
     implicit_inputs: list[str] = None  # type: ignore[assignment]
+    #: Remarks from the parser about how the netlist was interpreted (e.g.
+    #: constant-tied outputs dropped), surfaced to the user as run notes.
+    parse_notes: list[str] = None  # type: ignore[assignment]
 
     def __post_init__(self) -> None:
         if self.implicit_inputs is None:
             self.implicit_inputs = []
+        if self.parse_notes is None:
+            self.parse_notes = []
 
     @property
     def is_bench(self) -> bool:
@@ -104,6 +109,7 @@ def parse_circuit(source_text: str, filename: str) -> ParsedCircuit:
         filename=filename,
         name=stem,
         implicit_inputs=implicit_inputs,
+        parse_notes=list(getattr(parser, "notes", [])),
     )
 
 

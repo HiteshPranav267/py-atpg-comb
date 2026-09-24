@@ -30,12 +30,10 @@ def _generator(tmp_path) -> TrojanDatasetGenerator:
     )
 
 
-def test_bench_text_read_as_verilog_yields_no_ports():
-    """The premise of the bug: the mismatch is silent, not an exception."""
-    mangled = VerilogParser().parse(BENCH_SOURCE)
-    assert mangled.gates, "the Verilog parser invents gates from BENCH tokens"
-    assert not mangled.inputs
-    assert not mangled.outputs
+def test_bench_text_read_as_verilog_is_rejected_by_the_parser():
+    """The Verilog parser no longer invents gates from BENCH tokens."""
+    with pytest.raises(ValueError, match="No Verilog module"):
+        VerilogParser().parse(BENCH_SOURCE)
 
 
 def test_suffix_follows_the_upload():
@@ -55,7 +53,7 @@ def test_bench_named_as_verilog_is_rejected(tmp_path):
     path = tmp_path / "c432.v"
     path.write_text(BENCH_SOURCE)
 
-    with pytest.raises(ValueError, match="do not look like"):
+    with pytest.raises(ValueError, match="do not look like|No Verilog module"):
         _generator(tmp_path).generate(circuit_path=str(path), variants=2)
 
 

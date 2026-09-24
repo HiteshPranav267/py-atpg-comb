@@ -377,6 +377,7 @@ class AtpgAnalysisService:
             mode=mode,
             circuit=self._circuit_payload(parsed, profile.statistics),
         )
+        analysis.notes.extend(parsed.parse_notes)
         if parsed.implicit_inputs:
             names = ", ".join(parsed.implicit_inputs)
             analysis.notes.append(
