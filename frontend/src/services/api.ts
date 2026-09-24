@@ -194,12 +194,14 @@ export const api = {
     mode?: AnalysisMode;
     patterns?: number;
     use_llm?: boolean;
+    full_scan?: boolean;
   }): Promise<AtpgReport> => {
     const formData = new FormData();
     formData.append('file', params.file);
     formData.append('mode', params.mode ?? 'compare');
     formData.append('patterns', String(params.patterns ?? 3000));
     formData.append('use_llm', String(params.use_llm ?? true));
+    formData.append('full_scan', String(params.full_scan ?? false));
     const key = llmApiKey();
     if (key) formData.append('api_key', key);
     for (const [field, value] of Object.entries(llmSelection())) {

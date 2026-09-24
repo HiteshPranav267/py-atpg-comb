@@ -295,6 +295,7 @@ class AtpgAnalysisService:
         llm_provider: str | None = None,
         llm_model: str | None = None,
         llm_base_url: str | None = None,
+        full_scan: bool = False,
     ) -> AtpgAnalysis:
         """Execute an analysis.
 
@@ -325,10 +326,32 @@ class AtpgAnalysisService:
                 built-in default (10) in effect. Raising it lets a fault that
                 aborted for lack of search budget be told apart from one that
                 is genuinely undetectable -- see AtalantaRunner.run.
+            full_scan: for a circuit with flip-flops, test it under the
+                full-scan model (every flip-flop a scan cell: Q a pseudo input,
+                D a pseudo output) through the combinational flow, instead of
+                the native no-scan sequential engine.
         """
         prune_old_jobs()
 
         parsed = parse_circuit(source_text, filename)
+
+        if parsed.circuit.flipflops and full_scan:
+            from pyatpg.core.scan import to_full_scan
+
+            comb, counts = to_full_scan(parsed.circuit)
+            parsed.circuit = comb
+            parsed.derived = True
+            parsed.parse_notes.append(
+                f"Full-scan model: {counts['flip_flops']} flip-flop(s) treated as scan cells "
+                f"({counts['pseudo_inputs']} pseudo-inputs from flip-flop outputs, "
+                f"{counts['pseudo_outputs']} pseudo-outputs from flip-flop inputs); "
+                "each pattern is scanned in, clocked once and scanned out."
+            )
+            if counts["undriven_outputs"]:
+                parsed.parse_notes.append(
+                    "Output(s) driven by nothing were left out of the full-scan model: "
+                    + ", ".join(counts["undriven_outputs"])
+                )
 
         if parsed.circuit.flipflops:
             # Atalanta is a purely combinational engine; it cannot levelize a

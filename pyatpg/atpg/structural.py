@@ -34,6 +34,9 @@ class ParsedCircuit:
     #: Remarks from the parser about how the netlist was interpreted (e.g.
     #: constant-tied outputs dropped), surfaced to the user as run notes.
     parse_notes: list[str] = None  # type: ignore[assignment]
+    #: True when ``circuit`` was derived from the source (e.g. its full-scan
+    #: model), so the source text no longer describes it.
+    derived: bool = False
 
     def __post_init__(self) -> None:
         if self.implicit_inputs is None:
@@ -54,7 +57,7 @@ class ParsedCircuit:
         net Atalanta will fail on anyway; regenerating from the (now
         input-promoted) circuit is the only way it actually gets one.
         """
-        if self.is_bench and not self.implicit_inputs:
+        if self.is_bench and not self.implicit_inputs and not self.derived:
             return self.source_text
         return self.circuit.to_bench()
 

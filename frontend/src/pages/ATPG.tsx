@@ -38,6 +38,7 @@ export default function ATPG() {
     useAppStore();
   const [mode, setMode] = useState<AnalysisMode>('compare');
   const [patterns, setPatterns] = useState(defaultPatterns);
+  const [fullScan, setFullScan] = useState(true);
 
   const { data: modes = FALLBACK_MODES } = useQuery({
     queryKey: ['atpg-modes'],
@@ -54,7 +55,13 @@ export default function ATPG() {
 
   const handleRun = () => {
     if (activeCircuitFile) {
-      runMutation.mutate({ file: activeCircuitFile, mode, patterns, use_llm: true });
+      runMutation.mutate({
+        file: activeCircuitFile,
+        mode,
+        patterns,
+        use_llm: true,
+        full_scan: fullScan,
+      });
     }
   };
 
@@ -136,6 +143,25 @@ export default function ATPG() {
             <p className="text-xs text-muted-foreground mt-2 leading-relaxed">
               Used for structural toggle-rate profiling only. The ATPG tool chooses its own
               pattern counts.
+            </p>
+          </div>
+
+          <div className="md:col-span-2">
+            <label className="block text-sm font-medium mb-2">Flip-flop model</label>
+            <select
+              value={fullScan ? 'full_scan' : 'sequential'}
+              onChange={(e) => setFullScan(e.target.value === 'full_scan')}
+              className="w-full bg-background border border-border rounded px-3 py-2 focus:border-primary focus:outline-none"
+            >
+              <option value="full_scan">Full scan (every flip-flop is a scan cell)</option>
+              <option value="sequential">No scan (sequential engine, from reset)</option>
+            </select>
+            <p className="text-xs text-muted-foreground mt-2 leading-relaxed">
+              Only affects circuits with flip-flops. Full scan treats each flip-flop output as a
+              pseudo-input and its input as a pseudo-output, then runs combinational ATPG — the
+              industry-standard model, fast even on large designs. No scan reaches state only by
+              clocking from reset and observes only the real outputs: far harder, slower, and
+              lower coverage.
             </p>
           </div>
         </div>

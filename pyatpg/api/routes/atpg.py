@@ -67,6 +67,7 @@ async def run_atpg(
     llm_provider: str = Form(""),
     llm_model: str = Form(""),
     llm_base_url: str = Form(""),
+    full_scan: bool = Form(False),
 ) -> Dict[str, Any]:
     """Run an ATPG analysis over an uploaded circuit.
 
@@ -89,6 +90,11 @@ async def run_atpg(
     leaves Atalanta's built-in default (10) in effect -- raise it to see
     whether a fault reported as aborted is genuinely undetectable or just
     ran out of search budget.
+
+    `full_scan` applies to circuits with flip-flops: when true they are
+    tested under the full-scan model (flip-flop Q/D become pseudo
+    inputs/outputs) through the combinational Atalanta path instead of the
+    sequential engine.
     """
     try:
         selected_mode = AnalysisMode(mode)
@@ -117,6 +123,7 @@ async def run_atpg(
             llm_provider=llm_provider or None,
             llm_model=llm_model or None,
             llm_base_url=llm_base_url or None,
+            full_scan=full_scan,
         )
     except (ValueError, NoTargetableGates) as exc:
         raise HTTPException(status_code=400, detail=str(exc))
