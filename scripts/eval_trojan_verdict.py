@@ -85,6 +85,13 @@ def main() -> int:
     ap.add_argument("--variants", type=int, default=10, help="trojan variants per strategy")
     ap.add_argument("--strategies", nargs="+", default=list(STRATEGIES), choices=STRATEGIES)
     ap.add_argument("--seed", type=int, default=1)
+    ap.add_argument("--trigger-type", default="AND", choices=["AND", "OR", "NAND", "NOR", "XOR"],
+                    help="trigger gate of the inserted trojans (default AND)")
+    ap.add_argument("--payload-type", default="XOR", choices=["XOR", "OR", "AND", "MUX"],
+                    help="payload gate of the inserted trojans (default XOR -- the shape the "
+                         "structural detector is built for; use others to test beyond it)")
+    ap.add_argument("--trigger-inputs", type=int, default=2,
+                    help="nets the trigger combines (wider = rarer, stealthier)")
     ap.add_argument("--out", type=Path, default=Path("results/trojan_verdict"))
     ap.add_argument("--toggle-patterns", type=int, default=3000)
     ap.add_argument("--no-full-scan", action="store_true")
@@ -127,7 +134,8 @@ def main() -> int:
             TrojanService.generate_dataset(
                 source_text=source, circuit_name=name, variants=args.variants,
                 strategy=strategy, filename=circuit.name, output_dir=str(dataset_root),
-                seed=args.seed,
+                seed=args.seed, trigger_type=args.trigger_type, payload_type=args.payload_type,
+                num_trigger_inputs=args.trigger_inputs,
             )
             for vdir in sorted((dataset_root / name).glob("trojan_*")):
                 meta = json.loads((vdir / "metadata.json").read_text(encoding="utf-8"))
@@ -216,6 +224,9 @@ def main() -> int:
 
     lines = [
         "# Structural trojan verdict: infected vs clean",
+        "",
+        f"Trojan shape: {args.trigger_type} trigger over {args.trigger_inputs} net(s) -> "
+        f"{args.payload_type} payload. Toggle patterns: {args.toggle_patterns}.",
         "",
         "Detection = verdict \"trojan_suspected\" on an infected variant. False alarm = the same "
         "verdict on the clean circuit. Localized = a flagged gate is one of the trojan's own nets. "
