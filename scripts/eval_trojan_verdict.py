@@ -34,11 +34,13 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from pyatpg.api.services.trojan_service import TrojanService  # noqa: E402
 from pyatpg.atpg.structural import parse_circuit, profile_circuit  # noqa: E402
 from pyatpg.atpg.suspects import find_structural_suspects  # noqa: E402
 from pyatpg.atpg.targeting import FaultTargetSelector  # noqa: E402
+from llm_quota import call_with_quota_wait  # noqa: E402
 from pyatpg.atpg.verdict import build_verdict  # noqa: E402
 from pyatpg.core.scan import to_full_scan  # noqa: E402
 from pyatpg.evaluation.trojan_detection import trojan_footprint  # noqa: E402
@@ -97,6 +99,9 @@ def main() -> int:
     ap.add_argument("--no-full-scan", action="store_true")
     ap.add_argument("--targeting", action="store_true",
                     help="also score whether gate targeting includes a trojan net")
+    ap.add_argument("--llm-wait", type=float, default=0.0,
+                    help="on an LLM quota error, wait as the provider instructs and retry, "
+                         "for up to this many hours in total (0 = give up at once)")
     ap.add_argument("--llm", action="store_true", help="with --targeting: include LLM targeting")
     ap.add_argument("--llm-limit", type=int, default=None,
                     help="max LLM calls this run (Groq free tier: ~30 per day at ~6k tokens each)")
@@ -162,9 +167,12 @@ def main() -> int:
                         try:
                             # graph=None: judge the model alone, without the
                             # structural detector's force-included suspects.
-                            sel = FaultTargetSelector(provider=provider, max_gates=k).select(
-                                profile.gate_profiles, graph=None, source_text=text
-                            )
+                            def _select():
+                                return FaultTargetSelector(provider=provider, max_gates=k).select(
+                                    profile.gate_profiles, graph=None, source_text=text
+                                )
+                            sel = (call_with_quota_wait(_select, args.llm_wait * 3600)
+                                   if args.llm_wait else _select())
                             row["target_llm"] = int(bool(set(sel.gates) & footprint))
                             # The model may return fewer than k gates; random at the
                             # same (smaller) K is the fair comparison for it.

@@ -37,10 +37,12 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from pyatpg.atpg import AnalysisMode, AtpgAnalysisService  # noqa: E402
 from pyatpg.atpg.structural import parse_circuit, profile_circuit  # noqa: E402
 from pyatpg.atpg.targeting import FaultTargetSelector  # noqa: E402
+from llm_quota import call_with_quota_wait  # noqa: E402
 from pyatpg.core.scan import to_full_scan  # noqa: E402
 
 HARD_STATUSES = {"redundant", "aborted"}
@@ -91,6 +93,9 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("circuits", nargs="+", type=Path)
     ap.add_argument("--out", type=Path, default=Path("results/hard_fault_targeting"))
+    ap.add_argument("--llm-wait", type=float, default=0.0,
+                    help="on an LLM quota error, wait as the provider instructs and retry, "
+                         "for up to this many hours in total (0 = give up at once)")
     ap.add_argument("--llm", action="store_true", help="also evaluate LLM targeting (uses .env provider)")
     ap.add_argument("--llm-repeats", type=int, default=3, help="fresh LLM selections per circuit")
     ap.add_argument("--random-seeds", type=int, default=10)
@@ -167,8 +172,11 @@ def main() -> int:
                 start = time.monotonic()
                 selector = FaultTargetSelector(provider=provider, max_gates=k)
                 try:
-                    sel = selector.select(profile.gate_profiles, graph=profile.graph,
-                                          source_text=parsed.source_text)
+                    def _select():
+                        return selector.select(profile.gate_profiles, graph=profile.graph,
+                                               source_text=parsed.source_text)
+                    sel = (call_with_quota_wait(_select, args.llm_wait * 3600)
+                           if args.llm_wait else _select())
                     note = sel.strategy if sel.used_llm else "fell back to structural"
                     record("llm", rep, sel.gates, time.monotonic() - start, note)
                     # The model often returns fewer than K gates. Score the
