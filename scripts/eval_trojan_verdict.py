@@ -46,6 +46,24 @@ from pyatpg.evaluation.trojan_detection import trojan_footprint  # noqa: E402
 STRATEGIES = ("random", "rare_node", "low_scoap")
 
 
+def _is_quota_error(exc: Exception) -> bool:
+    text = str(exc).lower()
+    return "429" in text or "rate limit" in text or "rate-limit" in text or "quota" in text
+
+
+def _write_rows(path: Path, rows: list[dict]) -> None:
+    """Rewrite the per-variant CSV after every variant, so a stopped run keeps its work."""
+    fields: list[str] = []
+    for r in rows:
+        for k in r:
+            if k not in fields:
+                fields.append(k)
+    with open(path, "w", newline="", encoding="utf-8") as fh:
+        writer = csv.DictWriter(fh, fieldnames=fields)
+        writer.writeheader()
+        writer.writerows(rows)
+
+
 def analyse(path: Path, toggle_patterns: int, full_scan: bool):
     text = path.read_text(encoding="utf-8", errors="replace")
     parsed = parse_circuit(text, path.name)
@@ -73,6 +91,8 @@ def main() -> int:
     ap.add_argument("--targeting", action="store_true",
                     help="also score whether gate targeting includes a trojan net")
     ap.add_argument("--llm", action="store_true", help="with --targeting: include LLM targeting")
+    ap.add_argument("--llm-limit", type=int, default=None,
+                    help="max LLM calls this run (Groq free tier: ~30 per day at ~6k tokens each)")
     args = ap.parse_args()
 
     full_scan = not args.no_full_scan
@@ -91,6 +111,7 @@ def main() -> int:
     dataset_root = args.out / "datasets"
     args.out.mkdir(parents=True, exist_ok=True)
     rows: list[dict] = []
+    llm_calls = 0
 
     for circuit in args.circuits:
         t0 = time.monotonic()
@@ -128,7 +149,8 @@ def main() -> int:
                                 if p["features"].get("node_type") != "PI"]
                     rnd = random.Random(args.seed).sample(universe, min(k, len(universe)))
                     row["target_random"] = int(bool(set(rnd) & footprint))
-                    if provider is not None:
+                    if provider is not None and (args.llm_limit is None or llm_calls < args.llm_limit):
+                        llm_calls += 1
                         try:
                             # graph=None: judge the model alone, without the
                             # structural detector's force-included suspects.
@@ -136,22 +158,30 @@ def main() -> int:
                                 profile.gate_profiles, graph=None, source_text=text
                             )
                             row["target_llm"] = int(bool(set(sel.gates) & footprint))
+                            # The model may return fewer than k gates; random at the
+                            # same (smaller) K is the fair comparison for it.
+                            llm_k = len(sel.gates)
+                            row["llm_k"] = llm_k
+                            rnd_llm = random.Random(args.seed).sample(universe, min(llm_k, len(universe)))
+                            row["target_random_at_llm_k"] = int(bool(set(rnd_llm) & footprint))
                         except Exception as exc:  # noqa: BLE001
-                            print(f"    llm targeting failed on {vdir.name}: {exc}")
                             row["target_llm"] = ""
+                            if _is_quota_error(exc):
+                                print(f"    LLM quota/rate limit reached ({str(exc)[:160]}...)")
+                                print("    -> LLM targeting disabled for the rest of this run; "
+                                      "non-LLM measurements continue.")
+                                provider = None
+                            else:
+                                print(f"    llm targeting failed on {vdir.name}: {str(exc)[:200]}")
                 rows.append(row)
+                _write_rows(args.out / "per_variant.csv", rows)
                 print(f"  {strategy:10} {vdir.name}: {verdict:22} flagged {len(suspects):3} "
                       f"localized {row['localized']}"
                       + (f"  targeting S/R/L {row.get('target_structural')}/{row.get('target_random')}/"
                          f"{row.get('target_llm', '-')}" if args.targeting else ""))
         print(f"  ({time.monotonic() - t0:.1f}s)")
 
-    fields = sorted({k for r in rows for k in r}, key=lambda k: list(rows[0]).index(k)
-                    if k in rows[0] else 99)
-    with open(args.out / "per_variant.csv", "w", newline="", encoding="utf-8") as fh:
-        writer = csv.DictWriter(fh, fieldnames=fields)
-        writer.writeheader()
-        writer.writerows(rows)
+    _write_rows(args.out / "per_variant.csv", rows)
 
     def rate(sel, key, value=1):
         vals = [r.get(key) for r in sel if r.get(key) not in ("", None)]
@@ -173,6 +203,8 @@ def main() -> int:
                 "target_hit_structural": rate(sel, "target_structural"),
                 "target_hit_random": rate(sel, "target_random"),
                 "target_hit_llm": rate(sel, "target_llm"),
+                "target_hit_random_at_llm_k": rate(sel, "target_random_at_llm_k"),
+                "llm_scored": sum(1 for r in sel if r.get("target_llm") not in ("", None)),
             })
     with open(args.out / "summary.csv", "w", newline="", encoding="utf-8") as fh:
         writer = csv.DictWriter(fh, fieldnames=list(summary[0].keys()))
@@ -190,15 +222,15 @@ def main() -> int:
         "Target hit = the targeted fault list includes a trojan net (same K for every method).",
         "",
         "| Circuit | Strategy | Variants | Detection | False alarm (clean) | Localized "
-        "| Target hit: structural | random | LLM |",
-        "|---|---|---|---|---|---|---|---|---|",
+        "| Target hit: structural | random | LLM | random at LLM's K | LLM-scored variants |",
+        "|---|---|---|---|---|---|---|---|---|---|---|",
     ]
     for s in summary:
         lines.append(
             f"| {s['circuit']} | {s['strategy']} | {s['variants']} | {pct(s['detection_rate'])} "
             f"| {pct(s['false_alarm_on_clean'])} | {pct(s['localization_rate'])} "
             f"| {pct(s['target_hit_structural'])} | {pct(s['target_hit_random'])} "
-            f"| {pct(s['target_hit_llm'])} |"
+            f"| {pct(s['target_hit_llm'])} | {pct(s['target_hit_random_at_llm_k'])} | {s['llm_scored']} |"
         )
     (args.out / "summary.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
     print("\n" + "\n".join(lines))

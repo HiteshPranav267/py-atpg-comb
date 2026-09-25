@@ -138,10 +138,12 @@ def main() -> int:
         structural = FaultTargetSelector().select(profile.gate_profiles, graph=profile.graph)
         k = args.k or len(structural.gates)
 
-        def record(method: str, repeat: int, picked: list[str], seconds: float = 0.0, note: str = ""):
+        def record(method: str, repeat: int, picked: list[str], seconds: float = 0.0, note: str = "",
+                   limit: int | None = None):
             row = {"circuit": path.stem, "method": method, "repeat": repeat,
                    "gates": len(universe), "hard_gates": len(hard),
-                   **score(picked[:k], hard, len(universe)), "seconds": round(seconds, 3), "note": note}
+                   **score(picked[:limit or k], hard, len(universe)),
+                   "seconds": round(seconds, 3), "note": note}
             rows.append(row)
             print(f"  {method:10} #{repeat}: hits {row['hits']}/{row['k']}  "
                   f"precision {row['precision']:.3f}  recall {row['recall']:.3f}  lift {row['lift']:.2f}")
@@ -160,6 +162,8 @@ def main() -> int:
 
         if provider is not None:
             for rep in range(args.llm_repeats):
+                if provider is None:
+                    break
                 start = time.monotonic()
                 selector = FaultTargetSelector(provider=provider, max_gates=k)
                 try:
@@ -167,8 +171,22 @@ def main() -> int:
                                           source_text=parsed.source_text)
                     note = sel.strategy if sel.used_llm else "fell back to structural"
                     record("llm", rep, sel.gates, time.monotonic() - start, note)
+                    # The model often returns fewer than K gates. Score the
+                    # baselines at the same, smaller K so precision/lift are
+                    # compared like for like.
+                    kk = len(sel.gates)
+                    if kk:
+                        record("reconv@llmK", rep, reconv, limit=kk)
+                        record("scoap@llmK", rep, scoap, limit=kk)
+                        record("random@llmK", rep,
+                               random.Random(rep).sample(universe, min(kk, len(universe))), limit=kk)
                 except Exception as exc:  # noqa: BLE001 - report and keep going
-                    print(f"  llm #{rep}: failed ({exc})")
+                    text = str(exc).lower()
+                    if "429" in text or "rate limit" in text or "quota" in text:
+                        print(f"  llm #{rep}: quota/rate limit reached -- LLM disabled for the rest of this run")
+                        provider = None
+                    else:
+                        print(f"  llm #{rep}: failed ({str(exc)[:200]})")
         print(f"  ({time.monotonic() - t0:.1f}s)")
 
     if not rows:
