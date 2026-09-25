@@ -212,7 +212,13 @@ function ReportView({ report }: { report: AtpgReport }) {
             ))}
           </div>
         )}
-        <SequentialReport sequential={report.sequential} />
+        <SequentialReport
+          sequential={report.sequential}
+          jobId={report.job_id}
+          cpuTime={report.cpu_time}
+          systemInfo={report.system_info}
+        />
+        {report.verdict && <VerdictPanel verdict={report.verdict} />}
       </div>
     );
   }

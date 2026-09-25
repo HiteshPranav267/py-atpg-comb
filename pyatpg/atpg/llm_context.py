@@ -38,14 +38,20 @@ CONTEXT_GATE_LIMIT_ENV_VAR = "LLM_CONTEXT_GATES"
 #: Share of the pool given to each deterministic view. They overlap heavily
 #: on most circuits, and whatever is left after de-duplication is filled
 #: from the rarity ranking, so these are floors rather than exact splits.
-_POOL_SHARE_RAREST = 0.5
-_POOL_SHARE_HARDEST_TO_OBSERVE = 0.2
-_POOL_SHARE_ANOMALOUS = 0.3
+_POOL_SHARE_RAREST = 0.35
+_POOL_SHARE_HARDEST_TO_OBSERVE = 0.15
+_POOL_SHARE_ANOMALOUS = 0.2
+#: Reconverging fanout stems: the structural origin of most redundant and
+#: hard-to-test faults (see CircuitGraph.compute_reconvergence), and on the
+#: ISCAS benchmarks a far better predictor of the faults Atalanta cannot
+#: detect than toggle rate or SCOAP alone.
+_POOL_SHARE_RECONVERGENT = 0.3
 
 #: Columns of the compact encoding, in order. The header names them once;
 #: each row is bare values.
 COMPACT_COLUMNS = (
-    "id", "type", "role", "fan_in", "fan_out", "level", "cc0", "cc1", "co", "toggle_rate"
+    "id", "type", "role", "fan_in", "fan_out", "level", "cc0", "cc1", "co", "toggle_rate",
+    "reconv",
 )
 COMPACT_HEADER = ",".join(COMPACT_COLUMNS)
 
@@ -54,7 +60,9 @@ COMPACT_LEGEND = (
     "One gate per line, CSV. role is PI (primary input), PO (primary output) "
     "or gate. cc0/cc1/co are SCOAP controllability-to-0/1 and observability "
     "(higher = harder). toggle_rate is the fraction of random patterns on "
-    "which the net switched (lower = rarer)."
+    "which the net switched (lower = rarer). reconv is how many gates this "
+    "net's fanout branches reconverge at (0 = not a reconverging stem); "
+    "reconvergent fanout is where redundant and hard-to-test faults arise."
 )
 
 
@@ -186,6 +194,7 @@ def compact_profile_line(gate_id: str, features: dict[str, Any]) -> str:
             str(features.get("cc1", 0)),
             str(features.get("co", 0)),
             f"{float(features.get('toggle_rate', 0.0)):.4f}",
+            str(features.get("reconvergence", 0)),
         )
     )
 
@@ -279,12 +288,17 @@ def build_candidate_pool(
     )
     scored = [(p, _anomaly_score(p, by_id, graph)) for p in profiles]
     anomalous = [p for p, s in sorted(scored, key=lambda ps: -ps[1]) if s > 0]
+    reconvergent = sorted(
+        (p for p in profiles if (p.get("features", {}) or {}).get("reconvergence", 0) > 0),
+        key=lambda p: -(p.get("features", {}) or {}).get("reconvergence", 0),
+    )
 
     budget = max(0, limit - len(forced))
     quotas = (
         (rarest, int(budget * _POOL_SHARE_RAREST)),
         (hardest, int(budget * _POOL_SHARE_HARDEST_TO_OBSERVE)),
         (anomalous, int(budget * _POOL_SHARE_ANOMALOUS)),
+        (reconvergent, int(budget * _POOL_SHARE_RECONVERGENT)),
     )
 
     chosen: dict[str, dict[str, Any]] = {g: by_id[g] for g in forced}
@@ -311,7 +325,8 @@ def build_candidate_pool(
     notes = [
         f"Sent {len(pool)} of {total} gate profiles to the model ({share:.1f}%): "
         f"{counts[0]} rarest-toggling, {counts[1]} hardest-to-observe, "
-        f"{counts[2]} anomalous for their neighbourhood"
+        f"{counts[2]} anomalous for their neighbourhood, "
+        f"{counts[3]} most-reconvergent fanout stems"
         + (f", plus {len(forced)} flagged by the structural detector" if forced else "")
         + f", topped up from the rarity ranking. Set {CONTEXT_GATE_LIMIT_ENV_VAR}=0 "
         "to send every gate."

@@ -360,6 +360,7 @@ class AtpgAnalysisService:
             return self._run_sequential(
                 parsed, source_text, filename, mode, use_llm,
                 self._llm_config(use_llm, api_key, llm_provider, llm_model, llm_base_url),
+                toggle_patterns=toggle_patterns,
             )
 
         profile = profile_circuit(parsed, toggle_patterns=toggle_patterns)
@@ -637,7 +638,13 @@ class AtpgAnalysisService:
                 "unavailable_reason": f"Pattern simulation failed: {exc}",
                 "notes": [],
             }
-        return result.to_dict()
+        payload = result.to_dict()
+        payload["fault_list"] = (
+            "uncollapsed checkpoint faults (stuck-at-0/1 on every gate output and "
+            "gate input), fault-simulated by PyATPG -- a different, larger list than "
+            "Atalanta's collapsed one"
+        )
+        return payload
 
     def _run_sequential(
         self,
@@ -647,6 +654,7 @@ class AtpgAnalysisService:
         mode: AnalysisMode,
         use_llm: bool,
         llm_config: LLMConfig | None,
+        toggle_patterns: int = 3000,
     ) -> AtpgAnalysis:
         """Sequential counterpart of ``run()``, delegating to pyatpg.seq.
 
@@ -668,26 +676,33 @@ class AtpgAnalysisService:
         effective_use_llm = use_llm and mode.runs_targeted
 
         notes = [
-            "Sequential circuit: routed to the native time-frame-expansion ATPG "
-            "engine for circuits with flip-flops."
+            "Sequential circuit (no-scan model): routed to the native time-frame-expansion "
+            "ATPG engine. Flip-flops reset to 0 and only real primary outputs are observed; "
+            "choose the full-scan model for industry-standard scan testing."
         ]
-        seq_service = SequentialAtpgService()
+        seq_service = SequentialAtpgService(toggle_patterns=toggle_patterns)
 
         if effective_use_llm and llm_config is not None:
             # A real deterministic-only-vs-LLM-assisted comparison: two full
-            # runs, same seed, so the difference is attributable to the LLM.
+            # runs, same seed and same search effort, so the difference is
+            # attributable to the LLM's fault ordering.
             comp = seq_service.run_comparison(
                 source_text=source_text, filename=filename, llm_config=llm_config
             )
             notes.append(f"LLM: {llm_config.describe()}.")
             notes.extend(comp.comparison.notes)
+            main = comp.comparison.llm_assisted
+            runs = {"deterministic": comp.comparison.baseline, "llm_assisted": main}
             sequential = SequentialSummary(
                 circuit=comp.circuit,
-                analysis=comp.comparison.llm_assisted.to_dict(),
+                analysis=main.to_dict(),
                 llm_usage=comp.llm_usage,
                 comparison=comp.comparison.to_dict(),
             )
             circuit_payload = comp.circuit
+            suspects, reasons, extraction_s = (
+                comp.structural_suspects, comp.suspect_reasons, comp.extraction_s
+            )
         else:
             if use_llm and not mode.runs_targeted:
                 notes.append(
@@ -708,12 +723,19 @@ class AtpgAnalysisService:
                 use_llm=effective_use_llm,
                 llm_config=llm_config,
             )
+            main = result.analysis
+            runs = {"deterministic": main}
             sequential = SequentialSummary(
                 circuit=result.circuit,
-                analysis=result.analysis.to_dict(),
+                analysis=main.to_dict(),
                 llm_usage=result.llm_usage,
             )
             circuit_payload = result.circuit
+            suspects, reasons, extraction_s = (
+                result.structural_suspects, result.suspect_reasons, result.extraction_s
+            )
+
+        sequential.artifacts = _write_sequential_artifacts(workspace, parsed.name, runs)
 
         analysis = AtpgAnalysis(
             job_id=workspace.job_id,
@@ -723,6 +745,28 @@ class AtpgAnalysisService:
             notes=notes,
             system_info=get_system_info().to_dict(),
         )
+        # Same structural detector and verdict as the combinational path; no
+        # Atalanta runs exist to corroborate it, so the verdict rests on
+        # structure alone.
+        analysis.verdict = build_verdict(suspects, reasons, [])
+        analysis.cpu_time = {
+            "extraction_s": extraction_s,
+            "llm_s": main.timing.get("llm_s", 0.0),
+            "by_run": {
+                key: {
+                    "atpg_s": run.timing.get("total_s", 0.0),
+                    "extraction_s": extraction_s,
+                    "llm_s": run.timing.get("llm_s", 0.0),
+                    "total_s": round(
+                        extraction_s + run.timing.get("total_s", 0.0) + run.timing.get("llm_s", 0.0),
+                        3,
+                    ),
+                    "note": "Parse + structural profiling, the engine's search and final fault "
+                            "simulation, and (LLM run only) model wall-clock time.",
+                }
+                for key, run in runs.items()
+            },
+        }
         if llm_config is not None:
             _redact_secret(analysis, llm_config.api_key)
         return analysis
@@ -753,3 +797,39 @@ class AtpgAnalysisService:
             "flip_flops": statistics.get("flip_flops"),
             "is_dag": statistics.get("is_dag"),
         }
+
+
+def _write_sequential_artifacts(workspace: "JobWorkspace", name: str, runs: dict) -> dict[str, str]:
+    """Write each sequential run's test set and undetected faults as downloadable files."""
+    import json as _json
+
+    artifacts: dict[str, str] = {}
+    for key, run in runs.items():
+        seq_file = f"{name}_{key}.sequences.txt"
+        pis = sorted({pi for seq in run.sequences for vec in seq.vectors for pi in vec})
+        lines = [
+            f"# {name} -- {key} sequential test set ({len(run.sequences)} sequences)",
+            "# Apply each sequence from reset (all flip-flops 0), one vector per clock.",
+            "# Input order: " + " ".join(pis),
+        ]
+        for i, seq in enumerate(run.sequences):
+            lines.append(f"sequence {i} origin={seq.origin} cycles={seq.cycles}")
+            for cycle, vec in enumerate(seq.vectors):
+                lines.append(f"  {cycle}: " + "".join(str(vec.get(pi, 0)) for pi in pis))
+        workspace.path_for(seq_file).write_text("\n".join(lines) + "\n", encoding="utf-8")
+        artifacts[f"{key}_sequences"] = seq_file
+
+        faults_file = f"{name}_{key}.undetected.csv"
+        rows = ["fault,node,node_type,stuck_at,status"] + [
+            f"{d['fault']},{d['node']},{d['node_type']},{d['stuck_at']},{d['status']}"
+            for d in run.fault_details
+        ]
+        workspace.path_for(faults_file).write_text("\n".join(rows) + "\n", encoding="utf-8")
+        artifacts[f"{key}_undetected"] = faults_file
+
+        report_file = f"{name}_{key}.report.json"
+        workspace.path_for(report_file).write_text(
+            _json.dumps(run.to_dict(), indent=2), encoding="utf-8"
+        )
+        artifacts[f"{key}_report"] = report_file
+    return artifacts

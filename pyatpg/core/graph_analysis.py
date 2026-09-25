@@ -439,8 +439,53 @@ class CircuitGraph:
         }
 
     # ------------------------------------------------ per-gate features
+    def compute_reconvergence(self):
+        """Per node: reconvergence points fed by it as a fanout stem.
+
+        A fanout stem *reconverges* at a gate when two or more of that gate's
+        inputs both depend on the stem. Reconvergent fanout is the classic
+        source of redundant (untestable) and hard-to-test faults: the
+        branches constrain each other, so a value needed on one path can be
+        impossible to hold while propagating through the other. For every
+        node this returns how many gates its branches reconverge at (0 for a
+        node that is not a reconverging stem). Transitive fan-in sets are
+        bitsets over a DFF-as-source topological order, so the pass is
+        linear in edges times word size rather than quadratic in nodes.
+        """
+        order = self._topo_order()
+        if order is None:
+            return {}
+        index = {node: i for i, node in enumerate(order)}
+        stem_mask = 0
+        for node in order:
+            if self.G.out_degree(node) >= 2:
+                stem_mask |= 1 << index[node]
+        tfi = {}
+        counts = [0] * len(order)
+        for node in order:
+            if self.G.nodes[node].get('node_type') in ('DFF', 'SDFF'):
+                tfi[node] = 1 << index[node]
+                continue
+            shared = 0
+            seen = 0
+            for pred in self.G.predecessors(node):
+                cone = tfi.get(pred, 0)
+                shared |= seen & cone
+                seen |= cone
+            shared &= stem_mask
+            while shared:
+                low = shared & -shared
+                counts[low.bit_length() - 1] += 1
+                shared ^= low
+            tfi[node] = seen | (1 << index[node])
+        return {node: counts[i] for node, i in index.items()}
+
     def get_gate_features(self):
         cc0, cc1, co = self.compute_scoap()
+        try:
+            reconvergence = self.compute_reconvergence()
+        except Exception:  # noqa: BLE001 - an optional feature must not fail profiling
+            reconvergence = {}
         levels = self.compute_levels()
         max_level = max(levels.values()) if levels else 1
         # Reuse whatever stimulus the caller already profiled with, so the
@@ -482,7 +527,8 @@ class CircuitGraph:
                 'cc1': cc1.get(node, 0),
                 'co': co.get(node, 0),
                 'toggle_rate': t.get('toggle_rate', 0.5),
-                'neighbor_diversity': len(neighbor_types)
+                'neighbor_diversity': len(neighbor_types),
+                'reconvergence': reconvergence.get(node, 0),
             }
         return features
 
@@ -499,7 +545,8 @@ class CircuitGraph:
                 f"  Dynamic Activity: Toggle Rate={f['toggle_rate']:.6f}\n"
                 f"  Graph Topology: Fan-in={f['fan_in']}, Fan-out={f['fan_out']}, "
                 f"Centrality={f['centrality']:.2e}, Level={f['level']}\n"
-                f"  Structural: Fan-Ratio={f['fan_ratio']:.2f}, Neighborhood Diversity={f['neighbor_diversity']}\n"
+                f"  Structural: Fan-Ratio={f['fan_ratio']:.2f}, Neighborhood Diversity={f['neighbor_diversity']}, "
+                f"Reconvergence={f.get('reconvergence', 0)}\n"
             )
             profiles.append({
                 'gate_id': gate_id, 

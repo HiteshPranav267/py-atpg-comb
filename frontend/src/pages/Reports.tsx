@@ -2,6 +2,9 @@ import { FileText, Download } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useAppStore } from '@/store';
 
+/** File name without directory or extension, for comparing circuit names. */
+const stem = (name: string) => name.replace(/^.*[\\/]/, '').replace(/\.[^.]*$/, '');
+
 export default function Reports() {
   const { activeCircuit, activeFeatureSet, activeRanking, activeAtpgReport, benchmarkHistory } = useAppStore();
 
@@ -20,11 +23,20 @@ export default function Reports() {
         extraction_time_ms: activeFeatureSet.extraction_time_ms,
         atpg_coverage: activeFeatureSet.atpg_coverage,
       } : null,
-      ranking: activeRanking ? {
-        ranker_name: activeRanking.ranker_name,
-        execution_time: activeRanking.execution_time,
-        top_10: activeRanking.ranked_gates.slice(0, 10),
-      } : null,
+      // The last run of the separate Ranking page -- NOT the ranking the ATPG
+      // run above used (that lives in atpg_report.targeting). Named so the
+      // two are never confused, and dropped when it was for another circuit.
+      last_ranking_page_run:
+        activeRanking &&
+        (!activeRanking.circuit_name ||
+          stem(activeRanking.circuit_name) === stem(activeCircuit?.name ?? ''))
+          ? {
+              ranker_name: activeRanking.ranker_name,
+              circuit_name: activeRanking.circuit_name ?? activeCircuit?.name ?? null,
+              execution_time: activeRanking.execution_time,
+              top_10: activeRanking.ranked_gates.slice(0, 10),
+            }
+          : null,
       atpg_report: activeAtpgReport,
       benchmark_history: benchmarkHistory,
     };

@@ -451,6 +451,9 @@ Weigh two different kinds of evidence:
 
 1. Testability. Rarely-toggling, high fan-in, or hard to observe (high SCOAP
    CO). These faults are the ones random patterns are least likely to catch.
+   Weigh reconvergent fanout heavily (high reconv): where a stem's branches
+   rejoin, they constrain each other, which is where faults become redundant
+   or so hard that deterministic search aborts on them.
 
 2. Structural anomaly. Inserted logic often does NOT stand out on testability
    alone -- it is chosen to blend in. Look for gates whose relationship to

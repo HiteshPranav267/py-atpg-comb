@@ -61,6 +61,11 @@ class SequentialResults:
     sequence_count: int | None = None
     total_clock_cycles: int | None = None
     max_sequence_length: int | None = None
+    #: Undetected-fault breakdown (see engine.OUTCOME_DESCRIPTIONS). Unlike
+    #: Atalanta's redundant count, none of these is a proof of untestability.
+    podem_exhausted_faults: int | None = None
+    not_confirmed_faults: int | None = None
+    not_attempted_faults: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -83,9 +88,25 @@ class SequentialAnalysis:
     newly_detected_by_sequence: list[list[str]] = field(default_factory=list)
     llm: dict[str, Any] | None = None
     notes: list[str] = field(default_factory=list)
+    #: One row per undetected fault: fault, node, node_type, stuck_at, status.
+    fault_details: list[dict[str, Any]] = field(default_factory=list)
+    outcome_descriptions: dict[str, str] = field(default_factory=dict)
+    #: Per search phase: candidates tried/accepted, faults detected, seconds.
+    phases: list[dict[str, Any]] = field(default_factory=list)
+    #: The engine configuration this run actually used.
+    parameters: dict[str, Any] = field(default_factory=dict)
+    timing: dict[str, float] = field(default_factory=dict)
+    #: Why the search ended: target_coverage, time_budget, max_sequences, search_exhausted.
+    stopped_by: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
+            "fault_details": self.fault_details,
+            "outcome_descriptions": self.outcome_descriptions,
+            "phases": self.phases,
+            "parameters": self.parameters,
+            "timing": self.timing,
+            "stopped_by": self.stopped_by,
             "circuit_name": self.circuit_name,
             "results": self.results.to_dict(),
             "sequences": [s.to_dict() for s in self.sequences],
@@ -153,9 +174,10 @@ def build_sequential_comparison(
     )
 
     notes = [
-        "Both runs use the same random seed, so random-fill and PODEM search "
-        "identical candidates first; only the LLM-2-assisted phase (and the "
-        "deeper local search it unlocks) can differ between the two columns."
+        "Both runs use the same random seed and the same search effort: random-fill "
+        "and PODEM search identical candidates, then both run an extra deep-search "
+        "phase with the same budget -- the deterministic run in natural fault order, "
+        "the LLM run in the order the LLM chose. Any difference comes from that ordering."
     ]
     if coverage_delta is not None and coverage_delta <= 0 and not additional:
         notes.append(

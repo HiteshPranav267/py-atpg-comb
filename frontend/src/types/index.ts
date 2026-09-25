@@ -188,6 +188,9 @@ export interface AtpgResults {
   aborted_faults: number | null;
   backtrackings: number | null;
   detected_faults: number | null;
+  // (detected + redundant) / collapsed, percent.
+  fault_efficiency?: number | null;
+  fault_list?: string;
 }
 
 export interface TimingBreakdown {
@@ -395,6 +398,26 @@ export interface SequentialResults {
   sequence_count: number | null;
   total_clock_cycles: number | null;
   max_sequence_length: number | null;
+  // Breakdown of undetected faults by why the engine gave up on them.
+  podem_exhausted_faults?: number | null;
+  not_confirmed_faults?: number | null;
+  not_attempted_faults?: number | null;
+}
+
+export interface SequentialFaultDetail {
+  fault: string;
+  node: string;
+  node_type: string;
+  stuck_at: number;
+  status: string;
+}
+
+export interface SequentialPhase {
+  phase: string;
+  candidates: number;
+  accepted: number;
+  faults_detected: number;
+  seconds: number;
 }
 
 export interface SequentialAnalysisData {
@@ -406,6 +429,12 @@ export interface SequentialAnalysisData {
   newly_detected_by_sequence: string[][];
   llm: Record<string, unknown> | null;
   notes: string[];
+  fault_details?: SequentialFaultDetail[];
+  outcome_descriptions?: Record<string, string>;
+  phases?: SequentialPhase[];
+  parameters?: Record<string, string | number | boolean | null>;
+  timing?: { search_s?: number; final_fault_sim_s?: number; total_s?: number; llm_s?: number };
+  stopped_by?: string | null;
 }
 
 export interface LlmUsage {
@@ -450,6 +479,8 @@ export interface SequentialSummary {
   //: Populated instead of relying on `analysis` alone when Compare mode ran
   //: a deterministic-only pass and an LLM-assisted pass back to back.
   comparison?: SequentialComparison | null;
+  // Downloadable files in the job workspace: key -> filename.
+  artifacts?: Record<string, string>;
 }
 
 // ---------------------------------------------------------------------------
@@ -504,7 +535,7 @@ export interface CpuTimeByRun {
 export interface CpuTimeBreakdown {
   extraction_s: number;
   llm_s: number;
-  by_run: Partial<Record<'targeted' | 'non_targeted', CpuTimeByRun>>;
+  by_run: Partial<Record<'targeted' | 'non_targeted' | 'deterministic' | 'llm_assisted', CpuTimeByRun>>;
 }
 
 export interface SystemInfo {
@@ -533,7 +564,7 @@ export interface AtpgReport {
   llm_usage?: LlmUsage;
   // Feature-extraction and per-run CPU time, split so a non-targeted run's
   // total never includes work it didn't actually do (see the backend's
-  // _cpu_time_breakdown). Empty on the sequential path.
+  // _cpu_time_breakdown). On the sequential path keyed deterministic / llm_assisted.
   cpu_time?: CpuTimeBreakdown;
   // The machine that actually produced every timing number in this report.
   system_info?: SystemInfo;

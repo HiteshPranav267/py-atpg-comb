@@ -64,6 +64,32 @@ class EngineConfig:
     #: LLM-assisted run still has time left for its own phase.
     time_budget_s: float | None = 100.0
     deterministic_share: float = 0.6
+    #: Run the deep-search phase even without a ranker, in natural fault
+    #: order. The deterministic-only side of a comparison sets this, so both
+    #: sides get the same search effort and any coverage gap is attributable
+    #: to the LLM's *ordering* rather than to the LLM run simply searching
+    #: longer.
+    extended_search: bool = False
+
+    def to_dict(self) -> dict:
+        return {k: getattr(self, k) for k in self.__dataclass_fields__}
+
+
+#: Why a fault ended the run undetected -- the sequential counterpart of
+#: Atalanta's redundant / aborted classification.
+OUTCOME_EXHAUSTED = "podem_exhausted"
+OUTCOME_ABORTED = "aborted"
+OUTCOME_NOT_CONFIRMED = "test_not_confirmed"
+OUTCOME_NOT_ATTEMPTED = "not_attempted"
+OUTCOME_DESCRIPTIONS = {
+    OUTCOME_EXHAUSTED: "PODEM searched every unrolling depth to exhaustion without finding a "
+    "test. Not a proof of redundancy: the search injects the fault in the first frame only and "
+    "treats the starting state as free.",
+    OUTCOME_ABORTED: "PODEM hit its backtrack limit before finding a test or exhausting the search.",
+    OUTCOME_NOT_CONFIRMED: "PODEM found a test in the unrolled circuit, but simulated from reset it "
+    "did not detect the fault (the state it assumed is unreachable, or filled inputs differed).",
+    OUTCOME_NOT_ATTEMPTED: "The sequence/time budget ran out before this fault was searched.",
+}
 
 
 @dataclass
@@ -89,6 +115,10 @@ class SequentialAtpgEngine:
         self.candidate_ranker = candidate_ranker
         self.on_delta = on_delta
         self.rng = random.Random(self.config.rng_seed)
+        #: fault name -> OUTCOME_* for faults PODEM was run on
+        self._outcomes: dict[str, str] = {}
+        self._phase = "random_fill"
+        self._phase_stats: dict[str, dict] = {}
 
     # ------------------------------------------------------------ helpers
     def _score(self, state: _RunState, candidate: TestSequence) -> tuple[bool, list[str]]:
@@ -122,6 +152,13 @@ class SequentialAtpgEngine:
         )
         newly = delta[0] if delta else []
         accepted = bool(newly)
+        stats = self._phase_stats.setdefault(
+            self._phase, {"candidates": 0, "accepted": 0, "faults_detected": 0, "seconds": 0.0}
+        )
+        stats["candidates"] += 1
+        if accepted:
+            stats["accepted"] += 1
+            stats["faults_detected"] += len(newly)
         if accepted:
             before = state.results.fault_coverage
             state.sequences.append(candidate)
@@ -183,6 +220,7 @@ class SequentialAtpgEngine:
         return cache[n_frames]
 
     def _podem_candidate(self, fault: SequentialFault) -> TestSequence | None:
+        any_aborted = False
         for n_frames in range(1, self.config.podem_max_frames + 1):
             unrolled, po_names, topo_order = self._unrolled(n_frames)
             fault_node = f"f0_{fault.node}"
@@ -198,7 +236,10 @@ class SequentialAtpgEngine:
                 vectors: list[dict[str, int]] = [dict() for _ in range(n_frames)]
                 for uname, (frame, orig) in unrolled.pi_frames.items():
                     vectors[frame][orig] = result.pi_values.get(uname, self.rng.randint(0, 1))
+                self._outcomes[fault.name] = OUTCOME_NOT_CONFIRMED
                 return TestSequence(vectors=vectors, origin=f"podem[{n_frames}f]")
+            any_aborted = any_aborted or result.aborted
+        self._outcomes[fault.name] = OUTCOME_ABORTED if any_aborted else OUTCOME_EXHAUSTED
         return None
 
     # ------------------------------------------------------------ phases
@@ -235,23 +276,28 @@ class SequentialAtpgEngine:
         justify the call -- see ``llm_activation_threshold``.
         """
         notes: list[str] = []
-        if self.candidate_ranker is None:
+        if self.candidate_ranker is None and not self.config.extended_search:
             return notes
         if len(state.undetected) < self.config.llm_activation_threshold:
             return notes
         if self._at_target(state) or not self._budget_left(state):
             return notes
 
-        try:
-            ranked = self.candidate_ranker(list(state.undetected), {"circuit_name": self.circuit_name})
-        except LLMUnavailableError:
-            # The provider itself failed (credits, rate limit, outage). The
-            # user asked for an LLM-assisted run, so stop and report that
-            # instead of quietly finishing without the model.
-            raise
-        except Exception as exc:  # noqa: BLE001 - ranker ran but its answer was unusable
-            notes.append(f"LLM candidate ranking unavailable ({exc}); used natural fault order.")
-            ranked = None
+        if self.candidate_ranker is None:
+            ranked = None  # extended search: same effort, natural fault order
+        else:
+            try:
+                ranked = self.candidate_ranker(
+                    list(state.undetected), {"circuit_name": self.circuit_name}
+                )
+            except LLMUnavailableError:
+                # The provider itself failed (credits, rate limit, outage). The
+                # user asked for an LLM-assisted run, so stop and report that
+                # instead of quietly finishing without the model.
+                raise
+            except Exception as exc:  # noqa: BLE001 - ranker ran but its answer was unusable
+                notes.append(f"LLM candidate ranking unavailable ({exc}); used natural fault order.")
+                ranked = None
 
         ordered = ranked or list(state.undetected)
         for fault in ordered:
@@ -276,6 +322,25 @@ class SequentialAtpgEngine:
         return notes
 
     # -------------------------------------------------------------- run
+    def _run_phase(self, name: str, fn, state: _RunState):
+        self._phase = name
+        stats = self._phase_stats.setdefault(
+            name, {"candidates": 0, "accepted": 0, "faults_detected": 0, "seconds": 0.0}
+        )
+        t0 = time.monotonic()
+        try:
+            return fn(state)
+        finally:
+            stats["seconds"] = round(stats["seconds"] + time.monotonic() - t0, 3)
+
+    def _node_kind(self, node: str) -> str:
+        gate = self.circuit.gates.get(node)
+        if gate is not None:
+            return gate.gtype
+        if node in {ff.q for ff in self.circuit.flipflops}:
+            return "FF-Q"
+        return "PI"
+
     def run(self) -> SequentialAnalysis:
         faults = checkpoint_fault_list(self.circuit)
         state = _RunState(faults=faults, undetected=list(faults))
@@ -285,12 +350,21 @@ class SequentialAtpgEngine:
         self._timed_out = False
 
         self._deadline = start + budget * self.config.deterministic_share if budget else None
-        self._phase_random_fill(state)
+        self._run_phase("random_fill", self._phase_random_fill, state)
         if not self._at_target(state) and self._budget_left(state):
-            self._phase_podem(state)
+            self._run_phase("podem", self._phase_podem, state)
         self._deadline = start + budget if budget else None
+        extra_phase = "llm_guided" if self.candidate_ranker is not None else "extended_search"
         if not self._at_target(state) and self._budget_left(state):
-            notes.extend(self._phase_llm(state))
+            if self.candidate_ranker is not None or self.config.extended_search:
+                notes.extend(self._run_phase(extra_phase, self._phase_llm, state))
+        search_seconds = time.monotonic() - start
+        stopped_by = "target_coverage" if self._at_target(state) else (
+            "time_budget" if self._timed_out else (
+                "max_sequences" if len(state.sequences) >= self.config.max_sequences
+                else "search_exhausted"
+            )
+        )
         if self._timed_out:
             notes.append(
                 f"Stopped at the {budget:g}s search time budget; the coverage shown is "
@@ -298,27 +372,46 @@ class SequentialAtpgEngine:
             )
         self._deadline = None
 
-        results = state.results or SequentialResults(
-            total_faults=len(faults),
-            detected_faults=0,
-            undetected_faults=len(faults),
-            aborted_faults=0,
-            fault_coverage=0.0,
-            sequence_count=0,
-            total_clock_cycles=0,
-            max_sequence_length=0,
-        )
-        _final_results, _detections, undetected, newly_by_seq = evaluate_coverage(
+        t0 = time.monotonic()
+        final, _detections, undetected, newly_by_seq = evaluate_coverage(
             self.circuit, faults, state.sequences
         )
+        final_sim_seconds = time.monotonic() - t0
         detected_names = sorted(set(f.name for f in faults) - set(f.name for f in undetected))
+
+        fault_details = []
+        counts = {k: 0 for k in OUTCOME_DESCRIPTIONS}
+        for f in undetected:
+            outcome = self._outcomes.get(f.name, OUTCOME_NOT_ATTEMPTED)
+            counts[outcome] += 1
+            fault_details.append({
+                "fault": f.name,
+                "node": f.node,
+                "node_type": self._node_kind(f.node),
+                "stuck_at": f.stuck_at,
+                "status": outcome,
+            })
+        final.aborted_faults = counts[OUTCOME_ABORTED]
+        final.podem_exhausted_faults = counts[OUTCOME_EXHAUSTED]
+        final.not_confirmed_faults = counts[OUTCOME_NOT_CONFIRMED]
+        final.not_attempted_faults = counts[OUTCOME_NOT_ATTEMPTED]
 
         return SequentialAnalysis(
             circuit_name=self.circuit_name,
-            results=_final_results,
+            results=final,
             sequences=state.sequences,
             detected=detected_names,
             undetected=[f.name for f in undetected],
             newly_detected_by_sequence=newly_by_seq,
             notes=notes,
+            fault_details=fault_details,
+            outcome_descriptions=dict(OUTCOME_DESCRIPTIONS),
+            phases=[{"phase": k, **v} for k, v in self._phase_stats.items()],
+            parameters=self.config.to_dict(),
+            timing={
+                "search_s": round(search_seconds, 3),
+                "final_fault_sim_s": round(final_sim_seconds, 3),
+                "total_s": round(search_seconds + final_sim_seconds, 3),
+            },
+            stopped_by=stopped_by,
         )

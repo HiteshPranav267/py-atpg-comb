@@ -7,7 +7,8 @@ without needing to know the internals of either.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+import time
+from dataclasses import dataclass, field
 from typing import Any
 
 from pyatpg.atpg.structural import ParsedCircuit, StructuralProfile, parse_circuit, profile_circuit
@@ -30,6 +31,11 @@ class SequentialAnalysisResult:
     circuit: dict
     analysis: SequentialAnalysis
     llm_usage: dict
+    #: Structural trojan evidence (same detector as the combinational path).
+    structural_suspects: list[str] = field(default_factory=list)
+    suspect_reasons: list[str] = field(default_factory=list)
+    #: Parse + structural profiling wall time, seconds.
+    extraction_s: float = 0.0
 
 
 @dataclass
@@ -39,12 +45,32 @@ class SequentialComparisonResult:
     #: The LLM-assisted run's own usage payload, so the caller can surface
     #: it (API calls, token estimates) without digging into `comparison`.
     llm_usage: dict
+    structural_suspects: list[str] = field(default_factory=list)
+    suspect_reasons: list[str] = field(default_factory=list)
+    extraction_s: float = 0.0
 
 
 class SequentialAtpgService:
-    def __init__(self, api_key: str | None = None, llm_provider: str | None = None):
+    def __init__(
+        self,
+        api_key: str | None = None,
+        llm_provider: str | None = None,
+        toggle_patterns: int = 3000,
+    ):
         self._explicit_api_key = api_key
         self._explicit_provider = llm_provider
+        self._toggle_patterns = toggle_patterns
+        self._extraction_s = 0.0
+
+    @staticmethod
+    def _suspects(profile: StructuralProfile) -> tuple[list[str], list[str]]:
+        """Structural trojan-shape evidence, as on the combinational path."""
+        from pyatpg.atpg.suspects import find_structural_suspects
+
+        try:
+            return find_structural_suspects(profile.gate_profiles, profile.graph)
+        except Exception:  # noqa: BLE001 - detector failure must not fail the run
+            return [], []
 
     def _llm_config(
         self, use_llm: bool, request_key: str | None, llm_config: LLMConfig | None
@@ -61,8 +87,10 @@ class SequentialAtpgService:
         )
 
     def _parse(self, source_text: str, filename: str) -> tuple[ParsedCircuit, StructuralProfile]:
+        t0 = time.monotonic()
         parsed = parse_circuit(source_text, filename)
-        profile = profile_circuit(parsed)
+        profile = profile_circuit(parsed, toggle_patterns=self._toggle_patterns)
+        self._extraction_s = time.monotonic() - t0
         if not is_combinational_part_acyclic(parsed.circuit):
             raise ValueError(
                 "This circuit has a combinational feedback loop that is not broken by "
@@ -116,8 +144,10 @@ class SequentialAtpgService:
         max_sequences: int,
         rng_seed: int | None = None,
         llm_config: LLMConfig | None = None,
+        extended_search: bool = False,
     ) -> tuple[SequentialAnalysis, dict]:
         llm = self._llm_config(use_llm, api_key, llm_config)
+        llm_seconds = 0.0
         candidate_ranker = None
         llm_usage: dict = {"enabled": False}
 
@@ -127,6 +157,7 @@ class SequentialAtpgService:
             from pyatpg.llm.token_tracker import TokenTracker
             from pyatpg.llm.vector_generator import LLMFaultPrioritizer
 
+            t0 = time.monotonic()
             provider = create_provider(llm)
             tracker = TokenTracker()
             summary = CircuitContextAnalyzer(provider, tracker).analyze(
@@ -134,10 +165,23 @@ class SequentialAtpgService:
             )
             store = LocalContextStore.build(parsed.circuit)
             prioritizer = LLMFaultPrioritizer(provider, store, tracker, summary)
-            candidate_ranker = prioritizer.rank
+            llm_seconds += time.monotonic() - t0
+
+            def candidate_ranker(faults, context, _rank=prioritizer.rank):
+                nonlocal llm_seconds
+                start = time.monotonic()
+                try:
+                    return _rank(faults, context)
+                finally:
+                    llm_seconds += time.monotonic() - start
+
             llm_usage = {"enabled": True, "tracker": tracker, "summary": summary}
 
-        config = EngineConfig(target_coverage=target_coverage, max_sequences=max_sequences)
+        config = EngineConfig(
+            target_coverage=target_coverage,
+            max_sequences=max_sequences,
+            extended_search=extended_search,
+        )
         if rng_seed is not None:
             config.rng_seed = rng_seed
         engine = SequentialAtpgEngine(
@@ -147,6 +191,7 @@ class SequentialAtpgService:
             candidate_ranker=candidate_ranker,
         )
         analysis = engine.run()
+        analysis.timing["llm_s"] = round(llm_seconds, 3)
 
         usage_payload = {"enabled": llm_usage["enabled"]}
         if llm_usage["enabled"]:
@@ -173,10 +218,14 @@ class SequentialAtpgService:
             llm_config=llm_config,
         )
         analysis.notes = self._implicit_input_notes(parsed) + analysis.notes
+        suspects, reasons = self._suspects(profile)
         return SequentialAnalysisResult(
             circuit=self._circuit_payload(parsed, profile),
             analysis=analysis,
             llm_usage=llm_usage,
+            structural_suspects=suspects,
+            suspect_reasons=reasons,
+            extraction_s=round(self._extraction_s, 3),
         )
 
     def run_comparison(
@@ -195,9 +244,13 @@ class SequentialAtpgService:
         rather than differences from random-fill drawing different candidates.
         """
         parsed, profile = self._parse(source_text, filename)
+        # The baseline runs the same extra deep-search phase as the LLM run,
+        # in natural fault order, so the comparison measures the LLM's
+        # ordering -- not the LLM run simply getting more search effort.
         baseline, _baseline_usage = self._run_engine(
             parsed, profile, source_text, False, None,
             target_coverage, max_sequences, rng_seed=_COMPARISON_SEED,
+            extended_search=True,
         )
         llm_assisted, llm_usage = self._run_engine(
             parsed, profile, source_text, True, api_key,
@@ -212,8 +265,12 @@ class SequentialAtpgService:
                 "deterministic-only too -- add a key in Settings for a real comparison.",
             )
         comparison.notes = self._implicit_input_notes(parsed) + comparison.notes
+        suspects, reasons = self._suspects(profile)
         return SequentialComparisonResult(
             circuit=self._circuit_payload(parsed, profile),
             comparison=comparison,
             llm_usage=llm_usage,
+            structural_suspects=suspects,
+            suspect_reasons=reasons,
+            extraction_s=round(self._extraction_s, 3),
         )

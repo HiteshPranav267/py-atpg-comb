@@ -91,6 +91,19 @@ class AtpgResults:
             return None
         return self.collapsed_faults - self.redundant_faults - self.aborted_faults
 
+    @property
+    def fault_efficiency(self) -> float | None:
+        """(detected + proven-redundant) / collapsed, percent.
+
+        The standard ATPG completeness metric: a redundant fault has been
+        proven untestable, so it is resolved even though no pattern detects
+        it. Only aborted faults count against it.
+        """
+        detected = self.detected_faults
+        if detected is None or not self.collapsed_faults:
+            return None
+        return round(100.0 * (detected + self.redundant_faults) / self.collapsed_faults, 3)
+
 
 @dataclass
 class TimingBreakdown:
@@ -178,6 +191,10 @@ class AtalantaRun:
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
         data["results"]["detected_faults"] = self.results.detected_faults
+        data["results"]["fault_efficiency"] = self.results.fault_efficiency
+        #: Which fault list the Atalanta counts are over (see pattern_coverage
+        #: for the uncollapsed checkpoint list the app's own simulator uses).
+        data["results"]["fault_list"] = "Atalanta collapsed fault list"
         data["test_vectors"]["count"] = self.test_vectors.count
         return data
 
@@ -197,6 +214,8 @@ class SequentialSummary:
     #: Populated instead of `analysis`/`llm_usage` when a comparison run was
     #: performed (deterministic-only vs LLM-assisted, run back to back).
     comparison: dict[str, Any] | None = None
+    #: Downloadable files written to the job workspace: key -> filename.
+    artifacts: dict[str, str] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -204,6 +223,7 @@ class SequentialSummary:
             "analysis": self.analysis,
             "llm_usage": self.llm_usage,
             "comparison": self.comparison,
+            "artifacts": self.artifacts,
         }
 
 

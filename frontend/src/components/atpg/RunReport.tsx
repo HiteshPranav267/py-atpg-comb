@@ -81,12 +81,18 @@ function AtpgSummary({
           hint={run.targeted ? 'of the targeted faults, not the circuit' : 'of the full collapsed fault list'}
           emphasis
         />
+        <Stat
+          label="Fault efficiency"
+          value={metric(r.fault_efficiency, { suffix: ' %' })}
+          hint="(detected + proven redundant) / collapsed — only aborted faults count against it"
+          emphasis={!run.targeted}
+        />
         <Stat label="Patterns before compaction" value={r.patterns_before_compaction} />
         <Stat label="Patterns after compaction" value={r.patterns_after_compaction} />
         <Stat
-          label="Collapsed faults"
+          label="Collapsed faults (Atalanta)"
           value={r.collapsed_faults}
-          hint={run.targeted ? 'the coverage denominator' : undefined}
+          hint={run.targeted ? 'the coverage denominator' : "Atalanta's equivalence-collapsed fault list"}
         />
         <Stat label="Detected faults" value={r.detected_faults} hint="collapsed − redundant − aborted" />
         <Stat label="Redundant faults" value={r.redundant_faults} />
@@ -175,7 +181,7 @@ function PatternCoverageStat({ run }: { run: AtpgRun }) {
       <Stat
         label="Whole-circuit coverage of these patterns"
         value={metric(pc.coverage, { suffix: ' %' })}
-        hint={`${pc.patterns.toLocaleString()} patterns fault-simulated over all ${pc.total_faults.toLocaleString()} gate-output and input stuck-at faults`}
+        hint={`${pc.patterns.toLocaleString()} patterns fault-simulated over ${pc.total_faults.toLocaleString()} uncollapsed checkpoint faults (a different list from Atalanta's collapsed one)`}
         emphasis={run.targeted}
       />
       <Stat label="Faults detected by these patterns" value={pc.detected_faults} hint="of the whole circuit, uncollapsed" />
