@@ -51,6 +51,16 @@ class CombinationalPayloadInserter:
             # But the module signature will change if we rename inputs. 
             # It's safer to avoid targeting primary inputs, as handled in the strategy class.
 
+        if self.gate_type == "MUX":
+            # A 2:1 mux that selects a constant 0 over the real signal while
+            # the trigger fires: out = trigger ? 0 : orig = orig AND NOT
+            # trigger. The circuit model has no MUX primitive, so it is built
+            # from an inverter and an AND.
+            inverted_trigger = f"{target_net}_ht_ntrig"
+            circuit.add_gate(gtype="NOT", output=inverted_trigger, inputs=[trigger_net])
+            circuit.add_gate(gtype="AND", output=target_net, inputs=[orig_net_name, inverted_trigger])
+            return [gate_name], target_net
+
         # Add the payload gate
         circuit.add_gate(
             gtype=self.gate_type,
