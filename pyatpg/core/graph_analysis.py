@@ -383,7 +383,12 @@ class CircuitGraph:
         # Build result dict
         max_possible = valid_patterns - 1  # transitions happen between consecutive patterns
         result = {}
-        all_signals = set(list(transitions_01.keys()) + list(transitions_10.keys()))
+        # Every simulated net gets a rate -- including those that never
+        # toggled. Building this only from the transition counters dropped
+        # constant-over-the-run nets entirely, and callers then substituted
+        # the default 0.5: the rarest, most trigger-like signals in a circuit
+        # were reported as perfectly ordinary ones.
+        all_signals = set(prev_values) | set(transitions_01) | set(transitions_10)
         for gate in all_signals:
             t01 = transitions_01.get(gate, 0)
             t10 = transitions_10.get(gate, 0)
