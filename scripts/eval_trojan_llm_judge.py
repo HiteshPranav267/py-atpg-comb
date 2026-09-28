@@ -112,10 +112,12 @@ def main() -> int:
         provider = create_provider(config)
         model = config.model
 
-        def complete(prompt: str) -> str:
+        def complete(prompt: str, n_candidates: int) -> str:
             def call():
+                # Reply reservation scales with the batch actually sent: it
+                # counts against the provider's per-request token cap.
                 return provider.complete(prompt, json_mode=True,
-                                         max_output_tokens=60 * args.batch_size + 200)
+                                         max_output_tokens=45 * n_candidates + 150)
             return call_with_quota_wait(call, args.llm_wait * 3600) if args.llm_wait else call()
 
         complete.last_usage = lambda: getattr(provider, "last_usage", None)

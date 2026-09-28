@@ -20,6 +20,11 @@ _RETRY_RE = re.compile(r"try again in\s+(?:(\d+)h)?\s*(?:(\d+)m)?\s*(?:([\d.]+)s
 
 def is_quota_error(exc: BaseException) -> bool:
     text = str(exc).lower()
+    # A request too large for the per-request cap (HTTP 413) also says
+    # "rate_limit_exceeded" on Groq, but waiting never fixes it -- the caller
+    # has to send less -- so it must not be retried here.
+    if "413" in text or "too large" in text or "reduce your message size" in text:
+        return False
     return "429" in text or "rate limit" in text or "rate-limit" in text or "quota" in text
 
 

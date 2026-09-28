@@ -86,15 +86,17 @@ class TrojanCandidateJudge:
         complete: Callable[[str], str],
         model_name: str,
         cache_path: Path,
-        batch_size: int = 10,
+        batch_size: int = 20,
+        prompt_token_budget: int = 5200,
         seed: int = 0,
         log: Callable[[str], None] = print,
     ):
-        """``complete`` sends one prompt and returns the raw reply text."""
+        """``complete(prompt, n_candidates)`` sends one prompt and returns the raw reply text."""
         self.complete = complete
         self.model_name = model_name
         self.cache_path = Path(cache_path)
         self.batch_size = batch_size
+        self.prompt_token_budget = prompt_token_budget
         self.rng = random.Random(seed)
         self.log = log
         self.calls = 0
@@ -118,8 +120,20 @@ class TrojanCandidateJudge:
         """Probability per context key. None only if the model never answered for it."""
         todo = [k for k in contexts if self._ckey(k) not in self.cache]
         self.rng.shuffle(todo)
-        for i in range(0, len(todo), self.batch_size):
-            self._judge_batch({k: contexts[k] for k in todo[i:i + self.batch_size]})
+        # Pack batches by estimated size, not a fixed count: providers cap a
+        # single request (Groq's free tier: 8000 tokens including the reply
+        # reservation), and contexts vary a lot in length.
+        batch: dict[str, str] = {}
+        size = _tokens(_INSTRUCTIONS)
+        for k in todo:
+            t = _tokens(contexts[k]) + 8
+            if batch and (len(batch) >= self.batch_size or size + t > self.prompt_token_budget):
+                self._judge_batch(batch)
+                batch, size = {}, _tokens(_INSTRUCTIONS)
+            batch[k] = contexts[k]
+            size += t
+        if batch:
+            self._judge_batch(batch)
         return {k: (self.cache.get(self._ckey(k)) or {}).get("p") for k in contexts}
 
     def _judge_batch(self, batch: dict[str, str], attempt: int = 0) -> None:
@@ -127,7 +141,17 @@ class TrojanCandidateJudge:
         body = "\n\n".join(f"### Candidate {cid}\n{batch[k]}" for cid, k in ids.items())
         prompt = f"{_INSTRUCTIONS}\n\n{body}"
         started = time.monotonic()
-        reply = self.complete(prompt) or ""
+        try:
+            reply = self.complete(prompt, len(batch)) or ""
+        except Exception as exc:  # noqa: BLE001 - only a size rejection is handled here
+            if _is_too_large(exc) and len(batch) > 1:
+                # Our estimate undershot the provider's tokenizer: halve and retry.
+                items = list(batch.items())
+                half = len(items) // 2
+                self._judge_batch(dict(items[:half]), attempt)
+                self._judge_batch(dict(items[half:]), attempt)
+                return
+            raise
         self.calls += 1
         usage = getattr(self.complete, "last_usage", None)
         if callable(usage):
@@ -153,6 +177,16 @@ class TrojanCandidateJudge:
             else:
                 self.failed += len(missing)
                 self.log(f"    judge: no usable answer for {len(missing)} candidate(s)")
+
+
+def _tokens(text: str) -> int:
+    """Conservative token estimate (these tables tokenize densely: ~3 chars/token)."""
+    return len(text) // 3 + 1
+
+
+def _is_too_large(exc: BaseException) -> bool:
+    text = str(exc).lower()
+    return "413" in text or "too large" in text or "reduce your message size" in text
 
 
 def _parse(reply: str) -> dict[str, dict]:
