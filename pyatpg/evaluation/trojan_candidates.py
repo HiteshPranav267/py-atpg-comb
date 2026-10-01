@@ -383,7 +383,7 @@ def facts_text(facts: dict[str, float]) -> str:
         (0, "0"), (2, "1-2"), (5, "3-5"), (10, "6-10"), (10**9, "11+")) if d <= limit)
     return (
         "facts: "
-        f"T_as_rare {pct(_bucket(facts['share_gates_as_rare'], 0.05))} | "
+        f"T_rarer_than {pct(_bucket(1 - facts['share_gates_as_rare'], 0.05))} | "
         f"T_siblings {facts['trigger_siblings']} | "
         f"T_in_depth_spread {facts['trigger_input_depth_spread']} | "
         f"link {'inv' if facts['via_inverter'] else 'direct'} | "

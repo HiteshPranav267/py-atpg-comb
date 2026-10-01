@@ -110,12 +110,13 @@ Evidence for H_trojan:
   depths (large T_in_depth_spread): it was wired in rather than built as part
   of a decoding structure;
 - T is much rarer than its neighbourhood (toggle far below
-  neigh_median_toggle) AND few gates in the circuit are as rare (low T_as_rare).
+  neigh_median_toggle) AND rarer than almost every gate in the circuit
+  (T_rarer_than close to 100%).
 Evidence for H_normal:
 - T shares inputs with sibling gates (T_siblings > 0): decoder, comparator or
   state-condition logic;
-- many gates in this circuit are as rare as T (high T_as_rare): rarity is
-  common here, so it does not single T out;
+- many gates in this circuit are as rare as T (T_rarer_than well below
+  100%): rarity is common here, so it does not single T out;
 - P's type is common in the circuit and around it; O also drives other logic;
 - the neighbourhood is uniformly rare or T's rarity matches it.
 
@@ -125,7 +126,8 @@ internal); toggle = fraction of random input patterns on which the net
 switched; fan_in / fan_out = total connections; depth = logic levels below the
 shallowest gate shown; inputs = the shown gates driving it ("kext" = k inputs
 not shown). The "facts" line summarises the candidate in this circuit:
-T_as_rare = share of the circuit's gates at least as rare as T; T_siblings =
+T_rarer_than = share of the circuit's gates that switch more often than T
+(100% = T is the rarest gate in the circuit); T_siblings =
 other gates reading 2+ of T's inputs; T_in_depth_spread = depth range of T's
 inputs; link = direct or via inverter; P_type_share = share of gates of P's
 type in the circuit and within 2 hops; P_fan_out; P_reach = primary outputs P
