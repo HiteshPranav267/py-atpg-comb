@@ -261,6 +261,7 @@ class AtpgAnalysisService:
         request_provider: str | None = None,
         request_model: str | None = None,
         request_base_url: str | None = None,
+        request_fallbacks: list[dict[str, Any]] | None = None,
     ) -> LLMConfig | None:
         """Resolve which model (and credential) this request should use.
 
@@ -281,6 +282,7 @@ class AtpgAnalysisService:
             fallback_provider=self._explicit_provider,
             fallback_model=self._explicit_model,
             fallback_base_url=self._explicit_base_url,
+            fallbacks=request_fallbacks,
         )
 
     def run(
@@ -296,6 +298,7 @@ class AtpgAnalysisService:
         llm_model: str | None = None,
         llm_base_url: str | None = None,
         full_scan: bool = False,
+        llm_fallbacks: list[dict[str, Any]] | None = None,
     ) -> AtpgAnalysis:
         """Execute an analysis.
 
@@ -321,6 +324,9 @@ class AtpgAnalysisService:
                 None/"auto" sniffs it from the key's prefix.
             llm_model: model id override; each provider has a sensible default.
             llm_base_url: endpoint override for OpenAI-compatible providers.
+            llm_fallbacks: backup credentials (dicts with ``api_key`` and
+                optionally ``provider``/``model``/``base_url``), used in turn
+                when a key hits its rate/quota limit or otherwise fails.
             backtrack_limit: Atalanta's own search-effort cap (its -b flag),
                 applied to every run this call makes. None leaves Atalanta's
                 built-in default (10) in effect. Raising it lets a fault that
@@ -359,7 +365,8 @@ class AtpgAnalysisService:
             # engine (pyatpg.seq) instead of rejecting the circuit.
             return self._run_sequential(
                 parsed, source_text, filename, mode, use_llm,
-                self._llm_config(use_llm, api_key, llm_provider, llm_model, llm_base_url),
+                self._llm_config(use_llm, api_key, llm_provider, llm_model, llm_base_url,
+                                 llm_fallbacks),
                 toggle_patterns=toggle_patterns,
             )
 
@@ -379,7 +386,8 @@ class AtpgAnalysisService:
         # LLM at all.
         effective_use_llm = use_llm and mode.runs_targeted
         llm_config = self._llm_config(
-            effective_use_llm, api_key, llm_provider, llm_model, llm_base_url
+            effective_use_llm, api_key, llm_provider, llm_model, llm_base_url,
+            llm_fallbacks,
         )
         # One provider instance serves both the target selector and the
         # analyst, so a single request never authenticates twice.
@@ -542,7 +550,8 @@ class AtpgAnalysisService:
                     "model": llm_config.model,
                     **tracker.summary(),
                 }
-            _redact_secret(analysis, llm_config.api_key)
+            for secret in llm_config.api_keys:
+                _redact_secret(analysis, secret)
 
         analysis.system_info = get_system_info().to_dict()
         analysis.cpu_time = _cpu_time_breakdown(
@@ -768,7 +777,8 @@ class AtpgAnalysisService:
             },
         }
         if llm_config is not None:
-            _redact_secret(analysis, llm_config.api_key)
+            for secret in llm_config.api_keys:
+                _redact_secret(analysis, secret)
         return analysis
 
     @staticmethod

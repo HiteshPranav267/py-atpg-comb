@@ -60,6 +60,7 @@ def run_ranking(req: RankingRequestSchema):
             llm_provider=req.llm_provider,
             llm_model=req.llm_model,
             llm_base_url=req.llm_base_url,
+            llm_fallbacks=[k.model_dump() for k in req.llm_fallbacks or []],
         )
 
         get_analytics_store().record(

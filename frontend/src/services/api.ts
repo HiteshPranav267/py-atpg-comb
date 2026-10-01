@@ -53,6 +53,24 @@ function llmSelection(): { llm_provider?: string; llm_model?: string; llm_base_u
   return out;
 }
 
+/**
+ * Backup keys saved in Settings, in the backend's field names. Slots with no
+ * key are left out, so an added-but-unfilled row changes nothing.
+ */
+function llmFallbacks(): { api_key: string; provider?: string; model?: string; base_url?: string }[] {
+  return useAppStore.getState().llmBackupKeys
+    .filter((k) => k.apiKey?.trim())
+    .map((k) => {
+      const out: { api_key: string; provider?: string; model?: string; base_url?: string } = {
+        api_key: k.apiKey!.trim(),
+      };
+      if (k.provider && k.provider !== 'auto') out.provider = k.provider;
+      if (k.model?.trim()) out.model = k.model.trim();
+      if (k.baseUrl?.trim()) out.base_url = k.baseUrl.trim();
+      return out;
+    });
+}
+
 const apiClient = axios.create({
   headers: {
     'Content-Type': 'application/json',
@@ -104,7 +122,13 @@ export const api = {
   },
 
   runRanking: async (req: RankingRequest): Promise<RankingResult> => {
-    const res = await apiClient.post('/ranking/run', { ...req, api_key: llmApiKey(), ...llmSelection() });
+    const fallbacks = llmFallbacks();
+    const res = await apiClient.post('/ranking/run', {
+      ...req,
+      api_key: llmApiKey(),
+      ...llmSelection(),
+      ...(fallbacks.length ? { llm_fallbacks: fallbacks } : {}),
+    });
     return res.data;
   },
 
@@ -207,6 +231,8 @@ export const api = {
     for (const [field, value] of Object.entries(llmSelection())) {
       if (value) formData.append(field, value);
     }
+    const fallbacks = llmFallbacks();
+    if (fallbacks.length) formData.append('llm_fallbacks', JSON.stringify(fallbacks));
     const res = await apiClient.post('/atpg/run', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
       // Two ATPG runs plus toggle simulation on a large circuit.

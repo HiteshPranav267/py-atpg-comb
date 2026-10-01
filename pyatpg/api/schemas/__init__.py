@@ -47,6 +47,15 @@ class RankingResultSchema(BaseModel):
     execution_time: float
 
 
+class LlmKeySchema(BaseModel):
+    """One backup LLM credential; blank fields fall back to the provider's defaults."""
+
+    api_key: str
+    provider: str | None = None
+    model: str | None = None
+    base_url: str | None = None
+
+
 class RankingRequestSchema(BaseModel):
     feature_set: FeatureSetSchema
     ranker_name: str
@@ -60,6 +69,9 @@ class RankingRequestSchema(BaseModel):
     llm_model: str | None = None
     #: Endpoint override for OpenAI-compatible providers (NVIDIA NIM, Ollama...).
     llm_base_url: str | None = None
+    #: Up to four backup credentials, tried in order when a key hits its
+    #: rate/quota limit or is rejected. Never persisted or echoed back.
+    llm_fallbacks: list[LlmKeySchema] | None = None
 
 
 class EvaluationResultSchema(BaseModel):

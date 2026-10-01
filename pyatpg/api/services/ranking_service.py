@@ -24,6 +24,7 @@ class RankingService:
         llm_provider: str | None = None,
         llm_model: str | None = None,
         llm_base_url: str | None = None,
+        llm_fallbacks: list[dict] | None = None,
     ) -> GateRanker:
         """Instantiate a ranker by name.
 
@@ -37,7 +38,8 @@ class RankingService:
             from pyatpg.ranking.providers import provider_from_request
 
             provider = provider_from_request(
-                provider=llm_provider, api_key=api_key, model=llm_model, base_url=llm_base_url
+                provider=llm_provider, api_key=api_key, model=llm_model, base_url=llm_base_url,
+                fallbacks=llm_fallbacks,
             )
             return LLMRanker(provider=provider)
         return ranker_cls()
@@ -50,6 +52,7 @@ class RankingService:
         llm_provider: str | None = None,
         llm_model: str | None = None,
         llm_base_url: str | None = None,
+        llm_fallbacks: list[dict] | None = None,
     ) -> RankingResult:
         ranker = RankingService.get_ranker(
             ranker_name,
@@ -57,5 +60,6 @@ class RankingService:
             llm_provider=llm_provider,
             llm_model=llm_model,
             llm_base_url=llm_base_url,
+            llm_fallbacks=llm_fallbacks,
         )
         return ranker.rank(feature_set)

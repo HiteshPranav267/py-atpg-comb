@@ -12,10 +12,11 @@ paste any vendor's key and have it "just work".
 """
 from __future__ import annotations
 
+import logging
 import os
 import time
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from dotenv import load_dotenv
@@ -273,7 +274,7 @@ PROVIDER_SPECS: dict[str, ProviderSpec] = {
         default_model="",
         key_prefix="",
         openai_compatible=True,
-        hint="Groq, OpenRouter, Together, Ollama, vLLM, LM Studio... anything "
+        hint="Groq, Cerebras, OpenRouter, Together, Ollama, vLLM, LM Studio... anything "
              "exposing /v1/chat/completions. Set the base URL and model.",
         # No fixed model list -- every backend names models differently --
         # but the endpoints below are common enough to save typing.
@@ -281,6 +282,7 @@ PROVIDER_SPECS: dict[str, ProviderSpec] = {
             ("Ollama (local)", "http://localhost:11434/v1"),
             ("LM Studio (local)", "http://localhost:1234/v1"),
             ("Groq", "https://api.groq.com/openai/v1"),
+            ("Cerebras", "https://api.cerebras.ai/v1"),
             ("OpenRouter", "https://openrouter.ai/api/v1"),
             ("Together AI", "https://api.together.xyz/v1"),
         ),
@@ -353,14 +355,28 @@ class LLMConfig:
     api_key: str
     model: str
     base_url: str | None = None
+    #: Backup credentials, tried in order when this one is rate limited,
+    #: out of quota or otherwise failing (see :class:`FallbackProvider`).
+    fallbacks: tuple["LLMConfig", ...] = ()
 
     @property
     def spec(self) -> ProviderSpec:
         return PROVIDER_SPECS[self.provider]
 
+    @property
+    def api_keys(self) -> list[str]:
+        """This key and every backup key, for redacting them from output."""
+        return [self.api_key] + [f.api_key for f in self.fallbacks]
+
     def describe(self) -> str:
         """Human-readable, credential-free summary for notes and reports."""
-        return f"{self.spec.label} / {self.model}"
+        n = len(self.fallbacks)
+        extra = f" (+{n} backup key{'s' if n > 1 else ''})" if n else ""
+        return f"{self.spec.label} / {self.model}{extra}"
+
+
+#: Most credentials one request may rotate through: the main key plus four backups.
+MAX_LLM_KEYS = 5
 
 
 def _first_set(*values: str | None) -> str | None:
@@ -388,8 +404,17 @@ def resolve_llm_config(
     fallback_provider: str | None = None,
     fallback_model: str | None = None,
     fallback_base_url: str | None = None,
+    fallbacks: list[dict[str, Any]] | None = None,
 ) -> LLMConfig | None:
     """Work out which provider/key/model to use for a request.
+
+    ``fallbacks`` are backup credentials sent with the request, each a dict
+    with ``api_key`` and optionally ``provider``/``model``/``base_url``,
+    resolved independently. When the main key instead comes from the
+    environment, numbered variables -- the key's own variable name plus
+    ``_2`` .. ``_5`` -- supply backups for the same provider, model and
+    endpoint. Either way at most :data:`MAX_LLM_KEYS` keys are used in
+    total, and a backup identical to an earlier key is dropped.
 
     Precedence for every field is request value, then the explicit value the
     service was constructed with, then the environment. Returns None when no
@@ -409,6 +434,7 @@ def resolve_llm_config(
     env_provider = normalize_provider_id(os.environ.get(LLM_PROVIDER_ENV_VAR))
     key = _first_set(api_key, fallback_api_key)
 
+    key_env_var: str | None = None  # which variable the key came from, if any
     if key is not None:
         resolved_provider = (
             requested_provider
@@ -420,6 +446,8 @@ def resolve_llm_config(
         # Environment fallback. Generic variable first, then whichever
         # provider-specific variable is set (preferring the requested one).
         key = _first_set(os.environ.get(LLM_API_KEY_ENV_VAR))
+        if key is not None:
+            key_env_var = LLM_API_KEY_ENV_VAR
         resolved_provider = requested_provider or env_provider
         if key is None:
             search = [resolved_provider] if resolved_provider else []
@@ -428,6 +456,10 @@ def resolve_llm_config(
                 env_key = _env_key_for(pid)
                 if env_key:
                     key = env_key
+                    key_env_var = next(
+                        v for v in PROVIDER_SPECS[pid].env_vars
+                        if (os.environ.get(v) or "").strip() == env_key
+                    )
                     if resolved_provider is None:
                         resolved_provider = pid
                     break
@@ -459,12 +491,43 @@ def resolve_llm_config(
                 f"supplied with the request and {LLM_BASE_URL_ENV_VAR} is not set."
             )
 
-    return LLMConfig(
+    config = LLMConfig(
         provider=resolved_provider,
         api_key=key,
         model=resolved_model,
         base_url=resolved_base_url,
     )
+
+    backups: list[LLMConfig] = []
+    for i, item in enumerate(fallbacks or [], start=2):
+        item = item or {}
+        backup_key = str(item.get("api_key") or "").strip()
+        if not backup_key:
+            continue  # an empty slot in the UI
+        try:
+            backup = resolve_llm_config(
+                provider=(item.get("provider") or None),
+                api_key=backup_key,
+                model=(item.get("model") or None),
+                base_url=(item.get("base_url") or None),
+            )
+        except ValueError as exc:
+            raise ValueError(f"LLM key {i}: {exc}") from exc
+        if backup is not None:
+            backups.append(backup)
+    if key_env_var is not None:
+        for n in range(2, MAX_LLM_KEYS + 1):
+            extra = _first_set(os.environ.get(f"{key_env_var}_{n}"))
+            if extra:
+                backups.append(replace(config, api_key=extra))
+
+    seen = {config.api_key}
+    unique = []
+    for b in backups:
+        if b.api_key not in seen:
+            seen.add(b.api_key)
+            unique.append(b)
+    return replace(config, fallbacks=tuple(unique[: MAX_LLM_KEYS - 1])) if unique else config
 
 
 class LLMProvider(ABC):
@@ -837,8 +900,107 @@ class AnthropicProvider(LLMProvider):
         return self._with_retry(call, max_retries)
 
 
+_log = logging.getLogger(__name__)
+
+
+def parse_llm_fallbacks(raw: str | None) -> list[dict[str, Any]] | None:
+    """Backup credentials from a form field holding a JSON list, or None if blank."""
+    import json
+
+    if not raw or not raw.strip():
+        return None
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"llm_fallbacks is not valid JSON: {exc.msg}") from None
+    if not isinstance(data, list) or not all(isinstance(d, dict) for d in data):
+        raise ValueError("llm_fallbacks must be a JSON list of objects")
+    if len(data) > MAX_LLM_KEYS - 1:
+        raise ValueError(f"At most {MAX_LLM_KEYS - 1} backup LLM keys are allowed")
+    return data
+
+
+class FallbackProvider(LLMProvider):
+    """Several credentials behind one provider: when a key fails, try the next.
+
+    A key is abandoned for the next one when its call ends in
+    :class:`LLMUnavailableError` -- rate or quota limit, rejected key, no
+    credits, a provider outage -- except when the request itself was too
+    large, which no other key would accept either. The key that last
+    worked stays first in line, so once a key runs dry every later call in
+    the same run goes straight to one that still works. Only when every key
+    has failed on the same call is the last error raised.
+    """
+
+    def __init__(self, configs: list[LLMConfig]):
+        if not configs:
+            raise ValueError("FallbackProvider needs at least one config")
+        self._configs = [replace(c, fallbacks=()) for c in configs]
+        self._providers: list[LLMProvider | None] = [None] * len(self._configs)
+        self._active = 0
+        self.last_usage = None
+
+    def _provider(self, i: int) -> LLMProvider:
+        if self._providers[i] is None:
+            self._providers[i] = create_provider(self._configs[i])
+        return self._providers[i]  # type: ignore[return-value]
+
+    @property
+    def active_index(self) -> int:
+        """0 for the main key, 1.. for the backups."""
+        return self._active
+
+    @property
+    def model_name(self) -> str:  # type: ignore[override]
+        return self._configs[self._active].model
+
+    @property
+    def label(self) -> str:
+        return self._configs[self._active].spec.label
+
+    def _each(self, fn):
+        n = len(self._configs)
+        last: Exception | None = None
+        for step in range(n):
+            i = (self._active + step) % n
+            try:
+                provider = self._provider(i)
+                result = fn(provider)
+            except ImportError as exc:
+                last = LLMUnavailableError(self._configs[i].spec.label, str(exc))
+            except LLMUnavailableError as exc:
+                if is_request_too_large(exc.cause):
+                    raise
+                last = exc
+            else:
+                if i != self._active:
+                    _log.info("LLM: switched to key %d of %d (%s)", i + 1, n,
+                              self._configs[i].describe())
+                    self._active = i
+                self.last_usage = getattr(provider, "last_usage", None)
+                return result
+            _log.warning("LLM key %d of %d failed: %s", i + 1, n, last)
+        assert last is not None
+        raise last
+
+    def complete(
+        self, prompt: str, *, json_mode: bool = False, max_output_tokens: int | None = None
+    ) -> str:
+        return self._each(lambda p: p.complete(
+            prompt, json_mode=json_mode, max_output_tokens=max_output_tokens))
+
+    def list_models(self) -> list[dict[str, str]]:
+        return self._each(lambda p: p.list_models())
+
+
 def create_provider(config: LLMConfig) -> LLMProvider:
-    """Instantiate the provider a resolved :class:`LLMConfig` names."""
+    """Instantiate the provider a resolved :class:`LLMConfig` names.
+
+    A config with backup keys gets a :class:`FallbackProvider` that moves on
+    to the next key whenever one fails.
+    """
+    if config.fallbacks:
+        return FallbackProvider([config, *config.fallbacks])
     if config.provider == "gemini":
         return GeminiProvider(model_name=config.model, api_key=config.api_key)
     if config.provider == "anthropic":
@@ -859,9 +1021,11 @@ def provider_from_request(
     api_key: str | None = None,
     model: str | None = None,
     base_url: str | None = None,
+    fallbacks: list[dict[str, Any]] | None = None,
 ) -> LLMProvider | None:
     """Convenience: resolve and build in one step; None when no key exists."""
     config = resolve_llm_config(
-        provider=provider, api_key=api_key, model=model, base_url=base_url
+        provider=provider, api_key=api_key, model=model, base_url=base_url,
+        fallbacks=fallbacks,
     )
     return create_provider(config) if config else None

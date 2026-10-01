@@ -12,6 +12,7 @@ from pyatpg.atpg import (
     NoTargetableGates,
 )
 from pyatpg.atpg.workspace import JobWorkspace
+from pyatpg.ranking.providers import parse_llm_fallbacks
 from pyatpg.core.analytics_store import get_analytics_store
 
 router = APIRouter(prefix="/api/atpg", tags=["atpg"])
@@ -68,6 +69,7 @@ async def run_atpg(
     llm_model: str = Form(""),
     llm_base_url: str = Form(""),
     full_scan: bool = Form(False),
+    llm_fallbacks: str = Form(""),
 ) -> Dict[str, Any]:
     """Run an ATPG analysis over an uploaded circuit.
 
@@ -84,6 +86,11 @@ async def run_atpg(
     blank or "auto" sniffs it from the key's prefix. `llm_model` and
     `llm_base_url` override the provider's default model and, for
     OpenAI-compatible providers, its endpoint.
+
+    `llm_fallbacks` is an optional JSON list of up to four backup
+    credentials, each `{"api_key", "provider"?, "model"?, "base_url"?}`.
+    When a key hits its rate or quota limit (or is rejected) mid-run, the
+    next one takes over; like `api_key` they are never logged or returned.
 
     `backtrack_limit` is optional and forwarded to Atalanta's own `-b` flag
     on every run this request makes (combinational path only). Omitted, it
@@ -112,6 +119,11 @@ async def run_atpg(
         raise HTTPException(status_code=400, detail="Circuit file must be UTF-8 text.")
 
     try:
+        fallbacks = parse_llm_fallbacks(llm_fallbacks)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    try:
         analysis = _service.run(
             source_text=source_text,
             filename=file.filename or "circuit.v",
@@ -124,6 +136,7 @@ async def run_atpg(
             llm_model=llm_model or None,
             llm_base_url=llm_base_url or None,
             full_scan=full_scan,
+            llm_fallbacks=fallbacks,
         )
     except (ValueError, NoTargetableGates) as exc:
         raise HTTPException(status_code=400, detail=str(exc))

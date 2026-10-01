@@ -2,6 +2,21 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import type { CircuitMetadata, FeatureSet, RankingResult, EvaluationResult, AtpgReport } from '@/types';
 
+/**
+ * A backup LLM credential. Same fields as the main key; blank model/base URL
+ * mean the provider's defaults. `id` only keeps React rows stable.
+ */
+export interface LlmKeySlot {
+  id: string;
+  provider: string;
+  apiKey: string | null;
+  model: string | null;
+  baseUrl: string | null;
+}
+
+/** Main key plus this many backups: five keys in all. */
+export const MAX_LLM_BACKUP_KEYS = 4;
+
 export interface BenchmarkHistoryEntry extends EvaluationResult {
   job_id: string;
   completed_at: string; // ISO timestamp
@@ -63,6 +78,15 @@ interface AppState {
   /** Endpoint override for OpenAI-compatible providers (Ollama, Groq, ...). */
   llmBaseUrl: string | null;
   setLlmBaseUrl: (url: string | null) => void;
+  /**
+   * Backup keys, tried in order by the backend when the main key (or the
+   * previous backup) hits its rate/quota limit or is rejected. Stored in
+   * localStorage alongside the main key.
+   */
+  llmBackupKeys: LlmKeySlot[];
+  addLlmBackupKey: () => void;
+  updateLlmBackupKey: (id: string, patch: Partial<Omit<LlmKeySlot, 'id'>>) => void;
+  removeLlmBackupKey: (id: string) => void;
 }
 
 export const useAppStore = create<AppState>()(
@@ -118,6 +142,28 @@ export const useAppStore = create<AppState>()(
       setLlmModel: (model) => set({ llmModel: model }),
       llmBaseUrl: null,
       setLlmBaseUrl: (url) => set({ llmBaseUrl: url }),
+      llmBackupKeys: [],
+      addLlmBackupKey: () => set((state) => (
+        state.llmBackupKeys.length >= MAX_LLM_BACKUP_KEYS ? {} : {
+          llmBackupKeys: [
+            ...state.llmBackupKeys,
+            {
+              id: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+              // Most people add another key for the same vendor, so start there.
+              provider: state.llmProvider,
+              apiKey: null,
+              model: null,
+              baseUrl: null,
+            },
+          ],
+        }
+      )),
+      updateLlmBackupKey: (id, patch) => set((state) => ({
+        llmBackupKeys: state.llmBackupKeys.map((k) => (k.id === id ? { ...k, ...patch } : k)),
+      })),
+      removeLlmBackupKey: (id) => set((state) => ({
+        llmBackupKeys: state.llmBackupKeys.filter((k) => k.id !== id),
+      })),
     }),
     {
       name: 'pyatpg-app-store',
@@ -131,6 +177,7 @@ export const useAppStore = create<AppState>()(
         llmProvider: state.llmProvider,
         llmModel: state.llmModel,
         llmBaseUrl: state.llmBaseUrl,
+        llmBackupKeys: state.llmBackupKeys,
       }),
     }
   )

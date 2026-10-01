@@ -1,40 +1,10 @@
 import { useEffect, useState } from 'react';
-import { X, Trash2, RotateCcw, Eye, EyeOff, RefreshCw } from 'lucide-react';
-import { useAppStore } from '@/store';
+import { X, Trash2, RotateCcw, Plus } from 'lucide-react';
+import { useAppStore, MAX_LLM_BACKUP_KEYS } from '@/store';
 import { api } from '@/services/api';
-import type { LlmModelInfo, LlmProviderSpec, LlmProvidersResponse } from '@/types';
-
-/**
- * Shown until (or instead of, if the backend is unreachable) the list from
- * GET /api/llm/providers arrives. Mirrors pyatpg.ranking.providers so the
- * picker is usable offline; the backend's list wins once it loads.
- */
-const FALLBACK_PROVIDERS: LlmProviderSpec[] = [
-  { id: 'gemini', label: 'Google Gemini', env_vars: ['GEMINI_API_KEY'], default_model: 'gemini-flash-latest', key_prefix: 'AIza', openai_compatible: false, base_url: null, hint: 'Keys from aistudio.google.com start with AIza. Each model has its own free-tier quota, so switching model is the way past a daily limit.', models: ['gemini-flash-latest', 'gemini-flash-lite-latest', 'gemini-pro-latest', 'gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-2.5-pro'], base_url_presets: [] },
-  { id: 'openai', label: 'OpenAI', env_vars: ['OPENAI_API_KEY'], default_model: 'gpt-4o-mini', key_prefix: 'sk-', openai_compatible: true, base_url: null, hint: 'Keys from platform.openai.com start with sk-.', models: ['gpt-4o-mini', 'gpt-4o', 'gpt-4.1', 'gpt-4.1-mini', 'o4-mini'], base_url_presets: [] },
-  { id: 'anthropic', label: 'Anthropic Claude', env_vars: ['ANTHROPIC_API_KEY'], default_model: 'claude-sonnet-5', key_prefix: 'sk-ant-', openai_compatible: false, base_url: null, hint: 'Keys from console.anthropic.com start with sk-ant-.', models: ['claude-sonnet-5', 'claude-opus-5', 'claude-haiku-4-5-20251001'], base_url_presets: [] },
-  { id: 'nvidia', label: 'NVIDIA NIM', env_vars: ['NVIDIA_API_KEY'], default_model: 'meta/llama-3.3-70b-instruct', key_prefix: 'nvapi-', openai_compatible: true, base_url: 'https://integrate.api.nvidia.com/v1', hint: 'Keys from build.nvidia.com start with nvapi-. Any NIM model id works.', models: ['meta/llama-3.3-70b-instruct', 'meta/llama-3.1-405b-instruct', 'nvidia/llama-3.1-nemotron-70b-instruct', 'mistralai/mixtral-8x22b-instruct-v0.1', 'deepseek-ai/deepseek-r1'], base_url_presets: [] },
-  { id: 'openai_compatible', label: 'Custom (OpenAI-compatible)', env_vars: [], default_model: '', key_prefix: '', openai_compatible: true, base_url: null, hint: 'Groq, OpenRouter, Together, Ollama, vLLM, LM Studio... anything exposing /v1/chat/completions. Set the base URL and model.', models: [], base_url_presets: [
-    { label: 'Ollama (local)', url: 'http://localhost:11434/v1' },
-    { label: 'LM Studio (local)', url: 'http://localhost:1234/v1' },
-    { label: 'Groq', url: 'https://api.groq.com/openai/v1' },
-    { label: 'OpenRouter', url: 'https://openrouter.ai/api/v1' },
-    { label: 'Together AI', url: 'https://api.together.xyz/v1' },
-  ] },
-];
-
-/** Sentinel select value meaning "type your own", distinct from any real id/url. */
-const CUSTOM = '__custom__';
-
-/** Client-side mirror of the backend's prefix sniffing, for the "auto" hint. */
-function detectProvider(key: string, providers: LlmProviderSpec[]): LlmProviderSpec | null {
-  const trimmed = key.trim();
-  if (!trimmed) return null;
-  const withPrefix = providers
-    .filter((p) => p.key_prefix)
-    .sort((a, b) => b.key_prefix.length - a.key_prefix.length);
-  return withPrefix.find((p) => trimmed.startsWith(p.key_prefix)) ?? null;
-}
+import type { LlmProvidersResponse } from '@/types';
+import { LlmKeyEditor } from './LlmKeyEditor';
+import { FALLBACK_PROVIDERS } from './llmProviders';
 
 export function SettingsModal({ onClose }: { onClose: () => void }) {
   const {
@@ -45,22 +15,12 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
     llmProvider, setLlmProvider,
     llmModel, setLlmModel,
     llmBaseUrl, setLlmBaseUrl,
+    llmBackupKeys, addLlmBackupKey, updateLlmBackupKey, removeLlmBackupKey,
   } = useAppStore();
 
   const [urlDraft, setUrlDraft] = useState(apiBaseUrlOverride ?? '');
-  const [keyDraft, setKeyDraft] = useState(llmApiKey ?? '');
-  const [modelDraft, setModelDraft] = useState(llmModel ?? '');
-  const [baseUrlDraft, setBaseUrlDraft] = useState(llmBaseUrl ?? '');
-  const [keyVisible, setKeyVisible] = useState(false);
-  const [keySaved, setKeySaved] = useState(false);
   const [cleared, setCleared] = useState(false);
   const [providerInfo, setProviderInfo] = useState<LlmProvidersResponse | null>(null);
-  // Models fetched from the vendor for the key in the box -- exact ids, and
-  // only the ones this credential can actually run. Keyed by the provider
-  // they were fetched for, so switching vendor never shows a stale list.
-  const [liveModels, setLiveModels] = useState<{ provider: string; models: LlmModelInfo[] } | null>(null);
-  const [modelsStatus, setModelsStatus] = useState<'idle' | 'loading' | 'error'>('idle');
-  const [modelsError, setModelsError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -71,69 +31,8 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
   }, []);
 
   const providers = providerInfo?.providers ?? FALLBACK_PROVIDERS;
-  const selectedSpec = providers.find((p) => p.id === llmProvider) ?? null;
-  const detectedSpec = llmProvider === 'auto' ? detectProvider(keyDraft, providers) : null;
-  const effectiveSpec = selectedSpec ?? detectedSpec;
-  const isCustomProvider = llmProvider === 'openai_compatible';
-  const showBaseUrl = effectiveSpec?.openai_compatible ?? false;
-
-  const fetchModels = async () => {
-    setModelsStatus('loading');
-    setModelsError(null);
-    try {
-      const result = await api.listLlmModels({
-        provider: llmProvider === 'auto' ? undefined : llmProvider,
-        api_key: keyDraft.trim() || undefined,
-        base_url: baseUrlDraft.trim() || undefined,
-      });
-      setLiveModels({ provider: result.provider, models: result.models });
-      setModelsStatus('idle');
-    } catch (err: any) {
-      setLiveModels(null);
-      setModelsStatus('error');
-      setModelsError(err?.response?.data?.detail || err?.message || 'Could not list models');
-    }
-  };
-
-  // A stored key means the user has already committed to this account, so
-  // show what it can run without making them click.
-  useEffect(() => {
-    if (llmApiKey) void fetchModels();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  const accountModels: LlmModelInfo[] =
-    liveModels && (!effectiveSpec || liveModels.provider === effectiveSpec.id) ? liveModels.models : [];
-  const accountIds = new Set(accountModels.map((m) => m.id));
-  // Curated suggestions, minus anything the account list already carries.
-  const suggestedModels = (effectiveSpec?.models ?? []).filter((m) => !accountIds.has(m));
-
-  // The model/base-URL <select>s show one of: blank/"default", a known
-  // option, or the custom sentinel (which reveals a free-text input below).
-  const knownModels = [...accountModels.map((m) => m.id), ...suggestedModels];
-  const modelSelectValue = modelDraft === '' ? '' : knownModels.includes(modelDraft) ? modelDraft : CUSTOM;
-  const basePresets = effectiveSpec?.base_url_presets ?? [];
-  const baseSelectValue = baseUrlDraft === ''
-    ? ''
-    : basePresets.some((p) => p.url === baseUrlDraft) ? baseUrlDraft : CUSTOM;
-
-  // Save key, model and base URL together: they only make sense as a set.
-  const handleSaveKey = () => {
-    setLlmApiKey(keyDraft.trim() || null);
-    setLlmModel(modelDraft.trim() || null);
-    setLlmBaseUrl(baseUrlDraft.trim().replace(/\/$/, '') || null);
-    setKeySaved(true);
-    setTimeout(() => setKeySaved(false), 2000);
-  };
-
-  const handleClearKey = () => {
-    setKeyDraft('');
-    setModelDraft('');
-    setBaseUrlDraft('');
-    setLlmApiKey(null);
-    setLlmModel(null);
-    setLlmBaseUrl(null);
-  };
+  const canAddKey = llmBackupKeys.length < MAX_LLM_BACKUP_KEYS;
+  const savedBackups = llmBackupKeys.filter((k) => k.apiKey).length;
 
   // Distinguished so the UI can say which of the two a URL came from: a stale
   // build-time value looks identical to a saved override otherwise.
@@ -242,8 +141,8 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
             </p>
           </section>
 
-          <section className="flex flex-col gap-2">
-            <h3 className="text-sm font-semibold">LLM Provider &amp; API Key</h3>
+          <section className="flex flex-col gap-3">
+            <h3 className="text-sm font-semibold">LLM Provider &amp; API Keys</h3>
             <p className="text-xs text-muted-foreground">
               Used for LLM-based gate targeting, circuit analysis and the LLM ranker. Any
               supported vendor works — pick one, or leave it on <em>Auto</em> and paste a key:
@@ -252,200 +151,58 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
               configured.
             </p>
 
-            <div className="grid grid-cols-2 gap-4 mt-1">
-              <div>
-                <label className="block text-xs font-medium mb-1.5">Provider</label>
-                <select
-                  value={llmProvider}
-                  onChange={(e) => {
-                    const next = e.target.value;
-                    setLlmProvider(next);
-                    // A vendor's default endpoint is implied; only a custom one needs typing.
-                    if (next !== 'openai_compatible') { setBaseUrlDraft(''); setLlmBaseUrl(null); }
-                  }}
-                  className="w-full bg-background border border-border rounded px-3 py-1.5 text-sm focus:border-primary focus:outline-none"
-                >
-                  <option value="auto">Auto-detect from key</option>
-                  {providers.map((p) => (
-                    <option key={p.id} value={p.id}>{p.label}</option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <div className="flex items-center justify-between mb-1.5">
-                  <label className="block text-xs font-medium">
-                    Model <span className="text-muted-foreground font-normal">(optional)</span>
-                  </label>
-                  <button
-                    type="button"
-                    onClick={() => void fetchModels()}
-                    disabled={modelsStatus === 'loading'}
-                    title="Ask the vendor which models this key can use (exact ids)"
-                    className="flex items-center gap-1 text-[11px] text-primary hover:underline disabled:opacity-50"
-                  >
-                    <RefreshCw className={`w-3 h-3 ${modelsStatus === 'loading' ? 'animate-spin' : ''}`} />
-                    {modelsStatus === 'loading' ? 'Loading…' : 'Load from account'}
-                  </button>
-                </div>
-                <select
-                  value={modelSelectValue}
-                  onChange={(e) => {
-                    const val = e.target.value;
-                    setModelDraft(val === CUSTOM ? (modelDraft || ' ').trim() : val);
-                  }}
-                  className="w-full bg-background border border-border rounded px-3 py-1.5 text-sm focus:border-primary focus:outline-none"
-                >
-                  <option value="">
-                    Use provider default{effectiveSpec?.default_model ? ` (${effectiveSpec.default_model})` : ''}
-                  </option>
-                  {accountModels.length > 0 && (
-                    <optgroup label="Available to your key">
-                      {accountModels.map((m) => (
-                        <option key={m.id} value={m.id}>
-                          {m.label !== m.id ? `${m.label} — ${m.id}` : m.id}
-                        </option>
-                      ))}
-                    </optgroup>
-                  )}
-                  {suggestedModels.length > 0 && (
-                    <optgroup label={accountModels.length > 0 ? 'Other suggestions' : 'Suggestions'}>
-                      {suggestedModels.map((m) => (
-                        <option key={m} value={m}>{m}</option>
-                      ))}
-                    </optgroup>
-                  )}
-                  <option value={CUSTOM}>Custom model id...</option>
-                </select>
-                {modelsStatus === 'error' && modelsError && (
-                  <p className="text-[11px] text-destructive mt-1">{modelsError}</p>
-                )}
-                {accountModels.length > 0 && modelsStatus !== 'error' && (
-                  <p className="text-[11px] text-muted-foreground mt-1">
-                    {accountModels.length} text-generation model(s) reported by {effectiveSpec?.label ?? 'the vendor'} for this key.
-                  </p>
-                )}
-                {modelSelectValue === CUSTOM && (
-                  <input
-                    type="text"
-                    value={modelDraft}
-                    onChange={(e) => setModelDraft(e.target.value)}
-                    placeholder="e.g. llama3, mixtral-8x7b"
-                    autoComplete="off"
-                    spellCheck={false}
-                    className="w-full mt-1.5 bg-background border border-border rounded px-3 py-1.5 text-sm font-mono focus:border-primary focus:outline-none"
-                  />
-                )}
-              </div>
-            </div>
+            <LlmKeyEditor
+              title={llmBackupKeys.length ? 'Key 1 (main)' : undefined}
+              value={{ provider: llmProvider, apiKey: llmApiKey, model: llmModel, baseUrl: llmBaseUrl }}
+              providers={providers}
+              providerInfo={providerInfo}
+              onPatch={(patch) => {
+                if (patch.provider !== undefined) setLlmProvider(patch.provider);
+                if (patch.apiKey !== undefined) setLlmApiKey(patch.apiKey);
+                if (patch.model !== undefined) setLlmModel(patch.model);
+                if (patch.baseUrl !== undefined) setLlmBaseUrl(patch.baseUrl);
+              }}
+              onReset={() => { setLlmApiKey(null); setLlmModel(null); setLlmBaseUrl(null); }}
+            />
 
-            {showBaseUrl && (
-              <div>
-                <label className="block text-xs font-medium mb-1.5">
-                  Base URL{' '}
-                  {isCustomProvider
-                    ? <span className="text-destructive font-normal">(required)</span>
-                    : <span className="text-muted-foreground font-normal">(optional override)</span>}
-                </label>
-                {basePresets.length > 0 ? (
-                  <>
-                    <select
-                      value={baseSelectValue}
-                      onChange={(e) => {
-                        const val = e.target.value;
-                        setBaseUrlDraft(val === CUSTOM ? (baseUrlDraft || ' ').trim() : val);
-                      }}
-                      className="w-full bg-background border border-border rounded px-3 py-1.5 text-sm focus:border-primary focus:outline-none"
-                    >
-                      <option value="">
-                        {isCustomProvider ? 'Select an endpoint...' : `Use default${effectiveSpec?.base_url ? ` (${effectiveSpec.base_url})` : ''}`}
-                      </option>
-                      {basePresets.map((p) => (
-                        <option key={p.url} value={p.url}>{p.label} — {p.url}</option>
-                      ))}
-                      <option value={CUSTOM}>Custom URL...</option>
-                    </select>
-                    {baseSelectValue === CUSTOM && (
-                      <input
-                        type="text"
-                        value={baseUrlDraft}
-                        onChange={(e) => setBaseUrlDraft(e.target.value)}
-                        placeholder="https://your-endpoint/v1"
-                        autoComplete="off"
-                        spellCheck={false}
-                        className="w-full mt-1.5 bg-background border border-border rounded px-3 py-1.5 text-sm font-mono focus:border-primary focus:outline-none"
-                      />
-                    )}
-                  </>
-                ) : (
-                  <input
-                    type="text"
-                    value={baseUrlDraft}
-                    onChange={(e) => setBaseUrlDraft(e.target.value)}
-                    placeholder={effectiveSpec?.base_url || 'http://localhost:11434/v1'}
-                    autoComplete="off"
-                    spellCheck={false}
-                    className="w-full bg-background border border-border rounded px-3 py-1.5 text-sm font-mono focus:border-primary focus:outline-none"
-                  />
-                )}
+            {llmBackupKeys.map((slot, i) => (
+              <div key={slot.id} className="border-t border-border pt-3">
+                <LlmKeyEditor
+                  title={`Key ${i + 2} (backup)`}
+                  value={slot}
+                  providers={providers}
+                  providerInfo={providerInfo}
+                  onPatch={(patch) => updateLlmBackupKey(slot.id, patch)}
+                  onRemove={() => removeLlmBackupKey(slot.id)}
+                />
               </div>
+            ))}
+
+            {canAddKey && (
+              <button
+                type="button"
+                onClick={addLlmBackupKey}
+                className="flex items-center gap-1 w-fit text-xs text-primary hover:underline"
+              >
+                <Plus className="w-3.5 h-3.5" /> Add another key
+              </button>
+            )}
+            {llmBackupKeys.length > 0 && (
+              <p className="text-xs text-muted-foreground">
+                When a key hits its rate or quota limit, or is rejected, the next saved key takes
+                over automatically — even partway through a run. Up to {MAX_LLM_BACKUP_KEYS + 1} keys.
+                Keys from the same account usually share one quota, so a backup only adds capacity
+                if it belongs to a different account or provider.
+                {savedBackups < llmBackupKeys.length && ' Backup rows without a saved key are ignored.'}
+              </p>
             )}
 
-            <label className="block text-xs font-medium mt-1">API Key</label>
-            <div className="flex gap-2">
-              <input
-                type={keyVisible ? 'text' : 'password'}
-                value={keyDraft}
-                onChange={(e) => setKeyDraft(e.target.value)}
-                placeholder={effectiveSpec?.key_prefix ? `${effectiveSpec.key_prefix}...` : 'paste any provider key'}
-                autoComplete="off"
-                spellCheck={false}
-                className="flex-1 bg-background border border-border rounded px-3 py-1.5 text-sm font-mono focus:border-primary focus:outline-none"
-              />
-              <button
-                onClick={() => setKeyVisible((v) => !v)}
-                title={keyVisible ? 'Hide' : 'Show'}
-                className="text-muted-foreground hover:text-foreground px-2"
-              >
-                {keyVisible ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-              </button>
-              <button
-                onClick={handleSaveKey}
-                className="bg-primary text-primary-foreground px-3 py-1.5 rounded text-sm font-medium hover:bg-primary/90"
-              >
-                {keySaved ? 'Saved' : 'Save'}
-              </button>
-              {(llmApiKey || llmModel || llmBaseUrl) && (
-                <button
-                  onClick={handleClearKey}
-                  title="Remove the stored key, model and endpoint"
-                  className="text-muted-foreground hover:text-foreground px-2"
-                >
-                  <RotateCcw className="w-4 h-4" />
-                </button>
-              )}
-            </div>
-
             <p className="text-xs text-muted-foreground">
-              {effectiveSpec ? (
+              {llmApiKey || savedBackups ? (
                 <>
-                  {llmProvider === 'auto' && <><strong>Detected:</strong> {effectiveSpec.label}. </>}
-                  {effectiveSpec.hint}
-                </>
-              ) : llmProvider === 'auto' && keyDraft.trim() ? (
-                <>
-                  Key prefix not recognised — the server will use its default provider
-                  ({providerInfo?.default_provider ?? 'gemini'}). Pick the vendor explicitly if that's wrong.
-                </>
-              ) : (
-                <>Paste a Gemini, OpenAI, Anthropic or NVIDIA key and the vendor is picked for you.</>
-              )}
-            </p>
-
-            <p className="text-xs text-muted-foreground">
-              {llmApiKey ? (
-                <>
-                  A key is stored in this browser and sent with each request. Note it is kept in
-                  this browser's local storage in plain text — clear it on a shared machine.
+                  {savedBackups ? 'Keys are' : 'A key is'} stored in this browser and sent with each
+                  request. Note they are kept in this browser's local storage in plain text — clear
+                  them on a shared machine.
                 </>
               ) : providerInfo?.server_default ? (
                 <>
