@@ -6,7 +6,8 @@ Writes a per-candidate CSV and a markdown page of the interesting cases
 (true trojans the LLM ranked low, ordinary candidates it ranked high), with
 the LLM's "why" and the context it saw. Dev circuits only, by design.
 
-  python scripts/analyse_trojan_judge.py --version v2 --out results/trojan_llm_judge/dev_B_v2
+  python scripts/analyse_trojan_judge.py --version v3 --out results/trojan_llm_judge/dev_D_v3
+  python scripts/analyse_trojan_judge.py --version v2 --context B --out results/trojan_llm_judge/dev_B_v2
 """
 from __future__ import annotations
 
@@ -22,20 +23,22 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from eval_trojan_llm_judge import SHAPES, SPLITS, STRATEGIES, rank_of  # noqa: E402
 from eval_trojan_verdict import analyse  # noqa: E402
 from pyatpg.evaluation.trojan_candidates import (  # noqa: E402
-    candidate_context, generate_candidates, is_trojan_candidate, relaxed_rule_score)
+    candidate_context, circuit_stats, generate_candidates, is_trojan_candidate, relaxed_rule_score)
 
 
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--version", required=True)
     ap.add_argument("--model", default="openai/gpt-oss-120b")
-    ap.add_argument("--context", default="B")
-    ap.add_argument("--max-nodes", type=int, default=14)
+    ap.add_argument("--context", default="D")
+    ap.add_argument("--max-nodes", type=int, default=None)
     ap.add_argument("--variants", type=int, default=2)
     ap.add_argument("--shapes", nargs="+", default=["xor", "or", "mux"])
     ap.add_argument("--out", type=Path, required=True)
     args = ap.parse_args()
     circuits = SPLITS["dev"]  # never the test split
+    if args.max_nodes is None:
+        args.max_nodes = 10 if args.context == "D" else 14
     cache = json.loads(Path("results/trojan_llm_judge/judge_cache.json").read_text(encoding="utf-8"))
 
     def judged(key):
@@ -47,7 +50,9 @@ def main() -> int:
         _, _, pr, _, _ = analyse(path, 3000, True)
         feats = {p["gate_id"]: p["features"] for p in pr.gate_profiles}
         cands = generate_candidates(pr.gate_profiles, pr.graph)
-        ctx = [candidate_context(c, feats, pr.graph, args.context, max_nodes=args.max_nodes) for c in cands]
+        stats = circuit_stats(feats, pr.graph)
+        ctx = [candidate_context(c, feats, pr.graph, args.context, max_nodes=args.max_nodes, stats=stats)
+               for c in cands]
         llm = [judged(k).get("p") for k, _ in ctx]
         llm_s = [p if p is not None else 0.5 for p in llm]
         rel = [relaxed_rule_score(c, feats) for c in cands]
