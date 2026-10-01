@@ -13,6 +13,7 @@ evaluation costs nothing for what it already judged.
 from __future__ import annotations
 
 import json
+import os
 import random
 import re
 import time
@@ -20,10 +21,11 @@ from pathlib import Path
 from typing import Callable
 
 #: Bump when the prompt text changes: cached judgements under an older
-#: version are then ignored rather than silently mixed with new ones.
-PROMPT_VERSION = "v2"
+#: version are then ignored rather than silently mixed with new ones. Older
+#: prompts stay in :data:`PROMPTS` so earlier results can be reproduced.
+PROMPT_VERSION = "v3"
 
-_INSTRUCTIONS = """You are auditing a gate-level digital circuit for hardware trojans.
+_INSTRUCTIONS_V2 = """You are auditing a gate-level digital circuit for hardware trojans.
 
 A deterministic pre-filter flagged the candidate structures below. Each one is
 a rarely-active gate [suspected-trigger] whose single output feeds -- directly
@@ -79,6 +81,70 @@ Reply with JSON only:
 inserted trojan trigger-payload pair>, "why": "<at most 12 words>"}]}
 with exactly one entry per candidate, using the ids given."""
 
+# v3 (dev findings on v2): the model acted as a rarity rule, and v2's
+# "never-toggling = suspicious" line made it score the clean c880's own
+# near-constant gates 0.9. v3 drops that claim, weighs two explicit
+# hypotheses, and reads structural facts (context D) rather than rarity alone.
+_INSTRUCTIONS_V3 = """You are auditing a gate-level digital circuit for hardware trojans.
+
+A deterministic pre-filter flagged the candidates below, all from ONE circuit.
+Each is a gate T [suspected trigger] with a single load that feeds -- directly
+or through one inverter/buffer V -- a 2-input gate P [suspected payload]; O is
+P's other input. Ordinary logic matches this pattern all the time. At most one
+candidate in a circuit is a trojan, and often none is.
+
+For each candidate weigh two hypotheses and report the strongest evidence for
+each before giving a probability:
+  H_normal: T and P are ordinary design logic.
+  H_trojan: T and P were ADDED -- T fires under some condition and P splices
+            into an existing signal O, corrupting it (flip, force 1, force 0).
+
+Rarity alone is WEAK evidence. Real circuits contain many rarely-active and
+even near-constant gates under random stimulus (deep AND/NOR conditions), and
+some inserted triggers fire as often as ordinary logic. Judge structural fit:
+Evidence for H_trojan:
+- P's gate type is unusual for this circuit or its neighbourhood (low
+  P_type_share) -- an inserted gate often differs from its surroundings;
+- O feeds only P (O_fan_out 1): a spliced gate takes over the loads O had;
+- T has no siblings (T_siblings 0) and its inputs come from very different
+  depths (large T_in_depth_spread): it was wired in rather than built as part
+  of a decoding structure;
+- T is much rarer than its neighbourhood (toggle far below
+  neigh_median_toggle) AND few gates in the circuit are as rare (low T_as_rare).
+Evidence for H_normal:
+- T shares inputs with sibling gates (T_siblings > 0): decoder, comparator or
+  state-condition logic;
+- many gates in this circuit are as rare as T (high T_as_rare): rarity is
+  common here, so it does not single T out;
+- P's type is common in the circuit and around it; O also drives other logic;
+- the neighbourhood is uniformly rare or T's rarity matches it.
+
+Each candidate is a table, one row per gate: id; mark (T, V, P, O as above,
+- = surrounding gate); type; where (PI primary input, PO primary output, int
+internal); toggle = fraction of random input patterns on which the net
+switched; fan_in / fan_out = total connections; depth = logic levels below the
+shallowest gate shown; inputs = the shown gates driving it ("kext" = k inputs
+not shown). The "facts" line summarises the candidate in this circuit:
+T_as_rare = share of the circuit's gates at least as rare as T; T_siblings =
+other gates reading 2+ of T's inputs; T_in_depth_spread = depth range of T's
+inputs; link = direct or via inverter; P_type_share = share of gates of P's
+type in the circuit and within 2 hops; P_fan_out; P_reach = primary outputs P
+reaches and the nearest one's distance; O_fan_out; neigh_median_toggle =
+median toggle of gates within 2 hops of T.
+
+Use the whole 0..1 range and rank candidates against each other: most should
+score below 0.2, and only one standing out on several kinds of evidence
+should score high.
+
+Reply with JSON only:
+{"results": [{"id": "<candidate id>", "t": "<strongest trojan evidence, <=8
+words>", "n": "<strongest normal-logic evidence, <=8 words>", "p": <probability
+0..1>}]}
+with exactly one entry per candidate, using the ids given."""
+
+PROMPTS = {"v2": _INSTRUCTIONS_V2, "v3": _INSTRUCTIONS_V3}
+_INSTRUCTIONS = PROMPTS[PROMPT_VERSION]
+
 
 class TrojanCandidateJudge:
     def __init__(
@@ -90,10 +156,15 @@ class TrojanCandidateJudge:
         prompt_token_budget: int = 5200,
         seed: int = 0,
         log: Callable[[str], None] = print,
+        prompt_version: str = PROMPT_VERSION,
     ):
         """``complete(prompt, n_candidates)`` sends one prompt and returns the raw reply text."""
+        if prompt_version not in PROMPTS:
+            raise ValueError(f"unknown prompt version {prompt_version!r}; have {sorted(PROMPTS)}")
         self.complete = complete
         self.model_name = model_name
+        self.prompt_version = prompt_version
+        self.instructions = PROMPTS[prompt_version]
         self.cache_path = Path(cache_path)
         self.batch_size = batch_size
         self.prompt_token_budget = prompt_token_budget
@@ -108,11 +179,21 @@ class TrojanCandidateJudge:
             self.cache = json.loads(self.cache_path.read_text(encoding="utf-8"))
 
     def _ckey(self, key: str) -> str:
-        return f"{self.model_name}|{PROMPT_VERSION}|{key}"
+        return f"{self.model_name}|{self.prompt_version}|{key}"
 
     def _save(self) -> None:
         self.cache_path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = self.cache_path.with_suffix(".tmp")
+        # Merge with what is on disk first: another run (an ablation, a
+        # different prompt version) may share this file and have added
+        # answers since we loaded it; writing only our copy would drop them.
+        if self.cache_path.exists():
+            try:
+                on_disk = json.loads(self.cache_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                on_disk = {}
+            for k, v in on_disk.items():
+                self.cache.setdefault(k, v)
+        tmp = self.cache_path.with_suffix(f".{os.getpid()}.tmp")
         tmp.write_text(json.dumps(self.cache), encoding="utf-8")
         tmp.replace(self.cache_path)
 
@@ -124,12 +205,12 @@ class TrojanCandidateJudge:
         # single request (Groq's free tier: 8000 tokens including the reply
         # reservation), and contexts vary a lot in length.
         batch: dict[str, str] = {}
-        size = _tokens(_INSTRUCTIONS)
+        size = _tokens(self.instructions)
         for k in todo:
             t = _tokens(contexts[k]) + 8
             if batch and (len(batch) >= self.batch_size or size + t > self.prompt_token_budget):
                 self._judge_batch(batch)
-                batch, size = {}, _tokens(_INSTRUCTIONS)
+                batch, size = {}, _tokens(self.instructions)
             batch[k] = contexts[k]
             size += t
         if batch:
@@ -139,7 +220,7 @@ class TrojanCandidateJudge:
     def _judge_batch(self, batch: dict[str, str], attempt: int = 0) -> None:
         ids = {f"c{j + 1}": k for j, k in enumerate(batch)}
         body = "\n\n".join(f"### Candidate {cid}\n{batch[k]}" for cid, k in ids.items())
-        prompt = f"{_INSTRUCTIONS}\n\n{body}"
+        prompt = f"{self.instructions}\n\n{body}"
         started = time.monotonic()
         try:
             reply = self.complete(prompt, len(batch)) or ""
@@ -206,5 +287,9 @@ def _parse(reply: str) -> dict[str, dict]:
             p = float(item["p"])
         except (KeyError, TypeError, ValueError):
             continue
-        out[cid] = {"p": min(1.0, max(0.0, p)), "why": str(item.get("why", ""))[:160]}
+        why = str(item.get("why", "") or "")
+        if not why and (item.get("t") or item.get("n")):
+            # v3 reports the strongest evidence for each hypothesis.
+            why = f"+ {item.get('t', '')} / - {item.get('n', '')}"
+        out[cid] = {"p": min(1.0, max(0.0, p)), "why": why[:200]}
     return out

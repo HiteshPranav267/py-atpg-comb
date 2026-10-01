@@ -13,6 +13,10 @@ For every trojan variant and every clean base circuit:
        relaxed -- trigger rarity x input-activity imbalance (hand rule)
        random  -- uniform scores, averaged over several seeds
        llm     -- the model's probability, from the local context
+       features -- logistic regression on the structural facts context D
+                   shows the LLM, trained on dev circuits only (held out per
+                   dev circuit; see train_trojan_feature_baseline.py). The
+                   fair bar for the LLM once it is given those facts.
   3. record where the true trigger-payload pair ranks.
 
 Metrics per payload shape and method:
@@ -51,11 +55,21 @@ from eval_trojan_verdict import analyse  # noqa: E402
 from llm_quota import call_with_quota_wait  # noqa: E402
 from pyatpg.evaluation.trojan_candidates import (  # noqa: E402
     candidate_context,
+    candidate_facts,
+    circuit_stats,
     generate_candidates,
     is_trojan_candidate,
     relaxed_rule_score,
 )
-from pyatpg.evaluation.trojan_llm_judge import PROMPT_VERSION, TrojanCandidateJudge  # noqa: E402
+from pyatpg.evaluation.trojan_feature_baseline import (  # noqa: E402
+    feature_vector,
+    load_models,
+    model_for,
+)
+from pyatpg.evaluation.trojan_feature_baseline import score as feature_score  # noqa: E402
+from pyatpg.evaluation.trojan_llm_judge import PROMPT_VERSION, PROMPTS, TrojanCandidateJudge  # noqa: E402
+
+FEATURE_MODELS = Path("results/trojan_llm_judge/feature_baseline.json")
 
 SPLITS = {
     "dev": ["c432", "c880"],
@@ -85,9 +99,13 @@ def main() -> int:
     ap.add_argument("--circuits", nargs="+", default=None, help="override the split's circuits")
     ap.add_argument("--shapes", nargs="+", default=["xor", "or", "mux"], choices=list(SHAPES))
     ap.add_argument("--variants", type=int, default=5, help="variants per insertion strategy")
-    ap.add_argument("--context", default="B", choices=["A", "B", "C"],
-                    help="what the LLM sees: A stats only, B + neighbourhood, C + SCOAP")
-    ap.add_argument("--max-nodes", type=int, default=14)
+    ap.add_argument("--context", default="D", choices=["A", "B", "C", "D"],
+                    help="what the LLM sees: A stats only, B + neighbourhood, C + SCOAP, "
+                         "D = B + structural facts (default)")
+    ap.add_argument("--max-nodes", type=int, default=None,
+                    help="gates shown per candidate (default 10 for context D, else 14)")
+    ap.add_argument("--prompt-version", default=PROMPT_VERSION, choices=sorted(PROMPTS),
+                    help=f"judge prompt (default {PROMPT_VERSION}; older ones reproduce earlier runs)")
     ap.add_argument("--llm", action="store_true")
     ap.add_argument("--llm-wait", type=float, default=0.0,
                     help="hours to wait out LLM quota limits (0 = stop on a quota error)")
@@ -107,6 +125,12 @@ def main() -> int:
     ap.add_argument("--out", type=Path, default=None)
     args = ap.parse_args()
     cerebras = args.provider == "cerebras"
+    if args.max_nodes is None:
+        args.max_nodes = 10 if args.context == "D" else 14
+    feature_models = load_models(FEATURE_MODELS) if FEATURE_MODELS.exists() else None
+    if feature_models is None:
+        print(f"note: {FEATURE_MODELS} not found -- run train_trojan_feature_baseline.py "
+              "to add the 'features' baseline", file=sys.stderr)
     if args.batch_size is None:
         args.batch_size = 80 if cerebras else 20
     if args.prompt_token_budget is None:
@@ -140,6 +164,8 @@ def main() -> int:
         model = config.model
 
         min_gap = 60.0 / args.llm_rpm if args.llm_rpm else 0.0
+        # v3 replies carry two short evidence strings per candidate.
+        reply_tokens = 45 if args.prompt_version == "v2" else 75
         last_call = [0.0]
 
         def complete(prompt: str, n_candidates: int) -> str:
@@ -153,7 +179,7 @@ def main() -> int:
                 # Reply reservation scales with the batch actually sent: it
                 # counts against the provider's per-request token cap.
                 return provider.complete(prompt, json_mode=True,
-                                         max_output_tokens=45 * n_candidates + 150)
+                                         max_output_tokens=reply_tokens * n_candidates + 150)
             return call_with_quota_wait(call, args.llm_wait * 3600) if args.llm_wait else call()
 
         complete.last_usage = lambda: getattr(provider, "last_usage", None)
@@ -161,13 +187,21 @@ def main() -> int:
         judge = TrojanCandidateJudge(
             complete, model, Path("results/trojan_llm_judge/judge_cache.json"),
             batch_size=args.batch_size, prompt_token_budget=args.prompt_token_budget,
+            prompt_version=args.prompt_version,
         )
-        print(f"LLM: {config.describe()} | prompt {PROMPT_VERSION} | context {args.context} | "
+        print(f"LLM: {config.describe()} | prompt {args.prompt_version} | context {args.context} | "
               f"batches <= {args.batch_size} candidates / ~{args.prompt_token_budget} prompt tokens"
               + (f" | <= {args.llm_rpm} requests/min" if args.llm_rpm else ""))
 
-    def score_all(cands, feats, graph) -> dict[str, list[float]]:
-        scores = {"relaxed": [relaxed_rule_score(c, feats) for c in cands]}
+    def score_all(cands, feats, graph, circ) -> dict[str, list[float]]:
+        stats = circuit_stats(feats, graph)
+        relaxed = [relaxed_rule_score(c, feats) for c in cands]
+        scores = {"relaxed": relaxed}
+        if feature_models is not None:
+            fm = model_for(feature_models, circ)
+            scores["features"] = [
+                feature_score(fm, feature_vector(candidate_facts(c, feats, graph, stats), r))
+                for c, r in zip(cands, relaxed)]
         for seed in range(RANDOM_SEEDS):
             rng = random.Random(seed)
             scores[f"random#{seed}"] = [rng.random() for _ in cands]
@@ -175,7 +209,8 @@ def main() -> int:
             ctx = {}
             keys = []
             for c in cands:
-                k, text = candidate_context(c, feats, graph, args.context, max_nodes=args.max_nodes)
+                k, text = candidate_context(c, feats, graph, args.context, max_nodes=args.max_nodes,
+                                            stats=stats)
                 ctx[k] = text
                 keys.append(k)
             probs = judge.judge(ctx)
@@ -190,7 +225,7 @@ def main() -> int:
         _, _, pr, _, _ = analyse(Path(f"benchmarks/{circ}.v"), args.toggle_patterns, True)
         feats = {p["gate_id"]: p["features"] for p in pr.gate_profiles}
         cands = generate_candidates(pr.gate_profiles, pr.graph)
-        sc = score_all(cands, feats, pr.graph)
+        sc = score_all(cands, feats, pr.graph, circ)
         clean_max[circ] = {m: max(v) if v else float("-inf") for m, v in sc.items()}
         print(f"{circ} clean: {len(cands)} candidates"
               + (f", judge calls so far {judge.calls}" if judge else ""))
@@ -207,7 +242,7 @@ def main() -> int:
                     feats = {p["gate_id"]: p["features"] for p in pr.gate_profiles}
                     cands = generate_candidates(pr.gate_profiles, pr.graph)
                     truth = [i for i, c in enumerate(cands) if is_trojan_candidate(c, meta)]
-                    sc = score_all(cands, feats, pr.graph)
+                    sc = score_all(cands, feats, pr.graph, circ)
                     n = len(cands)
                     for method, vals in sc.items():
                         row = {"circuit": circ, "shape": shape, "strategy": strategy,
@@ -257,7 +292,7 @@ def _summarise(rows: list[dict], out: Path, args, model: str) -> None:
 
     table = []
     for shape in args.shapes:
-        for method in ["relaxed", "random", "llm"]:
+        for method in ["relaxed", "features", "random", "llm"]:
             sel = [r for r in rows if r["shape"] == shape and
                    (r["method"] == method or (method == "random" and r["method"].startswith("random#")))]
             if not sel:
@@ -277,7 +312,7 @@ def _summarise(rows: list[dict], out: Path, args, model: str) -> None:
         f"# LLM trojan-candidate judge -- {args.split} split",
         "",
         f"Circuits: {', '.join(args.circuits or SPLITS[args.split])}. Variants per strategy: {args.variants}. "
-        f"LLM context: {args.context} (max {args.max_nodes} nodes). Model: {model}, prompt {PROMPT_VERSION}.",
+        f"LLM context: {args.context} (max {args.max_nodes} nodes). Model: {model}, prompt {args.prompt_version}.",
         "Ranks are among all candidates of the circuit (ties at the mean). Random = mean of "
         f"{RANDOM_SEEDS} seeds. Detection @0 FA: highest candidate score above every clean circuit's.",
         "",
