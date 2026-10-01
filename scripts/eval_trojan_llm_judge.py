@@ -91,10 +91,28 @@ def main() -> int:
     ap.add_argument("--llm", action="store_true")
     ap.add_argument("--llm-wait", type=float, default=0.0,
                     help="hours to wait out LLM quota limits (0 = stop on a quota error)")
-    ap.add_argument("--batch-size", type=int, default=20)
+    ap.add_argument("--provider", default="env", choices=["env", "cerebras"],
+                    help="env: the app's configured LLM (.env). cerebras: gpt-oss-120b on "
+                         "Cerebras's free tier, key from CEREBRAS_API_KEY -- bigger requests, "
+                         "so a whole circuit's candidates go in one prompt")
+    ap.add_argument("--batch-size", type=int, default=None,
+                    help="max candidates per request (default 20; 80 with --provider cerebras)")
+    ap.add_argument("--prompt-token-budget", type=int, default=None,
+                    help="estimated prompt tokens per request (default 5200 for Groq's "
+                         "8000-token cap; 20000 with --provider cerebras)")
+    ap.add_argument("--llm-rpm", type=float, default=None,
+                    help="pace requests to at most this many per minute "
+                         "(default unlimited; 4.5 with --provider cerebras, whose free tier allows 5)")
     ap.add_argument("--toggle-patterns", type=int, default=3000)
     ap.add_argument("--out", type=Path, default=None)
     args = ap.parse_args()
+    cerebras = args.provider == "cerebras"
+    if args.batch_size is None:
+        args.batch_size = 80 if cerebras else 20
+    if args.prompt_token_budget is None:
+        args.prompt_token_budget = 20000 if cerebras else 5200
+    if args.llm_rpm is None and cerebras:
+        args.llm_rpm = 4.5
 
     circuits = args.circuits or SPLITS[args.split]
     out = args.out or Path(f"results/trojan_llm_judge/{args.split}_{args.context}")
@@ -105,15 +123,33 @@ def main() -> int:
     if args.llm:
         from pyatpg.ranking.providers import create_provider, resolve_llm_config
 
-        config = resolve_llm_config()
+        if cerebras:
+            key = os.environ.get("CEREBRAS_API_KEY", "").strip()
+            if not key:
+                print("--provider cerebras needs CEREBRAS_API_KEY in the environment or .env.",
+                      file=sys.stderr)
+                return 2
+            config = resolve_llm_config(provider="openai_compatible", api_key=key,
+                                        model="gpt-oss-120b", base_url="https://api.cerebras.ai/v1")
+        else:
+            config = resolve_llm_config()
         if config is None:
             print("--llm given but no LLM key is configured.", file=sys.stderr)
             return 2
         provider = create_provider(config)
         model = config.model
 
+        min_gap = 60.0 / args.llm_rpm if args.llm_rpm else 0.0
+        last_call = [0.0]
+
         def complete(prompt: str, n_candidates: int) -> str:
             def call():
+                # Client-side pacing: cheaper than hitting a per-minute
+                # limit and waiting out its penalty.
+                gap = time.monotonic() - last_call[0]
+                if gap < min_gap:
+                    time.sleep(min_gap - gap)
+                last_call[0] = time.monotonic()
                 # Reply reservation scales with the batch actually sent: it
                 # counts against the provider's per-request token cap.
                 return provider.complete(prompt, json_mode=True,
@@ -124,9 +160,11 @@ def main() -> int:
 
         judge = TrojanCandidateJudge(
             complete, model, Path("results/trojan_llm_judge/judge_cache.json"),
-            batch_size=args.batch_size,
+            batch_size=args.batch_size, prompt_token_budget=args.prompt_token_budget,
         )
-        print(f"LLM: {config.describe()} | prompt {PROMPT_VERSION} | context {args.context}")
+        print(f"LLM: {config.describe()} | prompt {PROMPT_VERSION} | context {args.context} | "
+              f"batches <= {args.batch_size} candidates / ~{args.prompt_token_budget} prompt tokens"
+              + (f" | <= {args.llm_rpm} requests/min" if args.llm_rpm else ""))
 
     def score_all(cands, feats, graph) -> dict[str, list[float]]:
         scores = {"relaxed": [relaxed_rule_score(c, feats) for c in cands]}
