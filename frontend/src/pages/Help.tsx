@@ -544,8 +544,14 @@ g ∉ F  ∧  g ∉ U   →  (not reported — nothing suspicious, nothing undet
             <SectionHeading title="FAQ & Troubleshooting" />
             <div className="flex flex-col gap-2">
               <FaqItem q="What file format does it accept?">
-                A gate-level Verilog netlist (<code className="font-mono text-xs bg-secondary px-1 rounded">.v</code>).
-                It should already be synthesized into basic gates (AND/OR/NOT/etc.), not behavioral/RTL code.
+                A gate-level Verilog netlist (<code className="font-mono text-xs bg-secondary px-1 rounded">.v</code>)
+                or <code className="font-mono text-xs bg-secondary px-1 rounded">.bench</code> file, or RTL: a single
+                behavioural <code className="font-mono text-xs bg-secondary px-1 rounded">.v</code>/<code className="font-mono text-xs bg-secondary px-1 rounded">.sv</code> file
+                or a <code className="font-mono text-xs bg-secondary px-1 rounded">.zip</code> of sources, such as a Trust-Hub
+                benchmark download. RTL is synthesized to gates with Yosys first; testbenches are skipped and, when the zip holds
+                both <code className="font-mono text-xs bg-secondary px-1 rounded">TjFree</code> and{' '}
+                <code className="font-mono text-xs bg-secondary px-1 rounded">TjIn</code> copies, the Trojan-inserted one is used.
+                The first upload of a large design (e.g. AES) can take a few minutes.
               </FaqItem>
               <FaqItem q="Do I need to re-upload my circuit for every tool?">
                 No. Upload it once on the <Link to="/circuits" className="text-primary hover:underline">Circuits</Link> page

@@ -10,6 +10,7 @@ import sys
 from dataclasses import asdict
 
 from pyatpg.atpg import AnalysisMode, AtpgAnalysisService
+from pyatpg.core.rtl import read_path
 from pyatpg.ranking.providers import AUTO_PROVIDER, PROVIDER_ORDER
 
 #: Printed in place of any metric the ATPG tool did not report.
@@ -164,7 +165,7 @@ def main():
             "no flag needed."
         )
     )
-    parser.add_argument("netlist", help="Path to the .v, .verilog or .bench netlist (combinational or sequential)")
+    parser.add_argument("netlist", help="Path to a .v/.verilog/.bench netlist, an RTL .v/.sv file, or a .zip/directory of RTL sources (combinational or sequential)")
     parser.add_argument(
         "--mode",
         choices=[m.value for m in AnalysisMode],
@@ -198,9 +199,8 @@ def main():
     args = parser.parse_args()
 
     try:
-        with open(args.netlist, "r", encoding="utf-8") as handle:
-            source_text = handle.read()
-    except OSError as exc:
+        source_text, netlist_name = read_path(args.netlist)
+    except (OSError, ValueError) as exc:
         print(f"Could not read {args.netlist}: {exc}")
         sys.exit(1)
 
@@ -213,7 +213,7 @@ def main():
     try:
         analysis = service.run(
             source_text=source_text,
-            filename=args.netlist,
+            filename=netlist_name,
             mode=AnalysisMode(args.mode),
             toggle_patterns=args.patterns,
             use_llm=bool(args.api_key),

@@ -116,7 +116,11 @@ class VerilogParser:
         text = re.sub(r"^\s*`[^\n]*", "", text, flags=re.M)
         # Escaped identifiers (``\foo[3] ``) end at whitespace; keep the name
         # with any special characters replaced so it stays a single token.
-        text = re.sub(r"\\(\S+)", lambda m: re.sub(r"[^A-Za-z0-9_$]", "_", m.group(1)), text)
+        # The whitespace that terminates one may precede a bit select
+        # (Yosys writes ``\AES.r2.p33 [31:20]``); drop it so the select
+        # stays attached to the name.
+        text = re.sub(r"\\(\S+)(?:\s+(?=\[))?",
+                      lambda m: re.sub(r"[^A-Za-z0-9_$]", "_", m.group(1)), text)
         return text
 
     def _parse_modules(self, text):
@@ -202,6 +206,10 @@ class VerilogParser:
     def _parse_instance(self, mod, stmt):
         m = re.match(r"^([A-Za-z_][A-Za-z0-9_$]*)\s*(#\s*\(.*?\))?\s*", stmt)
         if not m or "(" not in stmt:
+            if stmt.startswith("$") and "(" in stmt:
+                # A synthesis tool's internal cell (Yosys ``\$_DFF_P_``):
+                # dropping it would silently delete logic.
+                raise ValueError(f"Unsupported cell type in the netlist: {stmt.split()[0]}")
             return
         cell = m.group(1)
         rest = stmt[m.end():]
@@ -298,7 +306,33 @@ class VerilogParser:
     # Flattening
     # ------------------------------------------------------------------
 
-    def parse(self, text):
+    def parse(self, text, filename="design.v"):
+        """Parse a gate-level netlist -- or RTL, which is synthesized first.
+
+        RTL (behavioural Verilog, or a multi-file bundle from
+        :mod:`pyatpg.core.rtl`) goes through Yosys onto cells this parser
+        lowers exactly; any combinational loop the RTL described is then cut
+        with a pseudo flip-flop, and both steps are recorded in ``notes``.
+        """
+        from pyatpg.core import rtl
+
+        if not rtl.needs_synthesis(text):
+            return self._parse_netlist(text)
+        netlist, notes = rtl.synthesize(text, filename)
+        self.notes.extend(notes)
+        circuit = self._parse_netlist(netlist)
+        rtl.remove_dead_logic(circuit)
+        cuts = rtl.break_combinational_loops(circuit)
+        if cuts:
+            shown = ", ".join(cuts[:8]) + (" ..." if len(cuts) > 8 else "")
+            self.notes.append(
+                f"The RTL describes {len(cuts)} combinational feedback path(s) with no clock "
+                "(state held by an unclocked always block); each was cut with a pseudo "
+                f"flip-flop so the value updates once per clock: {shown}"
+            )
+        return circuit
+
+    def _parse_netlist(self, text):
         text = self.clean(text)
         modules = self._parse_modules(text)
         if not modules:

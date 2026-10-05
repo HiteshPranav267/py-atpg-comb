@@ -50,7 +50,7 @@ def sanitize_circuit_name(raw: str | None, fallback: str = "circuit") -> str:
         return fallback
 
     stem = Path(str(raw)).name
-    for suffix in (".bench", ".verilog", ".v"):
+    for suffix in (".bench", ".verilog", ".sv", ".v"):
         if stem.lower().endswith(suffix):
             stem = stem[: -len(suffix)]
             break

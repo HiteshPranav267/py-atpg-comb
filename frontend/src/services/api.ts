@@ -235,8 +235,10 @@ export const api = {
     if (fallbacks.length) formData.append('llm_fallbacks', JSON.stringify(fallbacks));
     const res = await apiClient.post('/atpg/run', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
-      // Two ATPG runs plus toggle simulation on a large circuit.
-      timeout: 300000,
+      // Two ATPG runs plus toggle simulation on a large circuit -- and, for
+      // RTL uploads such as Trust-Hub AES (~190k gates once synthesized),
+      // Yosys synthesis first.
+      timeout: 3600000,
     });
     return res.data;
   },

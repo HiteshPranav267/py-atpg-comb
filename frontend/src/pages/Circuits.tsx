@@ -63,7 +63,7 @@ export default function Circuits() {
             ref={fileInputRef} 
             onChange={handleFileUpload}
             className="hidden"
-            accept=".v,.verilog,.bench"
+            accept=".v,.sv,.verilog,.bench,.zip"
           />
           <button 
             onClick={() => fileInputRef.current?.click()}

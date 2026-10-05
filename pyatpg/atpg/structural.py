@@ -14,7 +14,7 @@ from pyatpg.core.graph_analysis import CircuitGraph, DEFAULT_TOGGLE_SEED
 from pyatpg.core.netlist import Circuit, NetlistParser
 from pyatpg.core.verilog_parser import VerilogParser
 
-_VERILOG_SUFFIXES = (".v", ".verilog")
+_VERILOG_SUFFIXES = (".v", ".sv", ".verilog")
 _BENCH_SUFFIXES = (".bench",)
 
 
@@ -97,10 +97,13 @@ def parse_circuit(source_text: str, filename: str) -> ParsedCircuit:
         parser = NetlistParser()
     else:
         raise ValueError(
-            f"Unsupported circuit format: {filename!r}. Provide a .v, .verilog or .bench file."
+            f"Unsupported circuit format: {filename!r}. Provide a .v, .sv, .verilog or .bench file, or a .zip of Verilog sources."
         )
 
-    circuit = parser.parse(source_text)
+    if isinstance(parser, VerilogParser):
+        circuit = parser.parse(source_text, filename)
+    else:
+        circuit = parser.parse(source_text)
     stem = Path(filename).stem
     if stem.endswith("_mod"):
         stem = stem[:-4]

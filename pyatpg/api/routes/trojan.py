@@ -3,6 +3,8 @@ import os
 import zipfile
 
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException
+
+from pyatpg.core.rtl import decode_upload
 from fastapi.responses import StreamingResponse
 
 from pyatpg.api.services.trojan_service import TrojanService
@@ -51,10 +53,10 @@ async def generate_dataset(
         )
     try:
         content = await file.read()
-        text = content.decode("utf-8")
         # The stem names the dataset; the full filename is passed separately
-        # because its extension is what selects the parser.
-        filename = file.filename or "circuit.v"
+        # because its extension is what selects the parser. A zip of RTL
+        # sources arrives here as one bundle named "<archive>.v".
+        text, filename = decode_upload(file.filename or "circuit.v", content)
         name = filename.rsplit('.', 1)[0]
         result = TrojanService.generate_dataset(
             text, name, variants, strategy,

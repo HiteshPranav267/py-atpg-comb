@@ -1,4 +1,6 @@
 from fastapi import APIRouter, UploadFile, File, HTTPException
+
+from pyatpg.core.rtl import decode_upload
 from typing import Optional
 
 from pyatpg.api.services.feature_service import FeatureService
@@ -12,8 +14,7 @@ async def extract_features(file: UploadFile = File(...)):
     """Upload Verilog and return the full FeatureSet."""
     try:
         content = await file.read()
-        text = content.decode("utf-8")
-        name = file.filename or "unknown.v"
+        text, name = decode_upload(file.filename or "unknown.v", content)
 
         fs = FeatureService.extract_features(text, name)
         return FeatureSetSchema(

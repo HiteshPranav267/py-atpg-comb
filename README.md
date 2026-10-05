@@ -6,7 +6,7 @@
 
 ## Overview
 
-PyATPG identifies Hardware Trojans inside gate-level Verilog/`.bench` netlists, **combinational or sequential**. It combines classic EDA testability analysis (SCOAP, toggle simulation) with a pluggable ranking engine (deterministic heuristics, statistical methods, LLM-based reasoning), and generates targeted test patterns for suspect gates — via ATALANTA for combinational circuits, and via a native sequential ATPG engine (`pyatpg/seq`) for circuits with flip-flops, since ATALANTA cannot levelize state-holding logic.
+PyATPG identifies Hardware Trojans inside gate-level Verilog/`.bench` netlists, **combinational or sequential** — and in RTL designs such as the Trust-Hub chip-level Trojan benchmarks, which it synthesizes to gates first (see [RTL designs](#rtl-designs-trust-hub-benchmarks)). It combines classic EDA testability analysis (SCOAP, toggle simulation) with a pluggable ranking engine (deterministic heuristics, statistical methods, LLM-based reasoning), and generates targeted test patterns for suspect gates — via ATALANTA for combinational circuits, and via a native sequential ATPG engine (`pyatpg/seq`) for circuits with flip-flops, since ATALANTA cannot levelize state-holding logic.
 
 The repo is one application built on the `pyatpg` core: a stateless FastAPI backend + React/Vite EDA-style frontend for running the ATPG pipeline on a single netlist, generating Trojan datasets, and running rankers across a dataset to compare accuracy/MRR/search-space-reduction metrics. Deployed to Render (API) and Vercel (frontend). The same core is also reachable from the terminal (`python -m pyatpg`) and from the unattended batch scripts under `scripts/`.
 
@@ -111,6 +111,7 @@ See [`pyatpg/llm/`](#llm-assisted-sequential-atpg) below for the optional LLM-as
 | Layer                       | Capability                                                                 |
 | ---------------------------- | --------------------------------------------------------------------------- |
 | **Parsing**             | Structural Verilog/`.bench` parser (gates, DFFs, scan chains)             |
+| **RTL front end**       | Behavioural Verilog/SystemVerilog (single file, `.zip` or directory) synthesized with Yosys; VHDL via GHDL when installed (`pyatpg/core/rtl.py`) |
 | **Circuit Graph**       | NetworkX DAG with level, fanin/fanout, centrality                         |
 | **SCOAP**               | Controllability (CC0/CC1) & Observability (CO) metrics                    |
 | **Toggle Analysis**     | Simulated toggle rate per gate                                            |
@@ -204,7 +205,38 @@ npm run dev
 ```bash
 python -m pyatpg benchmarks/c432.v    # combinational -> Atalanta
 python -m pyatpg benchmarks/s27.bench # sequential (has flip-flops) -> pyatpg/seq automatically
+python -m pyatpg AES-T900.zip          # RTL archive from Trust-Hub -> Yosys -> gates
 ```
+
+### RTL designs (Trust-Hub benchmarks)
+
+Most Trust-Hub chip-level Trojan benchmarks (AES-T*, BasicRSA-T*, RS232-T*,
+PIC16F84-T*, wb_conmax-T*, ...) ship as RTL, not gate-level netlists. Upload
+the downloaded `.zip` as-is (web UI, API or CLI), or a single RTL `.v`/`.sv`
+file. PyATPG then:
+
+1. unpacks the archive and drops testbenches (portless top modules);
+2. when the archive holds both `TjFree` and `TjIn` copies, synthesizes the
+   Trojan-inserted `TjIn` one — zip the `TjFree` folder alone for the golden
+   circuit;
+3. synthesizes with [Yosys](https://yosyshq.net/yosys/) (the
+   `yowasp-yosys` pip package, or a native `yosys` on `PATH`) onto simple
+   cells the structural parser already reads, flattening from the
+   auto-detected top module;
+4. makes asynchronous set/reset synchronous and models latches as a
+   register plus a mux (the ATPG model is single-clock synchronous);
+5. cuts any combinational loop the RTL describes (e.g. AES-T900's
+   `always @(rst, out) Counter <= Counter + 1`) with a pseudo flip-flop on
+   the RTL-named net.
+
+Every such decision is listed in the run's notes. Synthesis results are
+cached in the system temp directory, so re-running the same design is fast.
+VHDL designs (e.g. MC8051-T*) additionally need [GHDL](https://github.com/ghdl/ghdl)
+on `PATH`. Layout-level (GDSII) and board-level (PCB/FPGA-board) benchmarks
+are not netlists and cannot be analysed.
+
+Large designs are slow: AES-T900 synthesizes to ~190k gates and ~6.2k
+flip-flops (about 2.5 minutes of synthesis on first upload).
 
 ### Option C — Unattended batch runs (for collecting results across many circuits)
 

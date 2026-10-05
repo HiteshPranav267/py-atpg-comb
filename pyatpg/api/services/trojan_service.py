@@ -9,7 +9,7 @@ from pyatpg.trojan.strategy import RandomStrategy, RareNodeStrategy, LowScoapStr
 
 #: Extensions the dataset generator can parse, and the one assumed when an
 #: upload arrives without a usable extension.
-_SUPPORTED_SUFFIXES = (".v", ".verilog", ".bench")
+_SUPPORTED_SUFFIXES = (".v", ".sv", ".verilog", ".bench")
 _DEFAULT_SUFFIX = ".v"
 
 #: Where generated datasets are written, relative to the working directory.

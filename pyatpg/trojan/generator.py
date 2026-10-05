@@ -33,7 +33,7 @@ class TrojanDatasetGenerator:
             # translation, which does not touch a bare CR.
             text = f.read().replace('\r\n', '\n').replace('\r', '\n')
 
-        if circuit_path.endswith(('.v', '.verilog')):
+        if circuit_path.endswith(('.v', '.sv', '.verilog')):
             parser = VerilogParser()
         elif circuit_path.endswith('.bench'):
             parser = NetlistParser()

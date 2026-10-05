@@ -1,6 +1,8 @@
 from typing import Any, Dict
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+
+from pyatpg.core.rtl import decode_upload
 from fastapi.responses import FileResponse
 
 from pyatpg.atpg import (
@@ -114,9 +116,9 @@ async def run_atpg(
 
     try:
         content = await file.read()
-        source_text = content.decode("utf-8")
-    except UnicodeDecodeError:
-        raise HTTPException(status_code=400, detail="Circuit file must be UTF-8 text.")
+        source_text, filename = decode_upload(file.filename or "circuit.v", content)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
     try:
         fallbacks = parse_llm_fallbacks(llm_fallbacks)
@@ -126,7 +128,7 @@ async def run_atpg(
     try:
         analysis = _service.run(
             source_text=source_text,
-            filename=file.filename or "circuit.v",
+            filename=filename,
             mode=selected_mode,
             toggle_patterns=patterns,
             use_llm=use_llm,
