@@ -236,7 +236,10 @@ on `PATH`. Layout-level (GDSII) and board-level (PCB/FPGA-board) benchmarks
 are not netlists and cannot be analysed.
 
 Large designs are slow: AES-T900 synthesizes to ~190k gates and ~6.2k
-flip-flops (about 2.5 minutes of synthesis on first upload).
+flip-flops (about 2.5 minutes of synthesis on first upload), and Atalanta
+needs more than its default 600 s per run on it. Raise the limit before
+starting the backend, e.g. `PYATPG_ATALANTA_TIMEOUT=7200` (seconds); Yosys has
+its own limit, `PYATPG_YOSYS_TIMEOUT` (default 3600).
 
 ### Option C — Unattended batch runs (for collecting results across many circuits)
 

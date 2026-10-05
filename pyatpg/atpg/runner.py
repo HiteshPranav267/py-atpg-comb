@@ -7,6 +7,7 @@ they reach this module.
 """
 from __future__ import annotations
 
+import os
 import subprocess
 from pathlib import Path
 
@@ -31,7 +32,10 @@ from .workspace import (
 )
 
 #: Atalanta is a fast combinational engine; anything beyond this is a hang.
-DEFAULT_TIMEOUT_SECONDS = 600
+#: Per-run Atalanta limit. Large synthesized RTL designs (Trust-Hub AES is
+#: ~190k gates) need far longer than the default; raise it with the
+#: PYATPG_ATALANTA_TIMEOUT environment variable (seconds).
+DEFAULT_TIMEOUT_SECONDS = int(os.environ.get("PYATPG_ATALANTA_TIMEOUT", "600"))
 
 #: Header Atalanta prints only once it has actually generated patterns.
 SUMMARY_MARKER = "SUMMARY OF TEST PATTERN GENERATION RESULTS"
