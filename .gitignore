@@ -71,3 +71,4 @@ tests/
 # Scan artifact from an external indexing tool: regenerated on demand and
 # full of this machine's absolute paths, so it is noise in every diff.
 .orphic/
+.yowasp-cache/

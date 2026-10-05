@@ -231,3 +231,23 @@ def test_synthesis_errors_are_reported():
     with pytest.raises(ValueError, match="Yosys could not synthesize"):
         parse_circuit("module m(input a, output y); missing u(.a(a), .y(y)); assign z = a + 1; endmodule",
                       "m.v")
+
+
+# ----------------------------------------------------------------------
+# Size guard
+# ----------------------------------------------------------------------
+
+def test_size_guard_rejects_oversized_designs(monkeypatch):
+    monkeypatch.setenv("PYATPG_MAX_GATES", "2")
+    with pytest.raises(rtl.DesignTooLargeError, match="PYATPG_MAX_GATES"):
+        parse_circuit(GATE_LEVEL, "top.v")
+
+
+def test_size_guard_only_defaults_on_hosted_backend(monkeypatch):
+    monkeypatch.delenv("PYATPG_MAX_GATES", raising=False)
+    monkeypatch.delenv("RENDER", raising=False)
+    assert rtl.max_gates() == 0
+    monkeypatch.setenv("RENDER", "true")
+    assert rtl.max_gates() == 60000
+    monkeypatch.setenv("PYATPG_MAX_GATES", "0")
+    assert rtl.max_gates() == 0

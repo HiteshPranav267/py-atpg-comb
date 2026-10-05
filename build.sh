@@ -10,6 +10,13 @@ set -euo pipefail
 
 pip install -r requirements.txt
 
+# The pip Yosys (used to synthesize RTL uploads) is WebAssembly that is
+# compiled to machine code on first use -- slow and memory-hungry. Do it here,
+# into the project directory pyatpg/core/rtl.py reads it from, so the running
+# server never has to (and never trips its own Yosys memory guard doing so).
+YOWASP_CACHE_DIR="$PWD/.yowasp-cache" python -c \
+    "import sys, yowasp_yosys; sys.exit(yowasp_yosys.run_yosys(['-V']))"
+
 cd Atalanta
 rm -f atalanta ./*.o
 make atalanta CFLAGS="-O -g -static"

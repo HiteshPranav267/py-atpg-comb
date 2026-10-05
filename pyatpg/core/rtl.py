@@ -37,6 +37,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import zipfile
 
 #: Files Yosys reads as design sources.
@@ -102,6 +103,64 @@ _SYNTH_VERSION = "1"  # bump when the script or library changes, to invalidate t
 
 class RtlSynthesisError(ValueError):
     """The RTL could not be synthesized; the message says why."""
+
+
+class DesignTooLargeError(ValueError):
+    """The design exceeds this server's size limits (see :func:`max_gates`)."""
+
+
+#: Where the WebAssembly Yosys keeps its compiled machine code. Inside the
+#: project so the copy build.sh warms up at deploy time is found at runtime
+#: (a hosted service's home directory need not survive from build to run).
+YOWASP_CACHE_DIR = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), ".yowasp-cache"
+)
+
+
+def _limit(name: str, hosted_default: int) -> int:
+    """An integer limit from the environment; 0 means unlimited.
+
+    Without an explicit setting the limit applies only on the hosted
+    backend (Render sets ``RENDER``), whose 512 MB instance a large design
+    such as Trust-Hub AES (~190k gates) runs out of memory on; local runs
+    stay unlimited.
+    """
+    value = os.environ.get(name)
+    if value is not None and value.strip():
+        try:
+            return max(0, int(value))
+        except ValueError:
+            pass
+    return hosted_default if os.environ.get("RENDER") else 0
+
+
+def max_gates() -> int:
+    """Largest design (gates + flip-flops) the server will analyse; 0 = no limit."""
+    return _limit("PYATPG_MAX_GATES", 60000)
+
+
+def yosys_memory_limit_mb() -> int:
+    """Memory Yosys may use before synthesis is stopped; 0 = no limit."""
+    return _limit("PYATPG_YOSYS_MAX_MB", 300)
+
+
+def check_design_size(cells: int, what: str = "This design") -> None:
+    """Raise :class:`DesignTooLargeError` when ``cells`` exceeds :func:`max_gates`."""
+    limit = max_gates()
+    if limit and cells > limit:
+        raise DesignTooLargeError(
+            f"{what} has {cells:,} gates and flip-flops, more than this server can analyse "
+            f"({limit:,}); it would run out of memory. Try a smaller design, or run PyATPG "
+            "locally / on a larger instance (the limit is PYATPG_MAX_GATES)."
+        )
+
+
+_CELL_LINE_RE = re.compile(r"^\s+[A-Z][A-Z0-9]*X1\s", re.M)
+
+
+def count_synthesized_cells(netlist: str) -> int:
+    """Number of library cells in a netlist :func:`synthesize` produced."""
+    return len(_CELL_LINE_RE.findall(netlist))
 
 
 # ----------------------------------------------------------------------
@@ -506,20 +565,58 @@ def _run_yosys(work: str) -> str:
         cmd = [sys.executable, "-c",
                "import sys, yowasp_yosys; sys.exit(yowasp_yosys.run_yosys(sys.argv[1:]))",
                "-q", "-l", "yosys.log", "-s", "synth.ys"]
-    try:
-        proc = subprocess.run(cmd, cwd=work, capture_output=True, text=True, timeout=timeout)
-    except subprocess.TimeoutExpired:
-        raise RtlSynthesisError(f"Yosys synthesis did not finish within {timeout:.0f} s.")
+    env = dict(os.environ)
+    # build.sh compiles the WebAssembly Yosys into this directory once, so a
+    # server does not redo that (slow, memory-hungry) step after every restart.
+    env.setdefault("YOWASP_CACHE_DIR", YOWASP_CACHE_DIR)
+    limit_mb = yosys_memory_limit_mb()
+    with open(os.path.join(work, "stderr.txt"), "w+", encoding="utf-8", errors="replace") as err:
+        proc = subprocess.Popen(cmd, cwd=work, env=env, stdout=subprocess.DEVNULL, stderr=err)
+        started = time.monotonic()
+        while proc.poll() is None:
+            if time.monotonic() - started > timeout:
+                proc.kill()
+                proc.wait()
+                raise RtlSynthesisError(f"Yosys synthesis did not finish within {timeout:.0f} s.")
+            rss = _rss_mb(proc.pid)
+            if limit_mb and rss and rss > limit_mb:
+                proc.kill()
+                proc.wait()
+                raise DesignTooLargeError(
+                    "This design is too large for this server: synthesizing it needed more than "
+                    f"{limit_mb} MB of memory, so it was stopped before it could crash the backend. "
+                    "Try a smaller design, or run PyATPG locally / on a larger instance "
+                    "(the limit is PYATPG_YOSYS_MAX_MB)."
+                )
+            time.sleep(0.2)
+        err.seek(0)
+        stderr = err.read()
     log_path = os.path.join(work, "yosys.log")
     log = ""
     if os.path.exists(log_path):
         with open(log_path, encoding="utf-8", errors="replace") as h:
             log = h.read()
     if proc.returncode != 0:
-        errors = [l for l in (log + "\n" + proc.stderr).splitlines() if l.startswith("ERROR")]
-        detail = "\n".join(dict.fromkeys(errors)) or _log_tail(log + proc.stderr)
+        errors = [l for l in (log + "\n" + stderr).splitlines() if l.startswith("ERROR")]
+        detail = "\n".join(dict.fromkeys(errors)) or _log_tail(log + stderr)
         raise RtlSynthesisError("Yosys could not synthesize the RTL:\n" + detail)
     return log
+
+
+def _rss_mb(pid: int) -> int | None:
+    """Resident memory of ``pid`` in MB, or None where it cannot be read.
+
+    Reads /proc directly (Linux, i.e. the deployed backend) rather than
+    depending on psutil; elsewhere the memory guard is simply inactive.
+    """
+    try:
+        with open(f"/proc/{pid}/status", encoding="ascii") as h:
+            for line in h:
+                if line.startswith("VmRSS:"):
+                    return int(line.split()[1]) // 1024
+    except (OSError, ValueError, IndexError):
+        return None
+    return None
 
 
 def _log_tail(log: str, lines: int = 15) -> str:

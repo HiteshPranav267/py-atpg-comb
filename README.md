@@ -241,6 +241,13 @@ needs more than its default 600 s per run on it. Raise the limit before
 starting the backend, e.g. `PYATPG_ATALANTA_TIMEOUT=7200` (seconds); Yosys has
 its own limit, `PYATPG_YOSYS_TIMEOUT` (default 3600).
 
+**Size guard on the hosted backend.** On Render (detected by its `RENDER`
+environment variable) designs larger than 60,000 gates + flip-flops are
+rejected with an explanatory error, and Yosys is stopped if it uses more than
+300 MB, so an oversized upload cannot run the 512 MB instance out of memory.
+Override with `PYATPG_MAX_GATES` / `PYATPG_YOSYS_MAX_MB` (`0` = unlimited) on a
+larger instance. Local runs are unlimited unless those variables are set.
+
 ### Option C — Unattended batch runs (for collecting results across many circuits)
 
 Two ways to run the same pipeline (generate trojan variants → ATPG → rank

@@ -319,6 +319,10 @@ class VerilogParser:
         if not rtl.needs_synthesis(text):
             return self._parse_netlist(text)
         netlist, notes = rtl.synthesize(text, filename)
+        # Checked on the netlist text, before building the circuit, since
+        # building it is where an oversized design runs the server out of memory.
+        rtl.check_design_size(rtl.count_synthesized_cells(netlist),
+                              "After synthesis this design")
         self.notes.extend(notes)
         circuit = self._parse_netlist(netlist)
         rtl.remove_dead_logic(circuit)
@@ -333,6 +337,8 @@ class VerilogParser:
         return circuit
 
     def _parse_netlist(self, text):
+        from pyatpg.core import rtl
+
         text = self.clean(text)
         modules = self._parse_modules(text)
         if not modules:
@@ -362,6 +368,7 @@ class VerilogParser:
                     raise ValueError(f"inout port {port!r} is not supported by the ATPG model.")
 
         self._flatten(top, modules, "", {}, depth=0)
+        rtl.check_design_size(len(self._gates) + len(self._ffs))
 
         if self._unknown:
             raise ValueError(

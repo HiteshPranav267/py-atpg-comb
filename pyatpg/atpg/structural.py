@@ -12,6 +12,7 @@ from typing import Any
 
 from pyatpg.core.graph_analysis import CircuitGraph, DEFAULT_TOGGLE_SEED
 from pyatpg.core.netlist import Circuit, NetlistParser
+from pyatpg.core.rtl import check_design_size
 from pyatpg.core.verilog_parser import VerilogParser
 
 _VERILOG_SUFFIXES = (".v", ".sv", ".verilog")
@@ -104,6 +105,7 @@ def parse_circuit(source_text: str, filename: str) -> ParsedCircuit:
         circuit = parser.parse(source_text, filename)
     else:
         circuit = parser.parse(source_text)
+        check_design_size(len(circuit.gates) + len(circuit.flipflops))
     stem = Path(filename).stem
     if stem.endswith("_mod"):
         stem = stem[:-4]
