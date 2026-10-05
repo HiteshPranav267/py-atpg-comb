@@ -27,8 +27,13 @@ CONST0 = "1'b0"
 CONST1 = "1'b1"
 _CONSTS = {CONST0: 0, CONST1: 1}
 
-# Hierarchical instance separator for flattened net names.
-_HIER_SEP = "/"
+# Hierarchical instance separator for flattened net names. Net names must
+# stay within what Atalanta's fault-list reader accepts -- letters, digits,
+# "_" and "[]" (Atalanta/define_fault_list.cpp, is_valid) -- or a targeted run,
+# which hands Atalanta a fault list, dies with "Error in fault file". "/" and
+# "." both used to appear here and broke targeting on every hierarchical
+# netlist (all Trust-Hub gate-level Trojan benchmarks).
+_HIER_SEP = "__"
 
 _DECL_KEYWORDS = ("input", "output", "inout")
 _NET_KEYWORDS = ("wire", "tri", "reg", "trireg", "wand", "wor", "tri0", "tri1", "logic")
@@ -120,7 +125,7 @@ class VerilogParser:
         # (Yosys writes ``\AES.r2.p33 [31:20]``); drop it so the select
         # stays attached to the name.
         text = re.sub(r"\\(\S+)(?:\s+(?=\[))?",
-                      lambda m: re.sub(r"[^A-Za-z0-9_$]", "_", m.group(1)), text)
+                      lambda m: re.sub(r"[^A-Za-z0-9_]", "_", m.group(1)), text)
         return text
 
     def _parse_modules(self, text):
@@ -385,7 +390,7 @@ class VerilogParser:
 
     def _fresh(self, base):
         self._uniq += 1
-        return f"{base}.n{self._uniq}"
+        return f"{base}__n{self._uniq}"
 
     def _flatten(self, mod, modules, prefix, port_map, depth):
         if depth > 64:
@@ -567,7 +572,7 @@ class VerilogParser:
     def _ff_q(self, path, q, qn):
         """A register's Q net; QN becomes NOT(Q) since the model stores one output."""
         if not q:
-            q = f"{path}.Q"
+            q = f"{path}__Q"
         if qn:
             self._gates.append(("NOT", qn, [q]))
         return q

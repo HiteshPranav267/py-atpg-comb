@@ -31,6 +31,21 @@ load_dotenv()
 # Transient failures (over capacity, rate limited, gateway hiccups) worth
 # retrying. Matched as substrings against the exception text, which is the
 # lowest common denominator across the SDKs.
+def request_timeout_s() -> float:
+    """Seconds one LLM request may take before it is abandoned.
+
+    The SDKs default to 600 s (OpenAI, Anthropic) or no limit at all
+    (google-genai), and OpenAI/Anthropic also retry internally; stacked under
+    :meth:`LLMProvider._with_retry` and the fallback-key rotation, one hung
+    provider kept an ATPG request waiting for over an hour. Override with
+    ``PYATPG_LLM_TIMEOUT``.
+    """
+    try:
+        return max(1.0, float(os.environ.get("PYATPG_LLM_TIMEOUT", "90")))
+    except ValueError:
+        return 90.0
+
+
 _RETRYABLE_MARKERS = (
     "503", "UNAVAILABLE", "429", "RESOURCE_EXHAUSTED", "500", "INTERNAL",
     "502", "504", "overloaded", "rate limit", "RateLimit", "Timeout", "timed out",
@@ -637,7 +652,12 @@ class GeminiProvider(LLMProvider):
                     "No Gemini API key available: none was supplied with the request "
                     "and GEMINI_API_KEY is not set."
                 )
-            self._client = genai.Client(api_key=api_key)
+            from google.genai import types
+
+            self._client = genai.Client(
+                api_key=api_key,
+                http_options=types.HttpOptions(timeout=int(request_timeout_s() * 1000)),
+            )
         return self._client
 
     def list_models(self) -> list[dict[str, str]]:
@@ -737,7 +757,10 @@ class OpenAIProvider(LLMProvider):
                     f"No {self._label} API key available: none was supplied with the "
                     "request and OPENAI_API_KEY is not set."
                 )
-            self._client = OpenAI(api_key=api_key, base_url=self._base_url)
+            # Retries are _with_retry's job (and the fallback keys'); the SDK's
+            # own would multiply every wait.
+            self._client = OpenAI(api_key=api_key, base_url=self._base_url,
+                                  timeout=request_timeout_s(), max_retries=0)
         return self._client
 
     #: Model-id fragments that mark a non-chat model on OpenAI's list. The
@@ -844,7 +867,7 @@ class AnthropicProvider(LLMProvider):
                     "No Anthropic API key available: none was supplied with the "
                     "request and ANTHROPIC_API_KEY is not set."
                 )
-            self._client = Anthropic(api_key=api_key)
+            self._client = Anthropic(api_key=api_key, timeout=request_timeout_s(), max_retries=0)
         return self._client
 
     def list_models(self) -> list[dict[str, str]]:

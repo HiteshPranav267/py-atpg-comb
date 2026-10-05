@@ -714,7 +714,7 @@ def break_combinational_loops(circuit) -> list[str]:
         sub = graph.subgraph(comp)
 
         def score(n):
-            named = not re.match(r"^_\d+_|.*\.n\d+$", n.rsplit("/", 1)[-1])
+            named = not re.match(r"^_\d+_$|.*__n\d+$", n)
             return (named, sub.in_degree(n) * sub.out_degree(n), n)
 
         cut = max(comp, key=score)
@@ -726,7 +726,7 @@ def break_combinational_loops(circuit) -> list[str]:
 
     for net in cuts:
         gate = gates.pop(net)
-        d = net + ".loop_d"
+        d = net + "__loop_d"
         gate.output = d
         gates[d] = gate
         circuit._add_node(d)

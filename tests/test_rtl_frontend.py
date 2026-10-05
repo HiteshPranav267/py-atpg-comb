@@ -86,7 +86,7 @@ def test_gate_level_parse_is_unchanged():
     circuit = parse_circuit(GATE_LEVEL, "top.v").circuit
     assert len(circuit.flipflops) == 1
     assert {"n1", "n2", "y"} <= set(circuit.gates)
-    assert not any(ff.q.endswith(".loop_d") for ff in circuit.flipflops)
+    assert not any(ff.q.endswith("__loop_d") for ff in circuit.flipflops)
 
 
 # ----------------------------------------------------------------------
@@ -163,7 +163,7 @@ def test_break_combinational_loops_inserts_pseudo_flip_flops():
     cuts = rtl.break_combinational_loops(c)
     assert cuts == ["Counter"]  # the RTL name is preferred over the temporary
     assert is_combinational_part_acyclic(c)
-    assert [(ff.q, ff.d) for ff in c.flipflops] == [("Counter", "Counter.loop_d")]
+    assert [(ff.q, ff.d) for ff in c.flipflops] == [("Counter", "Counter__loop_d")]
 
 
 def test_remove_dead_logic_drops_unobservable_aliases():
