@@ -98,8 +98,14 @@ def build_unrolled_circuit(circuit: Circuit, n_frames: int) -> UnrolledCircuit:
     state_pseudo_inputs: dict[str, str] = {}
     po_frames: dict[str, tuple[int, str]] = {}
 
+    # Sorted, not set order: the engine fills unassigned inputs by drawing
+    # from its seeded RNG in pi_frames order, and a set's order changes from
+    # process to process (string hash randomization) -- so the same circuit
+    # and seed used to give different results after every server restart.
+    inputs = sorted(circuit.inputs)
+    outputs = sorted(circuit.outputs)
     for frame in range(n_frames):
-        for pi in circuit.inputs:
+        for pi in inputs:
             name = _resolve(ff_d_of_q, frame, pi)
             unrolled.add_input(name)
             pi_frames[name] = (frame, pi)
@@ -115,7 +121,7 @@ def build_unrolled_circuit(circuit: Circuit, n_frames: int) -> UnrolledCircuit:
             new_output = _resolve(ff_d_of_q, frame, out_name)
             unrolled.add_gate(gate.gtype, new_output, new_inputs)
 
-        for po in circuit.outputs:
+        for po in outputs:
             name = _resolve(ff_d_of_q, frame, po)
             unrolled.add_output(name)
             po_frames[name] = (frame, po)

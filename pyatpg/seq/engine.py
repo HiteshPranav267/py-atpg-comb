@@ -23,6 +23,7 @@ from dataclasses import dataclass, field
 from typing import Callable
 
 from pyatpg.core.netlist import Circuit
+from pyatpg.core.progress import report
 from pyatpg.ranking.providers import LLMUnavailableError
 
 from .faultsim import checkpoint_fault_list, evaluate_coverage
@@ -41,6 +42,15 @@ CandidateRanker = Callable[[list[SequentialFault], dict], "list[SequentialFault]
 #: this is what a caller wires up to stream progress without keeping the
 #: full simulation history around.
 DeltaCallback = Callable[[dict], None]
+
+
+#: What the progress display says during each search phase.
+_PHASE_LABELS = {
+    "random_fill": "Sequential ATPG: random test sequences",
+    "podem": "Sequential ATPG: PODEM search across clock cycles",
+    "llm_guided": "Sequential ATPG: LLM-guided deep search",
+    "extended_search": "Sequential ATPG: extended deep search",
+}
 
 
 @dataclass
@@ -62,7 +72,11 @@ class EngineConfig:
     #: web UI's request timeout, which then shows nothing at all. The
     #: deterministic phases get ``deterministic_share`` of it, so an
     #: LLM-assisted run still has time left for its own phase.
-    time_budget_s: float | None = 100.0
+    #: Was 100 s; incremental PODEM implication (pyatpg.seq.podem) made the
+    #: search ~18x faster per step, so 40 s now searches several times
+    #: further than 100 s used to (s5378: 69.3% coverage in 24 s, vs 69.7% in
+    #: 104 s before), and a comparison's two runs finish far sooner.
+    time_budget_s: float | None = 40.0
     deterministic_share: float = 0.6
     #: Run the deep-search phase even without a ranker, in natural fault
     #: order. The deterministic-only side of a comparison sets this, so both
@@ -324,6 +338,7 @@ class SequentialAtpgEngine:
     # -------------------------------------------------------------- run
     def _run_phase(self, name: str, fn, state: _RunState):
         self._phase = name
+        report(_PHASE_LABELS.get(name, f"Sequential ATPG: {name.replace('_', ' ')}"))
         stats = self._phase_stats.setdefault(
             name, {"candidates": 0, "accepted": 0, "faults_detected": 0, "seconds": 0.0}
         )

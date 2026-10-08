@@ -7,10 +7,13 @@ without needing to know the internals of either.
 """
 from __future__ import annotations
 
+import os
 import time
+from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass, field
 from typing import Any
 
+from pyatpg.core.progress import report
 from pyatpg.atpg.structural import ParsedCircuit, StructuralProfile, parse_circuit, profile_circuit
 
 from .engine import EngineConfig, SequentialAtpgEngine
@@ -24,6 +27,34 @@ from pyatpg.ranking.providers import LLMConfig, create_provider, resolve_llm_con
 #: candidates first in both the baseline and LLM-assisted run -- only the
 #: LLM-2-assisted phase (and the deeper local search it unlocks) can differ.
 _COMPARISON_SEED = 1234
+
+
+def _baseline_worker(circuit, name: str, target_coverage: float, max_sequences: int,
+                     seed: int) -> SequentialAnalysis:
+    """The deterministic side of a comparison, runnable in a worker process.
+
+    Mirrors ``_run_engine(..., use_llm=False, extended_search=True)``.
+    """
+    config = EngineConfig(target_coverage=target_coverage, max_sequences=max_sequences,
+                          extended_search=True)
+    config.rng_seed = seed
+    analysis = SequentialAtpgEngine(circuit, circuit_name=name, config=config).run()
+    analysis.timing["llm_s"] = 0.0
+    return analysis
+
+
+def _parallel_comparison_enabled() -> bool:
+    """Run a comparison's two engine passes side by side in two processes?
+
+    Halves its wall-clock time on any multi-core machine. Off by default on
+    the hosted backend (Render sets ``RENDER``), where a second Python
+    process holding its own copy of the circuit risks the 512 MB limit;
+    ``PYATPG_PARALLEL_COMPARE=1``/``0`` overrides either way.
+    """
+    value = os.environ.get("PYATPG_PARALLEL_COMPARE", "").strip()
+    if value:
+        return value not in ("0", "false", "no")
+    return not os.environ.get("RENDER") and (os.cpu_count() or 1) > 1
 
 
 @dataclass
@@ -88,6 +119,7 @@ class SequentialAtpgService:
 
     def _parse(self, source_text: str, filename: str) -> tuple[ParsedCircuit, StructuralProfile]:
         t0 = time.monotonic()
+        report("Parsing the circuit (synthesizing RTL first, if needed)")
         parsed = parse_circuit(source_text, filename)
         profile = profile_circuit(parsed, toggle_patterns=self._toggle_patterns)
         self._extraction_s = time.monotonic() - t0
@@ -158,6 +190,7 @@ class SequentialAtpgService:
             from pyatpg.llm.vector_generator import LLMFaultPrioritizer
 
             t0 = time.monotonic()
+            report("LLM: summarizing the circuit")
             provider = create_provider(llm)
             tracker = TokenTracker()
             summary = CircuitContextAnalyzer(provider, tracker).analyze(
@@ -213,6 +246,7 @@ class SequentialAtpgService:
         llm_config: LLMConfig | None = None,
     ) -> SequentialAnalysisResult:
         parsed, profile = self._parse(source_text, filename)
+        report("Sequential ATPG search")
         analysis, llm_usage = self._run_engine(
             parsed, profile, source_text, use_llm, api_key, target_coverage, max_sequences,
             llm_config=llm_config,
@@ -244,19 +278,40 @@ class SequentialAtpgService:
         rather than differences from random-fill drawing different candidates.
         """
         parsed, profile = self._parse(source_text, filename)
+        report("Sequential ATPG: deterministic baseline and LLM-assisted run"
+               + (" in parallel" if _parallel_comparison_enabled() else ""))
         # The baseline runs the same extra deep-search phase as the LLM run,
         # in natural fault order, so the comparison measures the LLM's
         # ordering -- not the LLM run simply getting more search effort.
-        baseline, _baseline_usage = self._run_engine(
-            parsed, profile, source_text, False, None,
-            target_coverage, max_sequences, rng_seed=_COMPARISON_SEED,
-            extended_search=True,
-        )
-        llm_assisted, llm_usage = self._run_engine(
-            parsed, profile, source_text, True, api_key,
-            target_coverage, max_sequences, rng_seed=_COMPARISON_SEED,
-            llm_config=llm_config,
-        )
+        pool = future = None
+        if _parallel_comparison_enabled():
+            try:
+                pool = ProcessPoolExecutor(max_workers=1)
+                future = pool.submit(_baseline_worker, parsed.circuit, parsed.name,
+                                     target_coverage, max_sequences, _COMPARISON_SEED)
+            except Exception:  # noqa: BLE001 - no worker process: run serially below
+                pool = future = None
+        try:
+            llm_assisted, llm_usage = self._run_engine(
+                parsed, profile, source_text, True, api_key,
+                target_coverage, max_sequences, rng_seed=_COMPARISON_SEED,
+                llm_config=llm_config,
+            )
+            baseline = None
+            if future is not None:
+                try:
+                    baseline = future.result()
+                except Exception:  # noqa: BLE001 - worker failed: fall back to serial
+                    baseline = None
+            if baseline is None:
+                baseline, _baseline_usage = self._run_engine(
+                    parsed, profile, source_text, False, None,
+                    target_coverage, max_sequences, rng_seed=_COMPARISON_SEED,
+                    extended_search=True,
+                )
+        finally:
+            if pool is not None:
+                pool.shutdown(wait=False, cancel_futures=True)
         comparison = build_sequential_comparison(baseline, llm_assisted)
         if not llm_usage.get("enabled"):
             comparison.notes.insert(

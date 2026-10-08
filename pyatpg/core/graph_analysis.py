@@ -16,6 +16,30 @@ import json
 DEFAULT_TOGGLE_SEED = 20250822
 
 
+_BIT_CHAR = bytes((0x30 if b < 64 else 0x31) for b in range(256))  # top 2 bits 0/1 -> "0"/"1"
+_REJECTED = bytes(range(128, 256))                                  # top 2 bits 2/3
+
+
+def _random_bit_stream(rng, count):
+    """``count`` draws of ``rng.randint(0, 1)`` as a b"0101..." string, fast.
+
+    ``randint(0, 1)`` takes the top two bits of one 32-bit Mersenne Twister
+    output and redraws when they read 2 or 3; ``getrandbits(32 * m)`` returns
+    m consecutive outputs least-significant first. Reading the top byte of
+    each and dropping the rejects therefore reproduces the exact randint
+    sequence -- at C speed instead of ~1.5 us per call (7 s of s38584's
+    profiling). Over-drawn words are discarded; the generator is not reused.
+    """
+    chunks, have = [], 0
+    while have < count:
+        words = max(1024, (count - have) * 2 + 64)
+        top = rng.getrandbits(32 * words).to_bytes(4 * words, "little")[3::4]
+        bits = top.translate(_BIT_CHAR, _REJECTED)
+        chunks.append(bits)
+        have += len(bits)
+    return b"".join(chunks)[:count]
+
+
 class CircuitGraph:
     """Converts a parsed Circuit into a NetworkX directed graph with analysis."""
 
@@ -327,6 +351,14 @@ class CircuitGraph:
                 return int(not (sum(ins) % 2))
             return 0
 
+        if order is not None:
+            result = self._toggle_rates_bit_parallel(rng, input_list, order, num_patterns)
+            if result is None:
+                return {}
+            self._toggle = result
+            self._toggle_key = key
+            return result
+
         for _ in range(num_patterns):
             vec = tuple(rng.randint(0, 1) for _ in input_list)
             try:
@@ -403,6 +435,75 @@ class CircuitGraph:
 
         self._toggle = result
         self._toggle_key = key
+        return result
+
+    def _toggle_rates_bit_parallel(self, rng, input_list, order, num_patterns):
+        """Toggle rates with every pattern simulated at once, one bit each.
+
+        Each net's values over the whole run are packed into one Python int
+        (bit k = pattern k), so a gate is evaluated once with bitwise
+        operators instead of once per pattern -- the per-pattern loop took
+        ~40 s of a 55 s s38584 analysis. The stimulus is drawn from ``rng``
+        in exactly the per-pattern order the scalar loop used, and a gate
+        with an input that never gets a value (e.g. one fed by a flip-flop Q)
+        is skipped the same way, so the rates are identical.
+        """
+        if num_patterns < 2:
+            return None
+        n_in = len(input_list)
+        # Sample s = pattern k, input j at s = k * n_in + j: the order the
+        # scalar loop drew them in.
+        stream = _random_bit_stream(rng, num_patterns * n_in)
+        # Pattern k is bit k, so each input's column is reversed (bit 0 last).
+        values = {name: int(stream[j::n_in][::-1], 2) for j, name in enumerate(input_list)}
+
+        mask = (1 << num_patterns) - 1
+        gates = self.circuit.gates
+        for name in order:
+            g = gates[name]
+            try:
+                ins = [values[i] for i in g.inputs]
+            except KeyError:
+                continue
+            gt = g.gtype
+            if gt in ("AND", "NAND"):
+                v = mask
+                for x in ins:
+                    v &= x
+            elif gt in ("OR", "NOR"):
+                v = 0
+                for x in ins:
+                    v |= x
+            elif gt in ("XOR", "XNOR"):
+                v = 0
+                for x in ins:
+                    v ^= x
+            elif gt in ("BUF", "BUFF"):
+                v = ins[0]
+            elif gt == "NOT":
+                v = ins[0] ^ mask
+            else:
+                v = 0
+            if gt in ("NAND", "NOR", "XNOR"):
+                v ^= mask
+            values[name] = v
+
+        # Transitions between consecutive patterns k -> k+1.
+        max_possible = num_patterns - 1
+        pair_mask = (1 << max_possible) - 1
+        result = {}
+        for net, v in values.items():
+            prev = v & pair_mask
+            curr = v >> 1
+            t01 = (~prev & curr & pair_mask).bit_count()
+            t10 = (prev & ~curr & pair_mask).bit_count()
+            total = t01 + t10
+            result[net] = {
+                'toggle_rate': round(total / (2 * max_possible), 6),
+                'transitions_01': t01,
+                'transitions_10': t10,
+                'total_transitions': total,
+            }
         return result
 
     # -------------------------------------------------------- stats
