@@ -138,7 +138,8 @@ def test_archive_without_sources_is_rejected():
 def test_bundle_round_trip():
     files = {"a/x.v": "module x; endmodule", "b.vh": "`define W 4"}
     text = rtl.pack_sources(files, ["one note"])
-    assert rtl.is_bundle(text) and rtl.needs_synthesis(text)
+    assert rtl.is_bundle(text)
+    assert not rtl.needs_synthesis(text)  # no behavioural code in it
     got, notes = rtl.unpack_sources(text)
     assert {k: v.rstrip("\n") for k, v in got.items()} == files
     assert notes == ["one note"]
@@ -251,3 +252,69 @@ def test_size_guard_only_defaults_on_hosted_backend(monkeypatch):
     assert rtl.max_gates() == 60000
     monkeypatch.setenv("PYATPG_MAX_GATES", "0")
     assert rtl.max_gates() == 0
+
+
+# A Trust-Hub-style gate-level benchmark: SAED cells, a cell-library model
+# file, a testbench -- and, for the mixed case, a behavioural Trojan module.
+SAED_HOST = """
+module host(CK, a, b, y, t);
+  input CK, a, b;
+  output y, t;
+  wire n1, q;
+  NAND2X0 U1 (.IN1(a), .IN2(b), .QN(n1));
+  DFFX1 R1 (.D(n1), .CLK(CK), .Q(q));
+  AND2X1 U2 (.IN1(q), .IN2(a), .Q(y));
+  trojan T (.clk(CK), .x(q), .t(t));
+endmodule
+"""
+GATE_TROJAN = """
+module trojan(clk, x, t);
+  input clk, x;
+  output t;
+  INVX0 U9 (.INP(x), .ZN(t));
+endmodule
+"""
+RTL_TROJAN = """
+module trojan(input clk, input x, output reg t);
+  reg [1:0] c;
+  always @(posedge clk) begin c <= c + x; t <= &c; end
+endmodule
+"""
+SAED_LIB = """
+module NAND2X0(IN1, IN2, QN); input IN1, IN2; output QN; nand (QN, IN1, IN2);
+  specify (IN1 => QN) = (0.1, 0.1); endspecify
+endmodule
+module DFFX1(D, CLK, Q); input D, CLK; output reg Q; always @(posedge CLK) Q <= D; endmodule
+"""
+
+
+def test_gate_level_zip_skips_synthesis(monkeypatch):
+    def no_yosys(*a, **k):
+        raise AssertionError("a gate-level archive must not be synthesized")
+
+    monkeypatch.setattr(rtl, "synthesize", no_yosys)
+    data = _zip({"s-T100/src/host.v": SAED_HOST, "s-T100/src/trojan.v": GATE_TROJAN,
+                 "s-T100/lib/saed90nm.v": SAED_LIB, "s-T100/src/tb.v": TB})
+    text, name = rtl.decode_upload("s-T100.zip", data)
+    assert not rtl.needs_synthesis(text)
+    circuit = parse_circuit(text, name).circuit
+    assert len(circuit.flipflops) == 1 and {"y", "t"} <= circuit.outputs
+
+
+def test_cell_stubs_declare_output_pins():
+    stubs = rtl._cell_stubs([SAED_HOST])
+    assert "module NAND2X0(IN1, IN2, QN);" in stubs and "output QN;" in stubs
+    assert "input IN1;" in stubs and "output Q;" in stubs
+
+
+@needs_yosys
+def test_mixed_gate_level_host_and_rtl_trojan():
+    data = _zip({"s-T200/src/host.v": SAED_HOST, "s-T200/src/trojan.v": RTL_TROJAN,
+                 "s-T200/lib/saed90nm.v": SAED_LIB})
+    text, name = rtl.decode_upload("s-T200.zip", data)
+    assert rtl.needs_synthesis(text)
+    parsed = parse_circuit(text, name)
+    # 1 host register + the Trojan's 2-bit counter and t register.
+    assert len(parsed.circuit.flipflops) == 4
+    assert any("Standard cells" in n for n in parsed.parse_notes)
+    assert is_combinational_part_acyclic(parsed.circuit)

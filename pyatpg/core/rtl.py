@@ -155,7 +155,8 @@ def check_design_size(cells: int, what: str = "This design") -> None:
         )
 
 
-_CELL_LINE_RE = re.compile(r"^\s+[A-Z][A-Z0-9]*X1\s", re.M)
+# One per cell instance in Yosys's -noexpr output: "  TYPE NAME (" on its own line.
+_CELL_LINE_RE = re.compile(r"^\s+[A-Za-z_][A-Za-z0-9_]*\s+\S+\s*\($", re.M)
 
 
 def count_synthesized_cells(netlist: str) -> int:
@@ -383,7 +384,14 @@ def needs_synthesis(text: str) -> bool:
     module with its ``always @(posedge CK)``) do not count.
     """
     if is_bundle(text):
-        return True
+        # An archive is RTL only if some file in it is. Trust-Hub's gate-level
+        # benchmarks (s35932-T100, ...) also ship as zips -- sometimes with the
+        # standard-cell library's own Verilog models -- and pushing those
+        # through Yosys wasted minutes and hundreds of MB re-synthesizing a
+        # netlist the structural parser reads directly.
+        files, _ = unpack_sources(text)
+        return any(needs_synthesis(body) for name, body in files.items()
+                   if name.lower().endswith(_SOURCE_SUFFIXES))
     from pyatpg.core.verilog_parser import _classify_cell
 
     body_re = re.compile(r"\bmodule\s+([A-Za-z_][A-Za-z0-9_$]*)(.*?)\bendmodule\b", re.S)
@@ -468,6 +476,22 @@ def synthesize(text: str, filename: str = "design.v", top: str | None = None) ->
             sources.append(converted)
             has_module[converted] = True
             notes = notes + [f"{len(vhdl)} VHDL file(s) converted to Verilog with GHDL before synthesis."]
+        # A cell library's own Verilog models are not synthesized (they are
+        # simulation models, often with UDPs/specify blocks); the cells the
+        # design uses are declared as blackboxes instead.
+        library = [r for r in sources if r.lower().endswith(_SOURCE_SUFFIXES)
+                   and _is_cell_library(_read(os.path.join(work, r)))]
+        sources = [r for r in sources if r not in library]
+        stubs = _cell_stubs([_read(os.path.join(work, r)) for r in sources])
+        if stubs:
+            with open(os.path.join(work, "pyatpg_cell_stubs.v"), "w", encoding="utf-8") as h:
+                h.write(stubs)
+            sources.append("pyatpg_cell_stubs.v")
+            has_module["pyatpg_cell_stubs.v"] = True
+            notes = notes + ["Standard cells in the netlist were kept as-is; only the behavioural "
+                             "RTL was synthesized."]
+        if not sources:
+            raise RtlSynthesisError("The upload contains only cell-library models, no design.")
         # Files holding only `define/`timescale go first so later files see them.
         sources.sort(key=lambda r: (has_module[r], r))
         with open(os.path.join(work, "cells.lib"), "w", encoding="utf-8") as h:
@@ -499,6 +523,11 @@ def synthesize(text: str, filename: str = "design.v", top: str | None = None) ->
     except OSError:
         pass  # caching is an optimisation only
     return netlist, notes + synth_notes
+
+
+def _read(path: str) -> str:
+    with open(path, encoding="utf-8", errors="replace") as h:
+        return h.read()
 
 
 def _safe_relpath(name: str) -> str:
@@ -545,6 +574,57 @@ def _vhdl_to_verilog(work: str, vhdl: list[str], top: str | None) -> str:
     with open(os.path.join(work, out), "w", encoding="utf-8") as h:
         h.write(verilog)
     return out
+
+
+def _is_cell_library(text: str) -> bool:
+    """Does ``text`` only define standard cells (a library's Verilog models)?"""
+    from pyatpg.core.verilog_parser import _classify_cell
+
+    mods = _modules(text)
+    return bool(mods) and all(_classify_cell(m) is not None for m, _ in mods)
+
+
+def _cell_stubs(texts: list[str]) -> str:
+    """Blackbox declarations for the library cells ``texts`` instantiate.
+
+    A Trust-Hub design is often a gate-level host netlist with a behavioural
+    Trojan module. Yosys has no definition for the host's library cells
+    (NAND2X0, SDFFX1...), so they are declared as port-only blackboxes --
+    synthesis then leaves them untouched and only maps the behavioural part,
+    and the structural parser lowers the cells afterwards exactly as it does
+    for any netlist. Pin directions follow the parser's own output-pin rule.
+    """
+    from pyatpg.core.verilog_parser import (
+        _ADDER_OUTPUT_PINS, _OUTPUT_PINS, _PRIMITIVES, VerilogParser, _classify_cell,
+    )
+
+    parser = VerilogParser()
+    defined: set[str] = set()
+    pins: dict[str, set[str]] = {}
+    positional_dff: set[str] = set()
+    for text in texts:
+        modules = parser._parse_modules(parser.clean(text))
+        defined.update(modules)
+        for mod in modules.values():
+            for cell, _, conns in mod.instances:
+                if cell.lower() in _PRIMITIVES or _classify_cell(cell) is None:
+                    continue
+                if isinstance(conns, dict):
+                    pins.setdefault(cell, set()).update(conns)
+                elif _classify_cell(cell)[0] == "DFF" and len(conns) == 3:
+                    positional_dff.add(cell)  # ISCAS dff(CK, Q, D)
+    out = []
+    for cell in sorted(positional_dff - defined):
+        out.append(f"(* blackbox *)\nmodule {cell}(CK, Q, D);\n  input CK, D;\n  output Q;\nendmodule\n")
+    for cell in sorted(set(pins) - defined):
+        family = _classify_cell(cell)[0]
+        outputs = _ADDER_OUTPUT_PINS if family == "ADD" else _OUTPUT_PINS
+        ports = sorted(pins[cell])
+        decls = "".join(
+            f"  {'output' if p.upper() in outputs else 'input'} {p};\n" for p in ports
+        )
+        out.append(f"(* blackbox *)\nmodule {cell}({', '.join(ports)});\n{decls}endmodule\n")
+    return "\n".join(out)
 
 
 def _q(path: str) -> str:
