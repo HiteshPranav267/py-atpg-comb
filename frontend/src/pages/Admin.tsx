@@ -81,11 +81,6 @@ export default function Admin() {
             </button>
           )}
         </div>
-        <p className="text-xs text-muted-foreground">
-          Stored only in this browser. Admin features are off until the backend has a{' '}
-          <code className="font-mono bg-secondary px-1 rounded">PYATPG_ADMIN_TOKEN</code> environment
-          variable (set it in Render → Environment).
-        </p>
       </div>
 
       {runsQuery.isError && (
