@@ -565,6 +565,10 @@ Rarest-toggling first.
             model=self.provider.model_name,
             max_gates=effective_max_gates,
             limit=len(pool),
+            # Bumped when the parser's net naming changes (v2: hierarchy
+            # separator "/" -> "__"), so an old answer naming gates that no
+            # longer exist is not reused -- they would all be filtered out.
+            names="v2",
         )
         cache = self.cache
         if cache is None and source_text is not None and cache_enabled():
