@@ -45,7 +45,30 @@ fi
 # it only surfaces once a user submits a circuit.
 smoke_dir="$(mktemp -d)"
 trap 'rm -rf "$smoke_dir"' EXIT
-cp ../benchmarks/c17.bench "$smoke_dir/smoke.bench"
+# ISCAS-85 c17, inline: benchmarks/ is not part of the repository.
+cat > "$smoke_dir/smoke.bench" <<'BENCH'
+# c17
+# 5 inputs
+# 2 outputs
+# 0 inverter
+# 6 gates ( 6 NANDs )
+
+INPUT(1)
+INPUT(2)
+INPUT(3)
+INPUT(6)
+INPUT(7)
+
+OUTPUT(22)
+OUTPUT(23)
+
+10 = NAND(1, 3)
+11 = NAND(3, 6)
+16 = NAND(2, 11)
+19 = NAND(11, 7)
+22 = NAND(10, 16)
+23 = NAND(16, 19)
+BENCH
 if ! ./atalanta -t "$smoke_dir/smoke.vec" "$smoke_dir/smoke.bench" > "$smoke_dir/smoke.log" 2>"$smoke_dir/smoke.err"; then
     echo "FATAL: Atalanta exited non-zero on the smoke circuit."
     cat "$smoke_dir/smoke.err"
