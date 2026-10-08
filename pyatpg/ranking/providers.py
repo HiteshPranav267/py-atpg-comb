@@ -348,6 +348,13 @@ def detect_provider_from_key(api_key: str | None) -> str | None:
     return None
 
 
+def _is_groq_endpoint(base_url: str | None, key: str | None) -> bool:
+    """A custom-endpoint request that is really Groq (its URL, or a Groq key and no URL)."""
+    if base_url:
+        return "api.groq.com" in base_url.lower()
+    return detect_provider_from_key(key) == "groq"
+
+
 def normalize_provider_id(raw: str | None) -> str | None:
     """Map user-facing spellings onto a provider id; None for auto/blank."""
     value = (raw or "").strip().lower().replace(" ", "_").replace("-", "_")
@@ -436,8 +443,12 @@ def resolve_llm_config(
     fallback_model: str | None = None,
     fallback_base_url: str | None = None,
     fallbacks: list[dict[str, Any]] | None = None,
+    require_model: bool = True,
 ) -> LLMConfig | None:
     """Work out which provider/key/model to use for a request.
+
+    ``require_model=False`` lets a custom endpoint resolve without a model
+    name, for asking it which models it has.
 
     ``fallbacks`` are backup credentials sent with the request, each a dict
     with ``api_key`` and optionally ``provider``/``model``/``base_url``,
@@ -500,12 +511,22 @@ def resolve_llm_config(
             resolved_provider or detect_provider_from_key(key) or DEFAULT_PROVIDER
         )
 
+    if resolved_provider == "openai_compatible" and _is_groq_endpoint(
+        _first_set(base_url, fallback_base_url, os.environ.get(LLM_BASE_URL_ENV_VAR)), key
+    ):
+        # Groq used to be reachable only as a custom endpoint; browsers that
+        # saved it that way get the real Groq provider (and its default model).
+        resolved_provider = "groq"
+        base_url = fallback_base_url = None
+
     spec = PROVIDER_SPECS[resolved_provider]
 
     resolved_model = _first_set(
         model, fallback_model, os.environ.get(LLM_MODEL_ENV_VAR), spec.default_model
     )
-    if not resolved_model:
+    if not resolved_model and not require_model:
+        resolved_model = ""
+    elif not resolved_model:
         raise ValueError(
             f"{spec.label} needs a model name: none was supplied with the request "
             f"and {LLM_MODEL_ENV_VAR} is not set."

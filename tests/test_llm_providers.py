@@ -268,3 +268,24 @@ class TestListModels:
             res = TestClient(app).post("/api/llm/models", json={"api_key": "AIzaTEST"})
         assert res.status_code == 502
         assert "rejected the API key" in res.json()["detail"]
+
+
+def test_custom_endpoint_pointing_at_groq_becomes_groq(monkeypatch):
+    for var in ("LLM_PROVIDER", "LLM_MODEL", "LLM_BASE_URL"):
+        monkeypatch.delenv(var, raising=False)
+    from pyatpg.ranking.providers import resolve_llm_config
+
+    config = resolve_llm_config(provider="openai_compatible", api_key="gsk_abc",
+                                base_url="https://api.groq.com/openai/v1")
+    assert config.provider == "groq" and config.model == "openai/gpt-oss-120b"
+    assert resolve_llm_config(provider="openai_compatible", api_key="gsk_abc").provider == "groq"
+
+
+def test_model_listing_does_not_need_a_model_name(monkeypatch):
+    for var in ("LLM_PROVIDER", "LLM_MODEL", "LLM_BASE_URL"):
+        monkeypatch.delenv(var, raising=False)
+    from pyatpg.ranking.providers import resolve_llm_config
+
+    config = resolve_llm_config(provider="openai_compatible", api_key="sk-x",
+                                base_url="https://example.com/v1", require_model=False)
+    assert config.provider == "openai_compatible" and config.model == ""

@@ -68,6 +68,7 @@ def list_models(req: ModelListRequest) -> Dict[str, Any]:
             provider=req.provider or None,
             api_key=req.api_key or None,
             base_url=req.base_url or None,
+            require_model=False,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))

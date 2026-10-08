@@ -175,7 +175,7 @@ export const useAppStore = create<AppState>()(
       // v1: Groq (openai/gpt-oss-120b) became the default provider. Browsers
       // still on the old default -- auto-detect, or Gemini without a Gemini
       // key saved -- are moved to Groq once; a deliberate choice is kept.
-      version: 1,
+      version: 2,
       migrate: (persisted, fromVersion) => {
         const state = (persisted ?? {}) as Record<string, unknown>;
         if (fromVersion < 1) {
@@ -183,6 +183,16 @@ export const useAppStore = create<AppState>()(
           const provider = state.llmProvider;
           if (provider === 'auto' || provider === undefined || (provider === 'gemini' && !key.startsWith('AIza'))) {
             state.llmProvider = 'groq';
+            state.llmModel = null;
+          }
+        }
+        if (fromVersion < 2) {
+          // Groq used to be set up as a custom OpenAI-compatible endpoint.
+          const key = typeof state.llmApiKey === 'string' ? state.llmApiKey.trim() : '';
+          const url = typeof state.llmBaseUrl === 'string' ? state.llmBaseUrl : '';
+          if (state.llmProvider === 'openai_compatible' && (url.includes('api.groq.com') || (!url && key.startsWith('gsk_')))) {
+            state.llmProvider = 'groq';
+            state.llmBaseUrl = null;
             state.llmModel = null;
           }
         }

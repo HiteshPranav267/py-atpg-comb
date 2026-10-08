@@ -285,7 +285,16 @@ export function LlmKeyEditor({
         <input
           type={keyVisible ? 'text' : 'password'}
           value={keyDraft}
-          onChange={(e) => setKeyDraft(e.target.value)}
+          onChange={(e) => {
+            const next = e.target.value;
+            setKeyDraft(next);
+            // Groq is its own provider now; a Groq key on the custom endpoint means Groq.
+            if (isCustomProvider && next.trim().startsWith('gsk_')
+                && (!baseUrlDraft || baseUrlDraft.includes('api.groq.com'))) {
+              setBaseUrlDraft('');
+              onPatch({ provider: 'groq', baseUrl: null });
+            }
+          }}
           placeholder={effectiveSpec?.key_prefix ? `${effectiveSpec.key_prefix}...` : 'paste any provider key'}
           autoComplete="off"
           spellCheck={false}
