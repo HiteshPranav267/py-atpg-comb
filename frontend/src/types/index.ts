@@ -244,6 +244,50 @@ export interface AtpgRun {
   // This run's patterns fault-simulated over the whole circuit, on the same
   // fault list for every run, so pattern sets can be compared directly.
   pattern_coverage?: PatternCoverage | null;
+  // How the patterns exercise the circuit's rare nets (where a trigger hides).
+  rare_nodes?: RareNodeActivation | null;
+}
+
+export interface RareNodeActivation {
+  unavailable_reason?: string;
+  threshold?: number;
+  random_patterns?: number;
+  patterns?: number;
+  n_detect?: number;
+  rare_nodes?: number;
+  activated?: number;
+  activation_pct?: number | null;
+  activated_n_times?: number;
+  n_detect_pct?: number | null;
+  never_activated_count?: number;
+  never_activated?: { net: string; rare_value: number; random_probability: number }[];
+  watched?: {
+    net: string;
+    rare_value: number;
+    random_probability: number;
+    is_rare: boolean;
+    patterns_activating: number;
+  }[];
+  note?: string;
+}
+
+export interface SelectionScore {
+  selected: number;
+  trojan_gates_hit: string[];
+  precision: number | null;
+  recall: number | null;
+}
+
+export interface TrojanGroundTruth {
+  trojan_gates: string[];
+  source: string;
+  targeted_selection?: SelectionScore;
+  structural_suspects?: SelectionScore;
+  verdict_suspects?: SelectionScore;
+  redundant_trojan_faults?: Record<
+    string,
+    { count: number; faults: string[]; trigger_never_fires: boolean; trigger_faults: string[] }
+  >;
 }
 
 export interface RunAttempt {
@@ -623,6 +667,7 @@ export interface AtpgReport {
   circuit_analysis: CircuitAnalysis | null;
   correlation: CorrelationReport | null;
   verdict: TrojanVerdict | null;
+  trojan_ground_truth?: TrojanGroundTruth | null;
   notes: string[];
   sequential: SequentialSummary | null;
   // Model calls and token counts for the combinational path (the

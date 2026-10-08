@@ -25,6 +25,10 @@ from pyatpg.core.netlist import Circuit, FlipFlop, ScanFlipFlop
 
 CONST0 = "1'b0"
 CONST1 = "1'b1"
+#: Tie-off nets standing in for a constant flip-flop pin: "__const0"/"__const1".
+TIE_PREFIX = "__const"
+#: Flip-flop clock pin names across the supported cell libraries.
+_CLOCK_PINS = ("CLK", "CK", "CP", "C", "CLOCK", "CLKN", "CKN", "GCLK")
 _CONSTS = {CONST0: 0, CONST1: 1}
 
 # Hierarchical instance separator for flattened net names. Net names must
@@ -358,6 +362,7 @@ class VerilogParser:
 
         self._gates = []      # (type, out, inputs)
         self._ffs = []        # FlipFlop objects
+        self._ff_clocks = []  # (FlipFlop, clock net) for every register with a known clock pin
         self._aliases = []    # (lhs, rhs)
         self._unknown = set()
         self._uniq = 0
@@ -385,6 +390,7 @@ class VerilogParser:
 
         for lhs, rhs in self._aliases:
             self._gates.append(("BUF", lhs, [rhs]))
+        self._model_logic_clocks()
         self._emit()
         return self.circuit
 
@@ -468,14 +474,20 @@ class VerilogParser:
         pins = {p.upper(): self._bits1(mod, e, resolve) for p, e in conns.items()}
 
         if family in ("DFF", "SDFF"):
-            # Clock and asynchronous set/reset pins are not part of the
-            # synchronous model the sequential engine uses.
+            # Asynchronous set/reset pins are not part of the synchronous
+            # model the sequential engine uses. The clock is kept only to
+            # tell the real clock apart from one driven by logic (see
+            # _model_logic_clocks).
             q = self._ff_q(path, pins.get("Q", ""), pins.get("QN", ""))
             d = pins.get("D", "")
             if family == "SDFF":
-                self._ffs.append(ScanFlipFlop(q, d, pins.get("SI", ""), pins.get("SE", "")))
+                ff = ScanFlipFlop(q, d, pins.get("SI", ""), pins.get("SE", ""))
             else:
-                self._ffs.append(FlipFlop(q, d))
+                ff = FlipFlop(q, d)
+            self._ffs.append(ff)
+            clk = next((pins[p] for p in _CLOCK_PINS if pins.get(p)), "")
+            if clk:
+                self._ff_clocks.append((ff, clk))
             return
 
         out_names = _ADDER_OUTPUT_PINS if family == "ADD" else _OUTPUT_PINS
@@ -542,12 +554,15 @@ class VerilogParser:
         if family in ("DFF", "SDFF"):
             if family == "DFF":
                 if len(nets) == 3:
-                    _, q, d = nets
+                    clk, q, d = nets
                 elif len(nets) == 2:
-                    q, d = nets
+                    clk, (q, d) = "", nets
                 else:
                     raise ValueError(f"Invalid DFF args: {nets}")
-                self._ffs.append(FlipFlop(q, d))
+                ff = FlipFlop(q, d)
+                self._ffs.append(ff)
+                if clk:
+                    self._ff_clocks.append((ff, clk))
             else:
                 if len(nets) == 5:
                     _, q, d, si, se = nets
@@ -568,6 +583,64 @@ class VerilogParser:
             self._lower_logic(path, family, None, out, ins, cell)
             return
         raise ValueError(f"Cell {cell} ({path}) needs named port connections.")
+
+    def _model_logic_clocks(self):
+        """Model registers clocked by logic as load-enabled registers.
+
+        The synchronous model clocks every flip-flop on the one system
+        clock. That is right for a flip-flop on the clock input (directly or
+        through clock buffers/inverters), but a register whose clock pin is
+        driven by logic -- the classic Trojan trigger, e.g. Trust-Hub
+        s15850-T100's ``DFFNX2 Tg1_Trigger (.CLK(Tg1_Trigger1), .D(1'b1))``
+        -- only changes when that logic fires. Clocking it every cycle
+        would arm the Trojan on the first clock, and dropping the clock pin
+        would leave the trigger logic driving nothing, so it vanished from
+        the ATPG model altogether.
+
+        Instead each such register loads D only in cycles where its clock
+        net is 1 (Q' = clk ? D : Q), which keeps the trigger logic in the
+        circuit, testable, and dormant until it actually fires. Edge
+        polarity is not modelled: the register loads once its clock net
+        has gone high within a system cycle.
+        """
+        if not self._ff_clocks:
+            return
+        drivers = {}
+        for gtype, out, ins in self._gates:
+            drivers[out] = (gtype, ins)
+        inputs = set(self.circuit.inputs)
+
+        def from_clock_input(net):
+            seen = set()
+            while net not in seen:
+                seen.add(net)
+                if net in inputs or net in _CONSTS:
+                    return True
+                gate = drivers.get(net)
+                if gate is None:
+                    return True  # undriven: becomes an input, like a clock port
+                gtype, ins = gate
+                if gtype not in ("BUF", "NOT") or len(ins) != 1:
+                    return False
+                net = ins[0]
+            return True
+
+        gated = []
+        for ff, clk in self._ff_clocks:
+            if from_clock_input(clk):
+                continue
+            load = self._fresh(f"{ff.q}__load")
+            self._mux(ff.q, load, ff.q, ff.d or ff.q, clk, invert=False)
+            ff.d = load
+            gated.append(ff.q)
+        if gated:
+            shown = ", ".join(gated[:8]) + (" ..." if len(gated) > 8 else "")
+            self.notes.append(
+                f"{len(gated)} flip-flop(s) are clocked by logic rather than the clock input "
+                f"(typical of a Trojan trigger): {shown}. Each is modelled as loading D only "
+                "in cycles where its clock net is 1, so the logic driving that clock stays "
+                "in the model, is tested, and stays dormant until it fires."
+            )
 
     def _ff_q(self, path, q, qn):
         """A register's Q net; QN becomes NOT(Q) since the model stores one output."""
@@ -672,12 +745,16 @@ class VerilogParser:
             else:
                 self.circuit.add_gate(gtype, out, ins)
 
-        needed = set()
+        needed = {}
         for ff in self._ffs:
             for attr in ("d", "si", "se"):
                 v = getattr(ff, attr, None)
                 if v in consts:
-                    needed.add(v)
+                    # Verilog literals are not valid net names downstream
+                    # (they surfaced as an output called "1'b1").
+                    name = TIE_PREFIX + str(consts[v]) if v in _CONSTS else v
+                    setattr(ff, attr, name)
+                    needed[name] = consts[v]
             self.circuit.add_flipflop(ff)
 
         dropped = sorted(o for o in self.circuit.outputs if o in consts)
@@ -693,7 +770,7 @@ class VerilogParser:
             # A flip-flop pin tied to a constant: drive it from a tie-off net
             # built out of a primary input, which keeps the logic exact.
             for net in sorted(needed):
-                self._tie_net(net, consts[net])
+                self._tie_net(net, needed[net])
             self.notes.append(
                 "Some flip-flop D/SI/SE pins are tied to constants; they are driven "
                 "by tie-off logic (x AND NOT x / x OR NOT x) on a dedicated input."

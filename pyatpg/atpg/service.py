@@ -14,6 +14,7 @@ from pyatpg.core.progress import report
 from .circuit_analyst import CircuitAnalysis, CircuitAnalyst
 from .correlation import CorrelationReport, correlate
 from .faultsim import simulate_pattern_coverage
+from .trojan_metrics import ground_truth_gates, rare_node_activation, score_selection
 from .verdict import TrojanVerdict, build_verdict
 from .models import AnalysisMode, AtalantaRun, RunComparison, SequentialSummary, build_comparison
 from .runner import AtalantaRunner, build_fault_lines
@@ -185,6 +186,10 @@ class AtpgAnalysis:
     #: The run's trojan conclusion. Separate from `correlation`, which only
     #: reports overlap between two lists and deliberately draws no conclusion.
     verdict: TrojanVerdict | None = None
+    #: The Trojan gates identified by name (Trust-Hub / generated designs)
+    #: and how the gate selection and suspects score against them; None for
+    #: a design with no recognisable Trojan gates.
+    trojan_ground_truth: dict[str, Any] | None = None
     notes: list[str] = field(default_factory=list)
     #: Populated instead of `runs`/`targeting`/`circuit_analysis` when the
     #: circuit has flip-flops -- Atalanta cannot levelize sequential logic,
@@ -219,6 +224,7 @@ class AtpgAnalysis:
             "circuit_analysis": self.circuit_analysis.to_dict() if self.circuit_analysis else None,
             "correlation": self.correlation.to_dict() if self.correlation else None,
             "verdict": self.verdict.to_dict() if self.verdict else None,
+            "trojan_ground_truth": self.trojan_ground_truth,
             "notes": self.notes,
             "sequential": self.sequential.to_dict() if self.sequential else None,
             "llm_usage": self.llm_usage,
@@ -357,6 +363,12 @@ class AtpgAnalysisService:
                 f"{counts['pseudo_outputs']} pseudo-outputs from flip-flop inputs); "
                 "each pattern is scanned in, clocked once and scanned out."
             )
+            if counts.get("constant_d_flip_flops"):
+                parsed.parse_notes.append(
+                    f"{counts['constant_d_flip_flops']} flip-flop(s) with a constant D input "
+                    "were given no pseudo-output: they capture the same value every time, so "
+                    "there is nothing to observe."
+                )
             if counts["undriven_outputs"]:
                 parsed.parse_notes.append(
                     "Output(s) driven by nothing were left out of the full-scan model: "
@@ -500,9 +512,15 @@ class AtpgAnalysisService:
         # fault list, so a targeted run's patterns can be read against the
         # circuit and not only against the handful of faults they were
         # written for.
+        truth = ground_truth_gates(parsed.circuit)
         for run in analysis.runs.values():
             report("Fault-simulating the generated patterns")
             run.pattern_coverage = self._score_patterns(parsed, run)
+            report("Checking which rare nets the patterns activate")
+            try:
+                run.rare_nodes = rare_node_activation(parsed.circuit, run.test_vectors, watch=truth)
+            except Exception as exc:  # noqa: BLE001 - a metric failure must not fail the run
+                run.rare_nodes = {"unavailable_reason": f"Rare-node analysis failed: {exc}"}
 
         if self.TARGETED_KEY in analysis.runs and self.NON_TARGETED_KEY in analysis.runs:
             analysis.comparison = build_comparison(
@@ -535,6 +553,14 @@ class AtpgAnalysisService:
             suspect_reasons,
             list(analysis.runs.values()),
             targeted_gates=(selection.gates if selection else []),
+        )
+        analysis.trojan_ground_truth = _ground_truth_report(
+            truth,
+            selected=(selection.gates if selection else None),
+            llm_selected=(selection.gates if selection and selection.used_llm else None),
+            structural=structural_suspects,
+            verdict=analysis.verdict,
+            runs=analysis.runs,
         )
 
         if use_llm and not mode.runs_targeted:
@@ -768,6 +794,9 @@ class AtpgAnalysisService:
         # Atalanta runs exist to corroborate it, so the verdict rests on
         # structure alone.
         analysis.verdict = build_verdict(suspects, reasons, [])
+        analysis.trojan_ground_truth = _ground_truth_report(
+            ground_truth_gates(parsed.circuit), structural=suspects, verdict=analysis.verdict
+        )
         analysis.cpu_time = {
             "extraction_s": extraction_s,
             "llm_s": main.timing.get("llm_s", 0.0),
@@ -853,3 +882,43 @@ def _write_sequential_artifacts(workspace: "JobWorkspace", name: str, runs: dict
         )
         artifacts[f"{key}_report"] = report_file
     return artifacts
+
+
+def _ground_truth_report(truth, *, selected=None, llm_selected=None, structural=None,
+                         verdict=None, runs=None) -> dict[str, Any] | None:
+    """Score each gate list against the Trojan gates found by name, if any."""
+    if not truth:
+        return None
+    report_ = {
+        "trojan_gates": truth,
+        "source": "gate names (Trust-Hub Tg*/Trojan*/Trigger*/*Payload*, generated HT_*)",
+    }
+    if selected is not None:
+        report_["targeted_selection"] = score_selection(selected, truth)
+    if structural:
+        report_["structural_suspects"] = score_selection(structural, truth)
+    if verdict is not None and getattr(verdict, "suspects", None):
+        report_["verdict_suspects"] = score_selection([s.gate for s in verdict.suspects], truth)
+    # Faults on the Trojan's own logic that Atalanta proved untestable. A
+    # trigger output stuck-at-0 among them means no input pattern can ever
+    # drive the trigger to 1 -- under full scan, where every register state
+    # is allowed, that makes the Trojan impossible to activate at all.
+    truth_set = set(truth)
+    for key, run in (runs or {}).items():
+        redundant = sorted({f.fault_name for f in run.faults
+                            if f.status == "redundant" and _fault_gate(f.gate) in truth_set})
+        if not redundant:
+            continue
+        triggers = [r for r in redundant if r.endswith("/0") and "trigger" in r.lower()]
+        report_.setdefault("redundant_trojan_faults", {})[key] = {
+            "count": len(redundant),
+            "faults": redundant[:60],
+            "trigger_never_fires": bool(triggers),
+            "trigger_faults": triggers,
+        }
+    return report_
+
+
+def _fault_gate(gate: str) -> str:
+    """'a->b' (a branch fault into gate b) -> 'b'; a stem fault is its own gate."""
+    return gate.split("->")[-1]

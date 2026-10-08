@@ -15,6 +15,7 @@ import {
   LlmUsagePanel,
   VerdictPanel,
 } from '@/components/atpg/AnalysisPanels';
+import { TrojanCheckPanel } from '@/components/atpg/TrojanCheckPanel';
 
 /** Fallback list if /atpg/modes is unreachable; labels match the backend. */
 const FALLBACK_MODES: AnalysisModeOption[] = [
@@ -255,6 +256,7 @@ function ReportView({ report }: { report: AtpgReport }) {
           systemInfo={report.system_info}
         />
         {report.verdict && <VerdictPanel verdict={report.verdict} />}
+        <TrojanCheckPanel report={report} />
       </div>
     );
   }
@@ -298,6 +300,7 @@ function ReportView({ report }: { report: AtpgReport }) {
       )}
 
       {report.verdict && <VerdictPanel verdict={report.verdict} />}
+        <TrojanCheckPanel report={report} />
       {report.circuit_analysis && <CircuitAnalysisPanel analysis={report.circuit_analysis} />}
       {report.correlation && <CorrelationPanel correlation={report.correlation} />}
       {report.llm_usage?.enabled && (

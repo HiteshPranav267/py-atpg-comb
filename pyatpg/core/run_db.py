@@ -664,10 +664,20 @@ def describe_atpg(analysis: Any) -> dict[str, Any]:
             "summary": v.get("summary"),
             "caveats": v.get("caveats"),
         }
+        truth = p.get("trojan_ground_truth") or {}
+        truth_gates = set(truth.get("trojan_gates") or [])
+        score = truth.get("verdict_suspects") or {}
+        if truth_gates:
+            out["verdict"].update(
+                true_positive_gates=len(score.get("trojan_gates_hit") or []),
+                suspect_precision=score.get("precision"),
+                suspect_recall=score.get("recall"),
+            )
         out["suspects"] = [
             {"rank": i, "gate": s.get("gate"), "confidence": s.get("confidence") or 0.0,
              "evidence": s.get("evidence") or "structural", "atpg_status": s.get("atpg_status"),
-             "reasons": s.get("reasons"), "activating_vectors": len(s.get("activating_vectors") or [])}
+             "reasons": s.get("reasons"), "activating_vectors": len(s.get("activating_vectors") or []),
+             "is_trojan_gate": (s.get("gate") in truth_gates) if truth_gates else None}
             for i, s in enumerate(v.get("suspects") or [], start=1)
         ]
         out["run"]["trojan_verdict"] = v.get("verdict")

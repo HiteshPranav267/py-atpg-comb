@@ -38,6 +38,9 @@ SETTINGS: dict[str, Setting] = {s.key: s for s in [
             "RTL synthesis is stopped above this. 0 = unlimited.", hosted_only=True),
     Setting("atalanta_timeout_s", "PYATPG_ATALANTA_TIMEOUT", int, 600, "Atalanta timeout (s)",
             "Per Atalanta run.", minimum=10),
+    Setting("atalanta_seed", "PYATPG_ATALANTA_SEED", int, 1, "Atalanta random seed",
+            "Fixed so repeated runs give identical patterns; 0 = seed from the clock "
+            "(Atalanta's own default).", minimum=0),
     Setting("llm_timeout_s", "PYATPG_LLM_TIMEOUT", float, 90.0, "LLM request timeout (s)",
             "Per LLM request (retries and backup keys come on top).", minimum=1),
     Setting("seq_time_budget_s", "PYATPG_SEQ_TIME_BUDGET", float, 40.0,

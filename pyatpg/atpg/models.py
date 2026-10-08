@@ -187,6 +187,9 @@ class AtalantaRun:
     #: runs' pattern sets can be compared directly. None when the
     #: simulation was not performed.
     pattern_coverage: dict[str, Any] | None = None
+    #: How this run's patterns exercise the circuit's rare nets (where a
+    #: Trojan trigger hides); see pyatpg.atpg.trojan_metrics.
+    rare_nodes: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)

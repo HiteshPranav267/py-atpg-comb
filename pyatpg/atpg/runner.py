@@ -158,6 +158,11 @@ class AtalantaRunner:
         if targeted_faults is not None:
             fault_path = workspace.write_text(f"{prefix}.faults", "\n".join(targeted_faults) + "\n")
             command += ["-f", fault_path.name]
+        seed = _seed()
+        if seed:
+            # A fixed seed makes the random phase, and so the patterns,
+            # reproducible run to run (Atalanta otherwise seeds from the clock).
+            command += ["-s", str(seed)]
         if backtrack_limit is not None:
             command += ["-b", str(int(backtrack_limit))]
         if backtrack_limit_phase2 is not None:
@@ -292,6 +297,15 @@ def _run_cancellable(command: list[str], cwd, timeout: float) -> subprocess.Comp
                 proc.communicate()
                 progress.check_cancelled()
                 raise
+
+
+def _seed() -> int:
+    from pyatpg.core import settings
+
+    try:
+        return int(settings.get("atalanta_seed"))
+    except Exception:  # noqa: BLE001 - never fail a run over the seed
+        return 0
 
 
 def build_fault_lines(gates: list[str]) -> list[str]:

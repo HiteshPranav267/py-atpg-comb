@@ -18,6 +18,9 @@ from pyatpg.core.netlist import Circuit
 #: straight from another flip-flop's Q or from a primary input).
 PPO_SUFFIX = "__ppo"
 
+#: The parser's tie-off source input (see VerilogParser._tie_net).
+TIE_SRC = "__tie_src"
+
 
 def to_full_scan(circuit: Circuit) -> tuple[Circuit, dict[str, int]]:
     """Return the combinational full-scan model of ``circuit`` and its counts.
@@ -38,9 +41,17 @@ def to_full_scan(circuit: Circuit) -> tuple[Circuit, dict[str, int]]:
             undriven.append(po)
         else:
             outputs.append(po)
+    # Flip-flops whose D is tied to a constant (tie-off logic built by the
+    # parser) capture the same value every time: exposing D would only add
+    # faults on the tie-off net that no pattern can detect.
+    tie_nets = {out for out, (_, ins) in gates.items() if set(ins) == {TIE_SRC, TIE_SRC + "_n"}}
     ppos = []
+    constant_d = 0
     for ff in circuit.flipflops:
         d = ff.d
+        if d in tie_nets:
+            constant_d += 1
+            continue
         if d not in gates:
             # Expose a PI/Q-driven D through a buffer so no net is both an
             # input and an output of the combinational model.
@@ -86,4 +97,5 @@ def to_full_scan(circuit: Circuit) -> tuple[Circuit, dict[str, int]]:
         "pseudo_outputs": len(ppos),
         "undriven_outputs": undriven,
         "pruned_gates": len(gates) - len(comb.gates),
+        "constant_d_flip_flops": constant_d,
     }
