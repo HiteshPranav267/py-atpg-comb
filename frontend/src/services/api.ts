@@ -14,6 +14,9 @@ import type {
   AdminSetting,
   AdminHistoryRun,
   AdminStorage,
+  AdminDbStatus,
+  AdminDbRun,
+  AdminDbFilters,
   AnalysisMode,
   AnalysisModeOption,
   TrojanGenerateResult,
@@ -75,6 +78,12 @@ function llmFallbacks(): { api_key: string; provider?: string; model?: string; b
       if (k.baseUrl?.trim()) out.base_url = k.baseUrl.trim();
       return out;
     });
+}
+
+function cleanParams(params: object): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(params).filter(([, v]) => v !== undefined && v !== null && v !== ''),
+  );
 }
 
 function adminHeaders(token: string) {
@@ -262,6 +271,34 @@ export const api = {
 
   adminClearHistory: async (token: string): Promise<void> => {
     await apiClient.delete('/admin/history', adminHeaders(token));
+  },
+
+  adminDbStatus: async (token: string): Promise<AdminDbStatus> => {
+    const res = await apiClient.get('/admin/db/status', adminHeaders(token));
+    return res.data;
+  },
+
+  adminDbRuns: async (
+    token: string,
+    filters: AdminDbFilters,
+    limit: number,
+    offset: number,
+  ): Promise<{ runs: AdminDbRun[]; total: number }> => {
+    const res = await apiClient.get('/admin/db/runs', {
+      ...adminHeaders(token),
+      params: { ...cleanParams(filters), limit, offset },
+    });
+    return res.data;
+  },
+
+  adminDbRunsCsv: async (token: string, filters: AdminDbFilters): Promise<Blob> => {
+    const res = await apiClient.get('/admin/db/runs.csv', {
+      headers: { 'X-Admin-Token': token },
+      params: cleanParams(filters),
+      responseType: 'blob',
+      timeout: 120000,
+    });
+    return res.data;
   },
 
   adminStorage: async (token: string): Promise<AdminStorage[]> => {

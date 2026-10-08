@@ -5,6 +5,7 @@ import zipfile
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Request
 
 from pyatpg.api.concurrency import run_tracked
+from pyatpg.core import run_db
 from pyatpg.core.rtl import decode_upload
 from fastapi.responses import StreamingResponse
 
@@ -67,6 +68,9 @@ async def generate_dataset(
             num_trigger_inputs=num_trigger_inputs,
             trigger_type=trigger_type, payload_type=payload_type,
             label=f"Trojan dataset: {filename} x{variants}",
+            db_run_type="trojan_generate",
+            db_meta=run_db.request_meta(text, filename, content),
+            db_describe=run_db.describe_trojan,
         )
         get_analytics_store().record(
             "trojan_generated",

@@ -3,7 +3,7 @@ from typing import Any, Dict
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 
 from pyatpg.api.concurrency import run_tracked
-from pyatpg.core import progress
+from pyatpg.core import progress, run_db
 from pyatpg.core.rtl import decode_upload
 from fastapi.responses import FileResponse
 
@@ -143,6 +143,16 @@ async def run_atpg(
             request, progress_id, _service.run,
             label=f"ATPG {selected_mode.value}{' full-scan' if full_scan else ''}"
                   f"{' +LLM' if use_llm else ''}: {filename}",
+            db_run_type="atpg",
+            db_meta=run_db.request_meta(
+                source_text, filename, content,
+                mode=selected_mode.value, requested_patterns=patterns,
+                backtrack_limit=backtrack_limit, full_scan=full_scan,
+                llm=dict(use_llm=use_llm, api_key=api_key or None, provider=llm_provider or None,
+                         model=llm_model or None, base_url=llm_base_url or None,
+                         fallbacks=fallbacks),
+            ),
+            db_describe=run_db.describe_atpg,
             source_text=source_text,
             filename=filename,
             mode=selected_mode,

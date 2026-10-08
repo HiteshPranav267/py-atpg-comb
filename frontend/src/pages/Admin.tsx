@@ -4,6 +4,7 @@ import {
   AlertTriangle,
   Construction,
   Database,
+  Download,
   History,
   KeyRound,
   ListChecks,
@@ -13,12 +14,13 @@ import {
   Server,
   ShieldAlert,
   SlidersHorizontal,
+  Table2,
   Trash2,
   XCircle,
 } from 'lucide-react';
 import { api } from '@/services/api';
 import { useAppStore } from '@/store';
-import type { AdminHistoryRun, AdminRun, AdminSetting } from '@/types';
+import type { AdminDbFilters, AdminDbRun, AdminHistoryRun, AdminRun, AdminSetting } from '@/types';
 
 function formatSeconds(s: number): string {
   if (s < 60) return `${Math.round(s)}s`;
@@ -154,6 +156,7 @@ function AdminPanels({ token }: { token: string }) {
       <QueueCard token={token} />
       <SettingsCard token={token} />
       <HistoryCard token={token} />
+      <RunDatabaseCard token={token} />
       <StorageCard token={token} />
     </>
   );
@@ -580,5 +583,261 @@ function StorageCard({ token }: { token: string }) {
       </div>
       <ErrorLine error={error || clear.error} />
     </Card>
+  );
+}
+
+// ---------------------------------------------------------------- run database
+
+const DB_OUTCOME_STYLE: Record<AdminDbRun['outcome'], string> = {
+  ...OUTCOME_STYLE,
+  timeout: 'bg-orange-500/15 text-orange-400',
+};
+
+const DB_FILTER_OPTIONS: { key: keyof AdminDbFilters; label: string; values: string[] }[] = [
+  {
+    key: 'run_type',
+    label: 'Type',
+    values: ['atpg', 'circuit_parse', 'feature_extract', 'ranking', 'trojan_generate', 'benchmark'],
+  },
+  { key: 'outcome', label: 'Outcome', values: ['ok', 'error', 'cancelled', 'rejected', 'timeout'] },
+  {
+    key: 'source_suite',
+    label: 'Suite',
+    values: ['iscas85', 'iscas89', 'itc99', 'trust_hub_chip', 'trust_hub_board', 'generated_trojan', 'custom', 'unknown'],
+  },
+  { key: 'circuit_kind', label: 'Circuit', values: ['combinational', 'sequential'] },
+  { key: 'trojan_label', label: 'Trojan', values: ['trojan_free', 'trojan_inserted', 'unknown'] },
+  { key: 'llm_provider', label: 'LLM', values: ['groq', 'gemini', 'openai', 'anthropic', 'nvidia', 'openai_compatible'] },
+];
+
+const DB_PAGE = 50;
+
+function RunDatabaseCard({ token }: { token: string }) {
+  const [filters, setFilters] = useState<AdminDbFilters>({});
+  const [search, setSearch] = useState('');
+  const [page, setPage] = useState(0);
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState<unknown>(null);
+
+  const status = useQuery({
+    queryKey: ['admin-db-status', token],
+    queryFn: () => api.adminDbStatus(token),
+    refetchInterval: 15000,
+    retry: false,
+  });
+  const enabled = !!status.data?.enabled;
+  const applied: AdminDbFilters = { ...filters, search: search.trim() || undefined };
+  const runs = useQuery({
+    queryKey: ['admin-db-runs', token, applied, page],
+    queryFn: () => api.adminDbRuns(token, applied, DB_PAGE, page * DB_PAGE),
+    enabled,
+    refetchInterval: 15000,
+    retry: false,
+  });
+
+  const setFilter = (key: keyof AdminDbFilters, value: string) => {
+    setFilters((f) => ({ ...f, [key]: value || undefined }));
+    setPage(0);
+  };
+
+  const exportCsv = async () => {
+    setExporting(true);
+    setExportError(null);
+    try {
+      const blob = await api.adminDbRunsCsv(token, applied);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `pyatpg-runs-${new Date().toISOString().slice(0, 10)}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setExportError(err);
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  const s = status.data;
+  const total = runs.data?.total ?? 0;
+  const pages = Math.max(1, Math.ceil(total / DB_PAGE));
+
+  return (
+    <Card
+      icon={<Table2 className="w-4 h-4" />}
+      title="Run database"
+      actions={
+        enabled && (
+          <button
+            onClick={() => void exportCsv()}
+            disabled={exporting || total === 0}
+            className="flex items-center gap-1 text-xs text-primary hover:underline disabled:opacity-40"
+          >
+            <Download className="w-3.5 h-3.5" /> {exporting ? 'Exporting…' : 'Export CSV'}
+          </button>
+        )
+      }
+    >
+      {!s ? (
+        <p className="text-sm text-muted-foreground">Loading…</p>
+      ) : !s.enabled ? (
+        <p className="text-sm text-muted-foreground">
+          Runs are not being recorded: set <code className="font-mono">DATABASE_URL</code> on the server
+          {s.configured ? ' (it is set, but the psycopg package is missing or recording is turned off)' : ''}.
+        </p>
+      ) : (
+        <div className="flex flex-col gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <Stat label="Recorded runs" value={String(s.total_runs ?? '—')} />
+            <Stat label="Last 24 h" value={String(s.runs_last_24h ?? '—')} />
+            <Stat label="Circuits" value={String(s.circuits ?? '—')} />
+            <Stat
+              label="Failed writes"
+              value={`${s.failed}${s.dropped ? ` (+${s.dropped} dropped)` : ''}`}
+              warn={s.failed > 0 || s.dropped > 0}
+            />
+          </div>
+          {(s.connection_error || s.last_error) && (
+            <p className="text-xs text-red-400 break-words">
+              {s.connection_error ??
+                `Last write error${s.last_error_at ? ` (${new Date(s.last_error_at).toLocaleString()})` : ''}: ${s.last_error}`}
+            </p>
+          )}
+          <p className="text-xs text-muted-foreground">
+            Database: <span className="font-mono">{s.host}</span>
+          </p>
+
+          <div className="flex flex-wrap gap-2">
+            <input
+              value={search}
+              onChange={(e) => {
+                setSearch(e.target.value);
+                setPage(0);
+              }}
+              placeholder="Search circuit / file"
+              className="bg-background border border-border rounded-md px-2.5 py-1 text-xs w-full sm:w-44"
+            />
+            {DB_FILTER_OPTIONS.map((f) => (
+              <select
+                key={f.key}
+                value={filters[f.key] ?? ''}
+                onChange={(e) => setFilter(f.key, e.target.value)}
+                className="bg-background border border-border rounded-md px-2 py-1 text-xs"
+              >
+                <option value="">{f.label}: all</option>
+                {f.values.map((v) => (
+                  <option key={v} value={v}>
+                    {v.replace(/_/g, ' ')}
+                  </option>
+                ))}
+              </select>
+            ))}
+          </div>
+
+          {!runs.data?.runs.length ? (
+            <p className="text-sm text-muted-foreground">{runs.isLoading ? 'Loading…' : 'No matching runs.'}</p>
+          ) : (
+            <div className="overflow-x-auto -mx-4 px-4">
+              <table className="w-full text-sm min-w-[720px]">
+                <thead>
+                  <tr className="text-left text-muted-foreground border-b border-border">
+                    <th className="py-2 pr-3 font-medium">When</th>
+                    <th className="py-2 pr-3 font-medium">Run</th>
+                    <th className="py-2 pr-3 font-medium">Circuit</th>
+                    <th className="py-2 pr-3 font-medium">LLM</th>
+                    <th className="py-2 pr-3 font-medium text-right">Coverage</th>
+                    <th className="py-2 pr-3 font-medium text-right">Took</th>
+                    <th className="py-2 font-medium">Outcome</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {runs.data.runs.map((run) => (
+                    <DbRunRow key={run.id} run={run} />
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {total > DB_PAGE && (
+            <div className="flex items-center justify-between text-xs text-muted-foreground">
+              <span>
+                {page * DB_PAGE + 1}–{Math.min(total, (page + 1) * DB_PAGE)} of {total}
+              </span>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setPage((p) => Math.max(0, p - 1))}
+                  disabled={page === 0}
+                  className="border border-border rounded px-2 py-0.5 disabled:opacity-40"
+                >
+                  Newer
+                </button>
+                <button
+                  onClick={() => setPage((p) => Math.min(pages - 1, p + 1))}
+                  disabled={page >= pages - 1}
+                  className="border border-border rounded px-2 py-0.5 disabled:opacity-40"
+                >
+                  Older
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+      <ErrorLine error={status.error || runs.error || exportError} />
+    </Card>
+  );
+}
+
+function DbRunRow({ run }: { run: AdminDbRun }) {
+  const circuitInfo = [
+    run.source_suite?.replace(/_/g, ' '),
+    run.circuit_kind,
+    run.gates != null ? `${run.gates.toLocaleString()} gates` : null,
+    run.flip_flops ? `${run.flip_flops.toLocaleString()} FF` : null,
+    run.trojan_label === 'trojan_inserted' ? 'Trojan' : null,
+  ]
+    .filter(Boolean)
+    .join(' · ');
+
+  return (
+    <tr className="border-b border-border last:border-0 align-top">
+      <td className="py-2 pr-3 text-xs whitespace-nowrap">
+        {run.received_at ? new Date(run.received_at).toLocaleString() : '—'}
+      </td>
+      <td className="py-2 pr-3 text-xs">
+        <div>{run.run_type.replace(/_/g, ' ')}</div>
+        {run.mode && <div className="text-muted-foreground">{run.mode.replace(/_/g, ' ')}</div>}
+      </td>
+      <td className="py-2 pr-3 text-xs">
+        <div className="font-medium break-all">{run.circuit ?? run.upload_filename ?? '—'}</div>
+        <div className="text-muted-foreground">{circuitInfo}</div>
+      </td>
+      <td className="py-2 pr-3 text-xs">
+        {run.use_llm ? (
+          <>
+            <div>{run.llm_provider ?? '—'}</div>
+            <div className="text-muted-foreground break-all">{run.llm_model}</div>
+          </>
+        ) : (
+          <span className="text-muted-foreground">off</span>
+        )}
+      </td>
+      <td className="py-2 pr-3 font-mono text-xs text-right">
+        {run.fault_coverage != null ? `${run.fault_coverage.toFixed(2)}%` : '—'}
+      </td>
+      <td className="py-2 pr-3 font-mono text-xs text-right whitespace-nowrap">
+        {run.duration_s != null ? formatSeconds(run.duration_s) : '—'}
+      </td>
+      <td className="py-2 text-xs">
+        <span
+          title={run.error_message ?? undefined}
+          className={`px-2 py-0.5 rounded font-medium ${DB_OUTCOME_STYLE[run.outcome] ?? ''}`}
+        >
+          {run.outcome}
+        </span>
+        {run.error_class && <div className="text-muted-foreground mt-1">{run.error_class}</div>}
+      </td>
+    </tr>
   );
 }

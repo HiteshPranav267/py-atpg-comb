@@ -292,3 +292,145 @@ def restart() -> Dict[str, Any]:
     """
     threading.Timer(1.0, os._exit, args=(0,)).start()
     return {"restarting": True, "hosted": bool(os.environ.get("RENDER"))}
+
+
+# ----------------------------------------------------------------------
+# Run database (PostgreSQL, see pyatpg.core.run_db)
+# ----------------------------------------------------------------------
+
+_DB_COLUMNS = (
+    "id", "received_at", "run_type", "outcome", "http_status", "duration_s", "queue_wait_s",
+    "circuit", "source_suite", "benchmark_family", "trojan_label", "circuit_kind", "design_level",
+    "gates", "flip_flops", "mode", "use_llm", "llm_provider", "llm_model", "fault_coverage",
+    "patterns", "llm_api_calls", "llm_total_tokens", "trojan_verdict", "hosted",
+    "upload_filename", "error_class", "error_message",
+)
+_DB_FILTERS = ("run_type", "outcome", "source_suite", "circuit_kind", "llm_provider", "trojan_label")
+
+
+def _require_db() -> None:
+    from pyatpg.core import run_db
+
+    if not run_db.enabled():
+        raise HTTPException(status_code=503, detail="The run database is not configured: set "
+                                                    "DATABASE_URL on the server.")
+
+
+def _query_runs(filters: Dict[str, Optional[str]], search: Optional[str], limit: int,
+                offset: int) -> tuple[list[dict[str, Any]], int]:
+    from psycopg import sql
+    from psycopg.rows import dict_row
+
+    from pyatpg.core import run_db
+
+    where, params = [], []
+    for key in _DB_FILTERS:
+        if filters.get(key):
+            where.append(sql.SQL("o.{}::text = %s").format(sql.Identifier(key)))
+            params.append(filters[key])
+    if search:
+        where.append(sql.SQL("(o.circuit ILIKE %s OR r.upload_filename ILIKE %s)"))
+        params += [f"%{search}%"] * 2
+    clause = sql.SQL(" WHERE ") + sql.SQL(" AND ").join(where) if where else sql.SQL("")
+    base = sql.SQL(
+        "FROM v_run_overview o JOIN runs r USING (id)"
+    )
+    cols = sql.SQL(", ").join(
+        sql.SQL("r.{}").format(sql.Identifier(c)) if c in ("http_status", "upload_filename",
+                                                           "error_class", "error_message")
+        else sql.SQL("o.{}").format(sql.Identifier(c))
+        for c in _DB_COLUMNS
+    )
+    with run_db.connect() as conn, conn.cursor(row_factory=dict_row) as cur:
+        cur.execute(sql.SQL("SELECT count(*) AS n ") + base + clause, params)
+        total = cur.fetchone()["n"]
+        cur.execute(sql.SQL("SELECT ") + cols + sql.SQL(" ") + base + clause
+                    + sql.SQL(" ORDER BY o.received_at DESC LIMIT %s OFFSET %s"),
+                    params + [limit, offset])
+        rows = cur.fetchall()
+    for row in rows:
+        row["id"] = str(row["id"])
+        row["received_at"] = row["received_at"].isoformat() if row["received_at"] else None
+    return rows, total
+
+
+@router.get("/db/status", dependencies=[Depends(require_admin)])
+def db_status() -> Dict[str, Any]:
+    """Whether runs are being recorded, and how many there are."""
+    from pyatpg.core import run_db
+
+    out: Dict[str, Any] = run_db.status()
+    if not out["enabled"]:
+        return out
+    try:
+        with run_db.connect() as conn:
+            out["total_runs"] = conn.execute("SELECT count(*) FROM runs").fetchone()[0]
+            out["runs_last_24h"] = conn.execute(
+                "SELECT count(*) FROM runs WHERE received_at > now() - interval '1 day'").fetchone()[0]
+            out["circuits"] = conn.execute("SELECT count(*) FROM circuits").fetchone()[0]
+            out["by_outcome"] = dict(conn.execute(
+                "SELECT outcome::text, count(*) FROM runs GROUP BY 1").fetchall())
+    except Exception as exc:  # noqa: BLE001 - show the problem on the admin page
+        out["connection_error"] = run_db.scrub(str(exc))[:500]
+    return out
+
+
+@router.get("/db/runs", dependencies=[Depends(require_admin)])
+def db_runs(limit: int = 50, offset: int = 0, search: Optional[str] = None,
+            run_type: Optional[str] = None, outcome: Optional[str] = None,
+            source_suite: Optional[str] = None, circuit_kind: Optional[str] = None,
+            llm_provider: Optional[str] = None, trojan_label: Optional[str] = None) -> Dict[str, Any]:
+    """Recorded runs, newest first, with optional filters."""
+    _require_db()
+    filters = dict(run_type=run_type, outcome=outcome, source_suite=source_suite,
+                   circuit_kind=circuit_kind, llm_provider=llm_provider, trojan_label=trojan_label)
+    rows, total = _query_runs(filters, search, max(1, min(limit, 500)), max(0, offset))
+    return {"runs": rows, "total": total}
+
+
+@router.get("/db/runs.csv", dependencies=[Depends(require_admin)])
+def db_runs_csv(search: Optional[str] = None, run_type: Optional[str] = None,
+                outcome: Optional[str] = None, source_suite: Optional[str] = None,
+                circuit_kind: Optional[str] = None, llm_provider: Optional[str] = None,
+                trojan_label: Optional[str] = None):
+    """The same rows as CSV (up to 50,000), for spreadsheets and analysis."""
+    import csv
+    import io
+
+    from fastapi.responses import Response
+
+    _require_db()
+    filters = dict(run_type=run_type, outcome=outcome, source_suite=source_suite,
+                   circuit_kind=circuit_kind, llm_provider=llm_provider, trojan_label=trojan_label)
+    rows, _ = _query_runs(filters, search, 50000, 0)
+    buffer = io.StringIO()
+    writer = csv.DictWriter(buffer, fieldnames=list(_DB_COLUMNS))
+    writer.writeheader()
+    writer.writerows(rows)
+    return Response(buffer.getvalue(), media_type="text/csv",
+                    headers={"Content-Disposition": 'attachment; filename="pyatpg-runs.csv"'})
+
+
+@router.get("/db/summary", dependencies=[Depends(require_admin)])
+def db_summary() -> Dict[str, Any]:
+    """Runs and mean coverage per benchmark suite and per LLM, successful ATPG runs only."""
+    from psycopg.rows import dict_row
+
+    from pyatpg.core import run_db
+
+    _require_db()
+    with run_db.connect() as conn, conn.cursor(row_factory=dict_row) as cur:
+        cur.execute("""
+            SELECT source_suite::text AS suite, circuit_kind::text AS kind, count(*) AS runs,
+                   round(avg(fault_coverage)::numeric, 2)::float AS mean_coverage,
+                   round(avg(duration_s)::numeric, 1)::float AS mean_duration_s
+            FROM v_run_overview WHERE run_type = 'atpg' AND outcome = 'ok'
+            GROUP BY 1, 2 ORDER BY runs DESC""")
+        by_suite = cur.fetchall()
+        cur.execute("""
+            SELECT coalesce(llm_provider, 'none') AS provider, coalesce(llm_model, '') AS model,
+                   count(*) AS runs,
+                   round(avg(coverage_delta)::numeric, 3)::float AS mean_coverage_delta
+            FROM v_llm_effect GROUP BY 1, 2 ORDER BY runs DESC""")
+        by_llm = cur.fetchall()
+    return {"by_suite": by_suite, "by_llm": by_llm}

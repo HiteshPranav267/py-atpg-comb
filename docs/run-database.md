@@ -19,6 +19,19 @@ circuits 1──* runs 1──* comb_atpg_runs 1──* fault_results
 Never stored: API keys, admin tokens, the uploaded source (only its hash and
 size), raw Atalanta logs (they stay in the job's artifacts).
 
+## Setup
+
+1. Create a PostgreSQL database (Neon / Supabase free tier works) and run
+   `db/schema.sql` once in its SQL editor (or `psql "$DATABASE_URL" -f db/schema.sql`).
+2. Set `DATABASE_URL` on the backend (Render → Environment; locally in `.env`).
+3. Redeploy. Every run is now recorded by `pyatpg/core/run_db.py` on a background
+   thread; a database outage never fails a run (failed writes show on the Admin page).
+4. Browse, filter and export runs on the Admin page → **Run database**.
+
+`PYATPG_RECORD_RUNS=0` turns recording off with `DATABASE_URL` still set (the
+test suite does this). Runs from a local backend with the same `.env` are
+recorded too, with `hosted = false`.
+
 ## How runs are classified
 
 | Axis | Column | Values |

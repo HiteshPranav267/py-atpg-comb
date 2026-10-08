@@ -653,3 +653,62 @@ export interface TrojanVerdict {
   summary: string;
   caveats: string[];
 }
+
+export interface AdminDbStatus {
+  enabled: boolean;
+  configured: boolean;
+  host: string | null;
+  written: number;
+  failed: number;
+  dropped: number;
+  queued: number;
+  last_error: string | null;
+  last_error_at: string | null;
+  last_written_at: string | null;
+  total_runs?: number;
+  runs_last_24h?: number;
+  circuits?: number;
+  by_outcome?: Record<string, number>;
+  connection_error?: string;
+}
+
+export interface AdminDbRun {
+  id: string;
+  received_at: string | null;
+  run_type: string;
+  outcome: 'ok' | 'error' | 'cancelled' | 'rejected' | 'timeout';
+  http_status: number | null;
+  duration_s: number | null;
+  queue_wait_s: number | null;
+  circuit: string | null;
+  source_suite: string | null;
+  benchmark_family: string | null;
+  trojan_label: string | null;
+  circuit_kind: string | null;
+  design_level: string | null;
+  gates: number | null;
+  flip_flops: number | null;
+  mode: string | null;
+  use_llm: boolean;
+  llm_provider: string | null;
+  llm_model: string | null;
+  fault_coverage: number | null;
+  patterns: number | null;
+  llm_api_calls: number | null;
+  llm_total_tokens: number | null;
+  trojan_verdict: string | null;
+  hosted: boolean;
+  upload_filename: string | null;
+  error_class: string | null;
+  error_message: string | null;
+}
+
+export interface AdminDbFilters {
+  search?: string;
+  run_type?: string;
+  outcome?: string;
+  source_suite?: string;
+  circuit_kind?: string;
+  llm_provider?: string;
+  trojan_label?: string;
+}

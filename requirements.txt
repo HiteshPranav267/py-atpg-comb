@@ -8,3 +8,4 @@ pydantic
 google-genai
 python-multipart
 yowasp-yosys
+psycopg[binary]>=3.2

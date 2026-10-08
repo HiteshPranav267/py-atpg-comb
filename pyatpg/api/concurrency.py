@@ -29,7 +29,7 @@ from fastapi import HTTPException
 from starlette.concurrency import run_in_threadpool
 from starlette.requests import Request
 
-from pyatpg.core import progress, settings
+from pyatpg.core import progress, run_db, settings
 
 T = TypeVar("T")
 
@@ -131,8 +131,12 @@ def _wait_for_slot() -> None:
             shown = key
 
 
-async def run_heavy(fn: Callable[..., T], *args: Any, **kwargs: Any) -> T:
-    """``fn(*args, **kwargs)`` on a worker thread, at most N concurrently."""
+async def run_heavy(fn: Callable[..., T], *args: Any,
+                    _on_start: Callable[[], None] | None = None, **kwargs: Any) -> T:
+    """``fn(*args, **kwargs)`` on a worker thread, at most N concurrently.
+
+    ``_on_start`` is called once the run has its slot (end of queueing).
+    """
 
     def call() -> T:
         pid = progress.current_id()
@@ -143,6 +147,8 @@ async def run_heavy(fn: Callable[..., T], *args: Any, **kwargs: Any) -> T:
             progress.set_slot_state(pid, None)
             raise
         progress.set_slot_state(pid, "running")
+        if _on_start is not None:
+            _on_start()
         try:
             return fn(*args, **kwargs)
         finally:
@@ -154,10 +160,16 @@ async def run_heavy(fn: Callable[..., T], *args: Any, **kwargs: Any) -> T:
 
 async def run_tracked(request: Request, progress_id: str | None,
                       fn: Callable[..., T], *args: Any, label: str = "Analysis",
+                      db_run_type: str | None = None, db_meta: dict[str, Any] | None = None,
+                      db_describe: Callable[[T], dict] | None = None,
                       **kwargs: Any) -> T:
     """:func:`run_heavy` under a progress tracker, cancelled if the client leaves.
 
-    ``label`` names the run in the admin page's recent-runs log.
+    ``label`` names the run in the admin page's recent-runs log. With
+    ``db_run_type`` the run is also recorded in the run database
+    (:mod:`pyatpg.core.run_db`): ``db_meta`` holds request-level columns
+    (upload classification, LLM choice, parameters) and ``db_describe``
+    turns the result into per-engine rows, off the request path.
 
     Raises:
         MaintenanceMode: the server is not accepting new analyses.
@@ -167,29 +179,56 @@ async def run_tracked(request: Request, progress_id: str | None,
     pid = progress_id or f"auto-{uuid.uuid4()}"
     started = time.monotonic()
     started_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    record = None
+    if db_run_type and run_db.enabled():
+        record = run_db.base_record(run_type=db_run_type, endpoint=request.url.path, label=label,
+                                    progress_id=progress_id or None, request=request, meta=db_meta)
+    slot_time: dict[str, datetime] = {}
+
+    def on_start() -> None:
+        slot_time["started"] = datetime.now(timezone.utc)
+
+    def finish(outcome: str, status: int, error: BaseException | None = None,
+               cancelled_by: str | None = None, result: Any = None) -> None:
+        if record is None:
+            return
+        snap = progress.snapshot(pid) or {}
+        run_db.finish_record(record, started_at=slot_time.get("started"), outcome=outcome,
+                             http_status=status, error=error, error_stage=snap.get("stage"),
+                             cancelled_by=cancelled_by, result=result, describe=db_describe)
+
     if settings.get("maintenance"):
         _record(pid, label, started, started_at, "rejected", "maintenance mode")
-        raise MaintenanceMode()
+        exc = MaintenanceMode()
+        finish("rejected", 503, exc)
+        raise exc
+    disconnected = False
     with progress.track(pid):
-        task = asyncio.ensure_future(run_heavy(fn, *args, **kwargs))
+        task = asyncio.ensure_future(run_heavy(fn, *args, _on_start=on_start, **kwargs))
         try:
             while True:
                 done, _ = await asyncio.wait({task}, timeout=1.0)
                 if done:
                     result = task.result()
                     _record(pid, label, started, started_at, "ok")
+                    finish("ok", 200, result=result)
                     return result
                 if await request.is_disconnected():
                     progress.cancel(pid)
                     # Let the worker thread notice and wind down; its result
                     # (or RunCancelled) is discarded either way.
                     task.add_done_callback(lambda t: t.exception())
+                    disconnected = True
                     raise progress.RunCancelled(
                         "The analysis was cancelled because the browser disconnected."
                     )
         except progress.RunCancelled as exc:
             _record(pid, label, started, started_at, "cancelled", str(exc))
+            finish("cancelled", 499, exc,
+                   cancelled_by="client_disconnect" if disconnected else "admin")
             raise
         except Exception as exc:  # noqa: BLE001 - recorded, then re-raised unchanged
             _record(pid, label, started, started_at, "error", str(exc) or type(exc).__name__)
+            outcome, status, _ = run_db.classify_error(exc)
+            finish(outcome, status, exc)
             raise

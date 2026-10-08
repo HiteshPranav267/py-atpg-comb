@@ -1,4 +1,9 @@
+import os
+
 import pytest
+
+# Never write test runs into the real run database (DATABASE_URL in .env).
+os.environ["PYATPG_RECORD_RUNS"] = "0"
 
 
 @pytest.fixture(autouse=True)

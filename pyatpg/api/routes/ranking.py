@@ -1,9 +1,12 @@
-from fastapi import APIRouter, HTTPException
+from datetime import datetime, timezone
+
+from fastapi import APIRouter, HTTPException, Request
 from typing import List
 
 from pyatpg.api.schemas import RankingRequestSchema, RankingResultSchema, FeatureSetSchema
 from pyatpg.api.services.ranking_service import RankingService
 from pyatpg.analysis.models import FeatureSet, GateFeature, GateRole
+from pyatpg.core import run_db
 from pyatpg.core.analytics_store import get_analytics_store
 
 router = APIRouter(prefix="/api/ranking", tags=["ranking"])
@@ -16,8 +19,30 @@ def get_rankers():
 
 
 @router.post("/run", response_model=RankingResultSchema)
-def run_ranking(req: RankingRequestSchema):
+def run_ranking(req: RankingRequestSchema, request: Request):
     """Execute a ranking on a provided FeatureSet."""
+    received = datetime.now(timezone.utc)
+    label = f"Ranking {req.ranker_name}: {req.feature_set.circuit_name}"
+
+    def record(outcome: str, status: int, error: BaseException | None = None, result=None) -> None:
+        meta = {}
+        if run_db.enabled():
+            meta = run_db.llm_info(use_llm="llm" in req.ranker_name.lower(), api_key=req.api_key,
+                                   provider=req.llm_provider, model=req.llm_model,
+                                   base_url=req.llm_base_url, fallbacks=req.llm_fallbacks)
+        details = None
+        if result is not None:
+            details = {"ranking": {
+                "ranker_name": result.ranker_name,
+                "gate_count": len(result.ranked_gates),
+                "execution_s": result.execution_time,
+                "top_gates": [{"gate_id": g.gate_id, "score": g.score, "rank": g.rank}
+                              for g in result.ranked_gates[:50]],
+            }}
+        run_db.record_simple(run_type="ranking", endpoint=request.url.path, label=label,
+                             received_at=received, request=request, meta=meta, outcome=outcome,
+                             http_status=status, error=error, details=details)
+
     try:
         # Reconstruct the domain FeatureSet from the Pydantic schema
         gate_features = [
@@ -63,6 +88,7 @@ def run_ranking(req: RankingRequestSchema):
             llm_fallbacks=[k.model_dump() for k in req.llm_fallbacks or []],
         )
 
+        record("ok", 200, result=result)
         get_analytics_store().record(
             "ranking_run",
             circuit_name=result.circuit_name,
@@ -80,6 +106,8 @@ def run_ranking(req: RankingRequestSchema):
             ],
         )
     except (ValueError, ImportError) as e:
+        record("error", 400, e)
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
+        record("error", 500, e)
         raise HTTPException(status_code=500, detail=str(e))
