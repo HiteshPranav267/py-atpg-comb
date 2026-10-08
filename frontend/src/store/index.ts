@@ -141,7 +141,7 @@ export const useAppStore = create<AppState>()(
       setLlmApiKey: (key) => set({ llmApiKey: key }),
       adminToken: null,
       setAdminToken: (token) => set({ adminToken: token }),
-      llmProvider: 'auto',
+      llmProvider: 'groq',
       setLlmProvider: (provider) => set({ llmProvider: provider }),
       llmModel: null,
       setLlmModel: (model) => set({ llmModel: model }),
@@ -172,6 +172,22 @@ export const useAppStore = create<AppState>()(
     }),
     {
       name: 'pyatpg-app-store',
+      // v1: Groq (openai/gpt-oss-120b) became the default provider. Browsers
+      // still on the old default -- auto-detect, or Gemini without a Gemini
+      // key saved -- are moved to Groq once; a deliberate choice is kept.
+      version: 1,
+      migrate: (persisted, fromVersion) => {
+        const state = (persisted ?? {}) as Record<string, unknown>;
+        if (fromVersion < 1) {
+          const key = typeof state.llmApiKey === 'string' ? state.llmApiKey.trim() : '';
+          const provider = state.llmProvider;
+          if (provider === 'auto' || provider === undefined || (provider === 'gemini' && !key.startsWith('AIza'))) {
+            state.llmProvider = 'groq';
+            state.llmModel = null;
+          }
+        }
+        return state as never;
+      },
       partialize: (state) => ({
         benchmarkHistory: state.benchmarkHistory,
         theme: state.theme,

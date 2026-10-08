@@ -40,8 +40,17 @@ class TestKeySniffing:
     def test_prefix_maps_to_vendor(self, key, expected):
         assert detect_provider_from_key(key) == expected
 
-    def test_unknown_prefix_falls_back_to_gemini(self):
-        assert resolve_llm_config(api_key="opaque").provider == "gemini"
+    def test_unknown_prefix_falls_back_to_groq(self):
+        config = resolve_llm_config(api_key="opaque")
+        assert config.provider == "groq"
+        assert config.model == "openai/gpt-oss-120b"
+
+    def test_groq_key_is_detected(self):
+        config = resolve_llm_config(api_key="gsk_abc")
+        assert config.provider == "groq"
+        assert config.model == "openai/gpt-oss-120b"
+        assert config.base_url == "https://api.groq.com/openai/v1"
+        assert isinstance(create_provider(config), OpenAIProvider)
 
     def test_each_vendor_key_resolves_and_builds(self):
         for key, cls in [
@@ -121,7 +130,8 @@ class TestPrecedence:
     def test_requested_provider_picks_its_own_env_key(self, monkeypatch):
         monkeypatch.setenv("GEMINI_API_KEY", "AIza-env")
         monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-env")
-        assert resolve_llm_config().provider == PROVIDER_ORDER[0]
+        # The first provider in PROVIDER_ORDER that has an env key.
+        assert resolve_llm_config().provider == "gemini"
         assert resolve_llm_config(provider="anthropic").api_key == "sk-ant-env"
 
     def test_model_override_wins_over_default(self):

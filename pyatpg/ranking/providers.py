@@ -170,8 +170,8 @@ LLM_MODEL_ENV_VAR = "LLM_MODEL"
 LLM_BASE_URL_ENV_VAR = "LLM_BASE_URL"
 
 #: Provider id used when nothing else says otherwise and the key does not
-#: look like any known vendor's. Gemini keeps the pre-multi-provider default.
-DEFAULT_PROVIDER = "gemini"
+#: look like any known vendor's: Groq, with openai/gpt-oss-120b.
+DEFAULT_PROVIDER = "groq"
 
 #: Sentinel a request may send to mean "work it out from the key".
 AUTO_PROVIDER = "auto"
@@ -221,6 +221,25 @@ class ProviderSpec:
 
 
 PROVIDER_SPECS: dict[str, ProviderSpec] = {
+    "groq": ProviderSpec(
+        id="groq",
+        label="Groq",
+        env_vars=("GROQ_API_KEY",),
+        default_model="openai/gpt-oss-120b",
+        key_prefix="gsk_",
+        openai_compatible=True,
+        base_url="https://api.groq.com/openai/v1",
+        hint=(
+            "Keys from console.groq.com start with gsk_. Free tier available; each model "
+            "has its own rate limits, so switching model is the way past a limit."
+        ),
+        models=(
+            "openai/gpt-oss-120b",
+            "openai/gpt-oss-20b",
+            "llama-3.3-70b-versatile",
+            "llama-3.1-8b-instant",
+        ),
+    ),
     "gemini": ProviderSpec(
         id="gemini",
         label="Google Gemini",
@@ -288,14 +307,13 @@ PROVIDER_SPECS: dict[str, ProviderSpec] = {
         default_model="",
         key_prefix="",
         openai_compatible=True,
-        hint="Groq, Cerebras, OpenRouter, Together, Ollama, vLLM, LM Studio... anything "
+        hint="Cerebras, OpenRouter, Together, Ollama, vLLM, LM Studio... anything "
              "exposing /v1/chat/completions. Set the base URL and model.",
         # No fixed model list -- every backend names models differently --
         # but the endpoints below are common enough to save typing.
         base_url_presets=(
             ("Ollama (local)", "http://localhost:11434/v1"),
             ("LM Studio (local)", "http://localhost:1234/v1"),
-            ("Groq", "https://api.groq.com/openai/v1"),
             ("Cerebras", "https://api.cerebras.ai/v1"),
             ("OpenRouter", "https://openrouter.ai/api/v1"),
             ("Together AI", "https://api.together.xyz/v1"),
@@ -304,7 +322,7 @@ PROVIDER_SPECS: dict[str, ProviderSpec] = {
 }
 
 #: Order the UI should list providers in.
-PROVIDER_ORDER = ("gemini", "openai", "anthropic", "nvidia", "openai_compatible")
+PROVIDER_ORDER = ("groq", "gemini", "openai", "anthropic", "nvidia", "openai_compatible")
 
 
 def list_provider_specs() -> list[dict[str, Any]]:
@@ -348,7 +366,6 @@ def normalize_provider_id(raw: str | None) -> str | None:
         "compatible": "openai_compatible",
         "openai_compat": "openai_compatible",
         "ollama": "openai_compatible",
-        "groq": "openai_compatible",
         "openrouter": "openai_compatible",
     }
     value = aliases.get(value, value)
@@ -1027,7 +1044,7 @@ def create_provider(config: LLMConfig) -> LLMProvider:
         return GeminiProvider(model_name=config.model, api_key=config.api_key)
     if config.provider == "anthropic":
         return AnthropicProvider(model_name=config.model, api_key=config.api_key)
-    if config.provider in ("openai", "nvidia", "openai_compatible"):
+    if config.provider in ("groq", "openai", "nvidia", "openai_compatible"):
         return OpenAIProvider(
             model_name=config.model,
             api_key=config.api_key,

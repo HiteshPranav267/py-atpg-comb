@@ -324,7 +324,7 @@ export function LlmKeyEditor({
         ) : provider === 'auto' && keyDraft.trim() ? (
           <>
             Key prefix not recognised — the server will use its default provider
-            ({providerInfo?.default_provider ?? 'gemini'}). Pick the vendor explicitly if that's wrong.
+            ({providerInfo?.default_provider ?? 'groq'}). Pick the vendor explicitly if that's wrong.
           </>
         ) : (
           <>Paste a Gemini, OpenAI, Anthropic or NVIDIA key and the vendor is picked for you.</>
