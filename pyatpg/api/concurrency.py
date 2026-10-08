@@ -31,6 +31,10 @@ from pyatpg.core import progress
 T = TypeVar("T")
 
 
+def slot_count() -> int:
+    return _slots()
+
+
 def _slots() -> int:
     try:
         return max(1, int(os.environ.get("PYATPG_MAX_CONCURRENT_RUNS", "1")))
@@ -69,10 +73,18 @@ async def run_heavy(fn: Callable[..., T], *args: Any, **kwargs: Any) -> T:
     """``fn(*args, **kwargs)`` on a worker thread, at most N concurrently."""
 
     def call() -> T:
-        _wait_for_slot()
+        pid = progress.current_id()
+        progress.set_slot_state(pid, "queued")
+        try:
+            _wait_for_slot()
+        except BaseException:
+            progress.set_slot_state(pid, None)
+            raise
+        progress.set_slot_state(pid, "running")
         try:
             return fn(*args, **kwargs)
         finally:
+            progress.set_slot_state(pid, None)
             _SEMAPHORE.release()
 
     return await run_in_threadpool(call)

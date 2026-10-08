@@ -8,7 +8,8 @@ import {
   ListOrdered, 
   Rocket, 
   BarChart, 
-  FileText 
+  FileText,
+  ShieldAlert
 } from 'lucide-react';
 import { cn } from '@/utils/utils';
 
@@ -22,6 +23,7 @@ const navItems = [
   { icon: Rocket, label: 'Benchmark', path: '/benchmark' },
   { icon: BarChart, label: 'Results', path: '/results' },
   { icon: FileText, label: 'Reports', path: '/reports' },
+  { icon: ShieldAlert, label: 'Admin', path: '/admin' },
 ];
 
 export function Sidebar() {

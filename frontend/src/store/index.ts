@@ -65,6 +65,9 @@ interface AppState {
    */
   llmApiKey: string | null;
   setLlmApiKey: (key: string | null) => void;
+  /** Admin token for the server's /api/admin endpoints (this browser only). */
+  adminToken: string | null;
+  setAdminToken: (token: string | null) => void;
   /**
    * Which vendor the key belongs to. 'auto' lets the backend sniff it from
    * the key's prefix (AIza -> Gemini, sk-ant- -> Anthropic, nvapi- -> NVIDIA,
@@ -136,6 +139,8 @@ export const useAppStore = create<AppState>()(
       setApiBaseUrlOverride: (url) => set({ apiBaseUrlOverride: url }),
       llmApiKey: null,
       setLlmApiKey: (key) => set({ llmApiKey: key }),
+      adminToken: null,
+      setAdminToken: (token) => set({ adminToken: token }),
       llmProvider: 'auto',
       setLlmProvider: (provider) => set({ llmProvider: provider }),
       llmModel: null,
@@ -174,6 +179,7 @@ export const useAppStore = create<AppState>()(
         defaultUseLlm: state.defaultUseLlm,
         apiBaseUrlOverride: state.apiBaseUrlOverride,
         llmApiKey: state.llmApiKey,
+        adminToken: state.adminToken,
         llmProvider: state.llmProvider,
         llmModel: state.llmModel,
         llmBaseUrl: state.llmBaseUrl,

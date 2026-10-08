@@ -546,6 +546,23 @@ export interface SystemInfo {
   python_version: string;
 }
 
+/** One analysis holding or waiting for a server slot (GET /api/admin/runs). */
+export interface AdminRun {
+  id: string;
+  state: 'running' | 'queued';
+  stage: string;
+  elapsed_s: number;
+  stage_elapsed_s: number;
+  cancelled: boolean;
+  client_connected: boolean;
+}
+
+export interface AdminRunList {
+  slots: number;
+  running: AdminRun[];
+  queued: AdminRun[];
+}
+
 /** Live state of an in-flight ATPG run (GET /api/atpg/progress/{id}). */
 export interface AtpgProgress {
   stage: string;

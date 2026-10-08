@@ -47,24 +47,73 @@ def check_cancelled() -> None:
         raise RunCancelled("The analysis was cancelled because the browser disconnected.")
 
 
-def cancel(progress_id: str) -> None:
+def cancel(progress_id: str) -> bool:
+    """Cancel one run; False if no such run is known."""
     with _lock:
         entry = _entries.get(str(progress_id)[:_MAX_ID_LEN])
-        if entry is not None:
-            entry["cancelled"] = True
+        if entry is None:
+            return False
+        entry["cancelled"] = True
+        return True
 
 
 def active(exclude: str | None = None) -> list[dict[str, Any]]:
-    """Runs still in progress (oldest first), without their ids."""
+    """Runs currently holding an analysis slot (oldest first), without their ids."""
     now = time.monotonic()
     with _lock:
         rows = [(e["started"], e["stage"]) for pid, e in _entries.items()
-                if not e["done"] and not e.get("cancelled") and pid != exclude]
+                if e.get("slot") == "running" and pid != exclude]
     return [{"stage": stage, "elapsed_s": round(now - started, 1)} for started, stage in sorted(rows)]
 
 
 def current_id() -> str | None:
     return _current.get()
+
+
+def set_slot_state(progress_id: str | None, state: str | None) -> None:
+    """Record whether a run is "queued" for, "running" in, or out of (None) a slot.
+
+    Set by :mod:`pyatpg.api.concurrency`. A run in a slot is kept even after
+    its request has returned (e.g. its browser left before it noticed the
+    cancellation), so the admin view shows everything actually holding the
+    server, and it is never pruned while it does.
+    """
+    if not progress_id:
+        return
+    with _lock:
+        entry = _entries.get(progress_id)
+        if entry is not None:
+            entry["slot"] = state
+
+
+def list_runs() -> list[dict[str, Any]]:
+    """Every run that is queued or holding an analysis slot, oldest first."""
+    now = time.monotonic()
+    with _lock:
+        rows = [
+            {
+                "id": pid,
+                "state": e["slot"],
+                "stage": e["stage"],
+                "elapsed_s": round(now - e["started"], 1),
+                "stage_elapsed_s": round(now - e["stage_started"], 1),
+                "cancelled": bool(e.get("cancelled")),
+                "client_connected": not e["done"],
+                "_started": e["started"],
+            }
+            for pid, e in _entries.items() if e.get("slot")
+        ]
+    rows.sort(key=lambda r: r.pop("_started"))
+    return rows
+
+
+def cancel_all() -> int:
+    """Cancel every queued or running run; return how many were cancelled."""
+    with _lock:
+        hit = [e for e in _entries.values() if e.get("slot") and not e.get("cancelled")]
+        for e in hit:
+            e["cancelled"] = True
+    return len(hit)
 
 
 def report(stage: str) -> None:
@@ -129,5 +178,6 @@ def snapshot(progress_id: str) -> dict[str, Any] | None:
 
 
 def _prune(now: float) -> None:
-    for pid in [p for p, e in _entries.items() if e["done"] and now - e.get("finished", now) > _KEEP_S]:
+    for pid in [p for p, e in _entries.items()
+                if e["done"] and not e.get("slot") and now - e.get("finished", now) > _KEEP_S]:
         del _entries[pid]

@@ -9,6 +9,7 @@ import type {
   BenchmarkResultResponse,
   AtpgReport,
   AtpgProgress,
+  AdminRunList,
   AnalysisMode,
   AnalysisModeOption,
   TrojanGenerateResult,
@@ -205,6 +206,24 @@ export const api = {
 
   getBenchmarkResult: async (jobId: string): Promise<BenchmarkResultResponse> => {
     const res = await apiClient.get(`/benchmark/result/${jobId}`);
+    return res.data;
+  },
+
+  // Admin
+  adminListRuns: async (token: string): Promise<AdminRunList> => {
+    const res = await apiClient.get('/admin/runs', {
+      headers: { 'X-Admin-Token': token },
+      timeout: 15000,
+    });
+    return res.data;
+  },
+
+  /** Cancel one run, or every queued and running run when `id` is omitted. */
+  adminCancelRuns: async (token: string, id?: string): Promise<{ cancelled: number }> => {
+    const res = await apiClient.post('/admin/runs/cancel', id ? { id } : {}, {
+      headers: { 'X-Admin-Token': token },
+      timeout: 15000,
+    });
     return res.data;
   },
 
