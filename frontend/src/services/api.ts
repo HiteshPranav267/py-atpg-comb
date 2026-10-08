@@ -10,6 +10,10 @@ import type {
   AtpgReport,
   AtpgProgress,
   AdminRunList,
+  AdminStatus,
+  AdminSetting,
+  AdminHistoryRun,
+  AdminStorage,
   AnalysisMode,
   AnalysisModeOption,
   TrojanGenerateResult,
@@ -71,6 +75,10 @@ function llmFallbacks(): { api_key: string; provider?: string; model?: string; b
       if (k.baseUrl?.trim()) out.base_url = k.baseUrl.trim();
       return out;
     });
+}
+
+function adminHeaders(token: string) {
+  return { headers: { 'X-Admin-Token': token }, timeout: 20000 };
 }
 
 const apiClient = axios.create({
@@ -224,6 +232,53 @@ export const api = {
       headers: { 'X-Admin-Token': token },
       timeout: 15000,
     });
+    return res.data;
+  },
+
+  adminStatus: async (token: string): Promise<AdminStatus> => {
+    const res = await apiClient.get('/admin/status', adminHeaders(token));
+    return res.data;
+  },
+
+  adminSettings: async (token: string): Promise<AdminSetting[]> => {
+    const res = await apiClient.get('/admin/settings', adminHeaders(token));
+    return res.data.settings;
+  },
+
+  /** Change a setting until the next restart; `value: null` removes the override. */
+  adminUpdateSetting: async (
+    token: string,
+    key: string,
+    value: number | boolean | null
+  ): Promise<AdminSetting[]> => {
+    const res = await apiClient.put('/admin/settings', { key, value }, adminHeaders(token));
+    return res.data.settings;
+  },
+
+  adminHistory: async (token: string): Promise<AdminHistoryRun[]> => {
+    const res = await apiClient.get('/admin/history', adminHeaders(token));
+    return res.data.runs;
+  },
+
+  adminClearHistory: async (token: string): Promise<void> => {
+    await apiClient.delete('/admin/history', adminHeaders(token));
+  },
+
+  adminStorage: async (token: string): Promise<AdminStorage[]> => {
+    const res = await apiClient.get('/admin/storage', adminHeaders(token));
+    return res.data.storage;
+  },
+
+  adminClearStorage: async (
+    token: string,
+    target: string
+  ): Promise<{ freed_bytes: number; storage: AdminStorage[] }> => {
+    const res = await apiClient.post('/admin/storage/clear', { target }, adminHeaders(token));
+    return res.data;
+  },
+
+  adminRestart: async (token: string): Promise<{ restarting: boolean; hosted: boolean }> => {
+    const res = await apiClient.post('/admin/restart', {}, adminHeaders(token));
     return res.data;
   },
 

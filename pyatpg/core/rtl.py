@@ -117,31 +117,23 @@ YOWASP_CACHE_DIR = os.path.join(
 )
 
 
-def _limit(name: str, hosted_default: int) -> int:
-    """An integer limit from the environment; 0 means unlimited.
-
-    Without an explicit setting the limit applies only on the hosted
-    backend (Render sets ``RENDER``), whose 512 MB instance a large design
-    such as Trust-Hub AES (~190k gates) runs out of memory on; local runs
-    stay unlimited.
-    """
-    value = os.environ.get(name)
-    if value is not None and value.strip():
-        try:
-            return max(0, int(value))
-        except ValueError:
-            pass
-    return hosted_default if os.environ.get("RENDER") else 0
-
-
 def max_gates() -> int:
-    """Largest design (gates + flip-flops) the server will analyse; 0 = no limit."""
-    return _limit("PYATPG_MAX_GATES", 60000)
+    """Largest design (gates + flip-flops) the server will analyse; 0 = no limit.
+
+    Applies by default only on the hosted backend (Render sets ``RENDER``),
+    whose 512 MB instance a design such as Trust-Hub AES (~190k gates) runs
+    out of memory on; local runs stay unlimited. See :mod:`pyatpg.core.settings`.
+    """
+    from pyatpg.core import settings
+
+    return settings.get("max_gates")
 
 
 def yosys_memory_limit_mb() -> int:
     """Memory Yosys may use before synthesis is stopped; 0 = no limit."""
-    return _limit("PYATPG_YOSYS_MAX_MB", 300)
+    from pyatpg.core import settings
+
+    return settings.get("yosys_max_mb")
 
 
 def check_design_size(cells: int, what: str = "This design") -> None:
@@ -553,7 +545,9 @@ def _vhdl_to_verilog(work: str, vhdl: list[str], top: str | None) -> str:
             "(MSYS2: pacman -S mingw-w64-ucrt-x86_64-ghdl; Linux: apt install ghdl) and retry, "
             "or upload a Verilog / gate-level version of the design."
         )
-    timeout = float(os.environ.get("PYATPG_YOSYS_TIMEOUT", "3600"))
+    from pyatpg.core import settings
+
+    timeout = float(settings.get("yosys_timeout_s"))
 
     def run(args):
         try:
@@ -635,7 +629,9 @@ def _q(path: str) -> str:
 
 
 def _run_yosys(work: str) -> str:
-    timeout = float(os.environ.get("PYATPG_YOSYS_TIMEOUT", "3600"))
+    from pyatpg.core import settings
+
+    timeout = float(settings.get("yosys_timeout_s"))
     native = shutil.which("yosys")
     if native:
         cmd = [native, "-q", "-l", "yosys.log", "-s", "synth.ys"]

@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from pyatpg.core.progress import check_cancelled as progress_check_cancelled
+from pyatpg.core import settings
 from pyatpg.core.progress import report
 from pyatpg.atpg.structural import ParsedCircuit, StructuralProfile, parse_circuit, profile_circuit
 
@@ -32,13 +33,15 @@ _COMPARISON_SEED = 1234
 
 
 def _baseline_worker(circuit, name: str, target_coverage: float, max_sequences: int,
-                     seed: int) -> SequentialAnalysis:
+                     seed: int, time_budget_s: float) -> SequentialAnalysis:
     """The deterministic side of a comparison, runnable in a worker process.
 
-    Mirrors ``_run_engine(..., use_llm=False, extended_search=True)``.
+    Mirrors ``_run_engine(..., use_llm=False, extended_search=True)``. The
+    time budget is passed in because a worker process does not see the
+    parent's live settings.
     """
     config = EngineConfig(target_coverage=target_coverage, max_sequences=max_sequences,
-                          extended_search=True)
+                          extended_search=True, time_budget_s=time_budget_s)
     config.rng_seed = seed
     analysis = SequentialAtpgEngine(circuit, circuit_name=name, config=config).run()
     analysis.timing["llm_s"] = 0.0
@@ -216,6 +219,7 @@ class SequentialAtpgService:
             target_coverage=target_coverage,
             max_sequences=max_sequences,
             extended_search=extended_search,
+            time_budget_s=float(settings.get("seq_time_budget_s")),
         )
         if rng_seed is not None:
             config.rng_seed = rng_seed
@@ -290,7 +294,8 @@ class SequentialAtpgService:
             try:
                 pool = ProcessPoolExecutor(max_workers=1)
                 future = pool.submit(_baseline_worker, parsed.circuit, parsed.name,
-                                     target_coverage, max_sequences, _COMPARISON_SEED)
+                                     target_coverage, max_sequences, _COMPARISON_SEED,
+                                     float(settings.get("seq_time_budget_s")))
             except Exception:  # noqa: BLE001 - no worker process: run serially below
                 pool = future = None
         try:

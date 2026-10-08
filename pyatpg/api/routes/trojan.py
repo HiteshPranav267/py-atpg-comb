@@ -66,6 +66,7 @@ async def generate_dataset(
             filename=filename, seed=seed, verify_activation=verify_activation,
             num_trigger_inputs=num_trigger_inputs,
             trigger_type=trigger_type, payload_type=payload_type,
+            label=f"Trojan dataset: {filename} x{variants}",
         )
         get_analytics_store().record(
             "trojan_generated",
@@ -95,5 +96,7 @@ async def generate_dataset(
             "X-Payload-Type": result["payload_type"],
         }
         return StreamingResponse(buffer, media_type="application/zip", headers=headers)
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))

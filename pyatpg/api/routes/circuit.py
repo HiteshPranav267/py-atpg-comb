@@ -16,12 +16,15 @@ async def parse_circuit(request: Request, file: UploadFile = File(...)) -> Dict[
     try:
         content = await file.read()
         text, name = decode_upload(file.filename or "unknown.v", content)
-        result = await run_tracked(request, None, CircuitService.parse_verilog, text, name)
+        result = await run_tracked(request, None, CircuitService.parse_verilog, text, name,
+                                   label=f"Parse circuit: {name}")
         get_analytics_store().record(
             "circuit_parsed",
             circuit_name=name,
             gates=result.get("gates"),
         )
         return {"status": "success", "circuit": result}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))

@@ -35,10 +35,10 @@ from .workspace import (
 )
 
 #: Atalanta is a fast combinational engine; anything beyond this is a hang.
-#: Per-run Atalanta limit. Large synthesized RTL designs (Trust-Hub AES is
-#: ~190k gates) need far longer than the default; raise it with the
-#: PYATPG_ATALANTA_TIMEOUT environment variable (seconds).
-DEFAULT_TIMEOUT_SECONDS = int(os.environ.get("PYATPG_ATALANTA_TIMEOUT", "600"))
+#: Per-run Atalanta limit when nothing else is configured. Large synthesized
+#: RTL designs (Trust-Hub AES is ~190k gates) need far longer; raise it with
+#: PYATPG_ATALANTA_TIMEOUT or live from the admin page (pyatpg.core.settings).
+DEFAULT_TIMEOUT_SECONDS = 600
 
 #: Header Atalanta prints only once it has actually generated patterns.
 SUMMARY_MARKER = "SUMMARY OF TEST PATTERN GENERATION RESULTS"
@@ -51,9 +51,9 @@ class AtalantaExecutionError(RuntimeError):
 class AtalantaRunner:
     """Runs Atalanta inside a job workspace and parses everything it emits."""
 
-    def __init__(self, binary: AtalantaBinary | None = None, timeout: int = DEFAULT_TIMEOUT_SECONDS):
+    def __init__(self, binary: AtalantaBinary | None = None, timeout: int | None = None):
         self._binary = binary
-        self.timeout = timeout
+        self._timeout = timeout
 
     @property
     def binary(self) -> AtalantaBinary:
@@ -62,6 +62,19 @@ class AtalantaRunner:
         if self._binary is None:
             self._binary = resolve_atalanta_binary()
         return self._binary
+
+    @property
+    def timeout(self) -> int:
+        """Seconds one Atalanta run may take: explicit, else the live setting."""
+        if self._timeout is not None:
+            return self._timeout
+        from pyatpg.core import settings
+
+        return int(settings.get("atalanta_timeout_s"))
+
+    @timeout.setter
+    def timeout(self, value: int | None) -> None:
+        self._timeout = value
 
     def _execute(self, command: list[str], cwd, label: str) -> subprocess.CompletedProcess:
         if progress.current_id() is not None:

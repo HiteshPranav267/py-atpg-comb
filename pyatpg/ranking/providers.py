@@ -40,10 +40,9 @@ def request_timeout_s() -> float:
     provider kept an ATPG request waiting for over an hour. Override with
     ``PYATPG_LLM_TIMEOUT``.
     """
-    try:
-        return max(1.0, float(os.environ.get("PYATPG_LLM_TIMEOUT", "90")))
-    except ValueError:
-        return 90.0
+    from pyatpg.core import settings
+
+    return max(1.0, float(settings.get("llm_timeout_s")))
 
 
 _RETRYABLE_MARKERS = (

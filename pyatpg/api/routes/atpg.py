@@ -141,6 +141,8 @@ async def run_atpg(
     try:
         analysis = await run_tracked(
             request, progress_id, _service.run,
+            label=f"ATPG {selected_mode.value}{' full-scan' if full_scan else ''}"
+                  f"{' +LLM' if use_llm else ''}: {filename}",
             source_text=source_text,
             filename=filename,
             mode=selected_mode,

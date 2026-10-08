@@ -17,12 +17,15 @@ async def extract_features(request: Request, file: UploadFile = File(...)):
         content = await file.read()
         text, name = decode_upload(file.filename or "unknown.v", content)
 
-        fs = await run_tracked(request, None, FeatureService.extract_features, text, name)
+        fs = await run_tracked(request, None, FeatureService.extract_features, text, name,
+                               label=f"Feature extraction: {name}")
         return FeatureSetSchema(
             circuit_name=fs.circuit_name,
             gate_features=[gf.to_dict() for gf in fs.gate_features],
             atpg_coverage=fs.atpg_coverage,
             extraction_time_ms=fs.extraction_time_ms,
         )
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))

@@ -557,6 +557,46 @@ export interface AdminRun {
   client_connected: boolean;
 }
 
+export interface AdminStatus {
+  uptime_s: number;
+  memory: { rss_mb: number | null; limit_mb: number | null };
+  cpu_count: number | null;
+  python: string;
+  platform: string;
+  hosted: boolean;
+  commit: string | null;
+  tools: Record<string, string>;
+  slots: number;
+  slots_in_use: number;
+  maintenance: boolean;
+}
+
+export interface AdminSetting {
+  key: string;
+  label: string;
+  help: string;
+  type: 'int' | 'float' | 'bool';
+  value: number | boolean;
+  source: 'admin override' | 'environment' | 'default';
+  env: string;
+}
+
+export interface AdminHistoryRun {
+  id: string;
+  label: string;
+  started_at: string;
+  duration_s: number;
+  outcome: 'ok' | 'error' | 'cancelled' | 'rejected';
+  detail: string;
+}
+
+export interface AdminStorage {
+  key: string;
+  label: string;
+  help: string;
+  size_bytes: number;
+}
+
 export interface AdminRunList {
   slots: number;
   running: AdminRun[];
