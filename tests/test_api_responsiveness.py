@@ -56,3 +56,22 @@ def test_unknown_progress_id_is_404():
 
 def test_report_outside_a_tracked_request_is_a_no_op():
     progress.report("nobody is listening")  # must not raise
+
+
+def test_cancelled_run_stops_at_its_next_checkpoint():
+    import pytest
+
+    from pyatpg.seq.engine import EngineConfig, SequentialAtpgEngine, _RunState
+
+    with progress.track("cancel-me"):
+        assert not progress.is_cancelled()
+        progress.cancel("cancel-me")
+        assert progress.is_cancelled()
+        # The sequential engine stops searching...
+        engine = SequentialAtpgEngine.__new__(SequentialAtpgEngine)
+        engine.config = EngineConfig()
+        assert engine._budget_left(_RunState(faults=[])) is False
+        # ...and the next stage boundary raises.
+        with pytest.raises(progress.RunCancelled):
+            progress.report("next stage")
+    assert not progress.is_cancelled()  # outside the run, nothing is cancelled

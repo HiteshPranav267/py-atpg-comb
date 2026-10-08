@@ -1,10 +1,15 @@
-"""Live progress of a long-running analysis, for the web UI to poll.
+"""Live progress of a long-running analysis, for the web UI to poll -- and its cancellation.
 
 Analysis code calls :func:`report` with a short human-readable stage
 ("Synthesizing RTL with Yosys", "Running Atalanta (non-targeted)"...). It is
 a no-op unless the current request registered a tracker with :func:`track`,
 so library and CLI use pay nothing. The tracker travels in a context
 variable, which Starlette copies into the worker thread a request runs on.
+
+A tracked run can be cancelled (:func:`cancel`, when its browser disconnects):
+the next :func:`report` -- and every long loop that polls :func:`is_cancelled`
+-- then stops it, so an abandoned run no longer holds the server's single
+analysis slot until it finishes on its own.
 """
 from __future__ import annotations
 
@@ -22,11 +27,56 @@ _KEEP_S = 600.0
 _MAX_ID_LEN = 64
 
 
+class RunCancelled(Exception):
+    """The run was cancelled because nobody is waiting for its result any more."""
+
+
+def is_cancelled() -> bool:
+    """Has the current request's run been cancelled?"""
+    pid = _current.get()
+    if pid is None:
+        return False
+    with _lock:
+        entry = _entries.get(pid)
+        return bool(entry and entry.get("cancelled"))
+
+
+def check_cancelled() -> None:
+    """Raise :class:`RunCancelled` if the current run has been cancelled."""
+    if is_cancelled():
+        raise RunCancelled("The analysis was cancelled because the browser disconnected.")
+
+
+def cancel(progress_id: str) -> None:
+    with _lock:
+        entry = _entries.get(str(progress_id)[:_MAX_ID_LEN])
+        if entry is not None:
+            entry["cancelled"] = True
+
+
+def active(exclude: str | None = None) -> list[dict[str, Any]]:
+    """Runs still in progress (oldest first), without their ids."""
+    now = time.monotonic()
+    with _lock:
+        rows = [(e["started"], e["stage"]) for pid, e in _entries.items()
+                if not e["done"] and not e.get("cancelled") and pid != exclude]
+    return [{"stage": stage, "elapsed_s": round(now - started, 1)} for started, stage in sorted(rows)]
+
+
+def current_id() -> str | None:
+    return _current.get()
+
+
 def report(stage: str) -> None:
-    """Record that the current request has moved on to ``stage``."""
+    """Record that the current request has moved on to ``stage``.
+
+    Raises :class:`RunCancelled` if the run was cancelled, which makes every
+    stage boundary a cancellation point.
+    """
     pid = _current.get()
     if pid is None:
         return
+    check_cancelled()
     now = time.monotonic()
     with _lock:
         entry = _entries.get(pid)
@@ -49,7 +99,7 @@ def track(progress_id: str | None) -> Iterator[None]:
     with _lock:
         _prune(now)
         _entries[pid] = {"stage": "Starting", "started": now, "stage_started": now,
-                         "history": [], "done": False}
+                         "history": [], "done": False, "cancelled": False}
     token = _current.set(pid)
     try:
         yield

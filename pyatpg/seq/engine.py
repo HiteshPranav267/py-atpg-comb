@@ -23,7 +23,7 @@ from dataclasses import dataclass, field
 from typing import Callable
 
 from pyatpg.core.netlist import Circuit
-from pyatpg.core.progress import report
+from pyatpg.core.progress import is_cancelled, report
 from pyatpg.ranking.providers import LLMUnavailableError
 
 from .faultsim import checkpoint_fault_list, evaluate_coverage
@@ -210,6 +210,10 @@ class SequentialAtpgEngine:
 
     def _budget_left(self, state: _RunState) -> bool:
         if len(state.sequences) >= self.config.max_sequences:
+            return False
+        if is_cancelled():
+            # Nobody is waiting for this result any more: stop searching; the
+            # caller's next progress report raises RunCancelled.
             return False
         deadline = getattr(self, "_deadline", None)
         if deadline is not None and time.monotonic() >= deadline:

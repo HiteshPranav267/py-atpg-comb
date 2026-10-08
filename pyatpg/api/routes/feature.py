@@ -1,6 +1,6 @@
-from fastapi import APIRouter, UploadFile, File, HTTPException
+from fastapi import APIRouter, UploadFile, File, HTTPException, Request
 
-from pyatpg.api.concurrency import run_heavy
+from pyatpg.api.concurrency import run_tracked
 from pyatpg.core.rtl import decode_upload
 from typing import Optional
 
@@ -11,13 +11,13 @@ router = APIRouter(prefix="/api/features", tags=["features"])
 
 
 @router.post("/extract", response_model=FeatureSetSchema)
-async def extract_features(file: UploadFile = File(...)):
+async def extract_features(request: Request, file: UploadFile = File(...)):
     """Upload Verilog and return the full FeatureSet."""
     try:
         content = await file.read()
         text, name = decode_upload(file.filename or "unknown.v", content)
 
-        fs = await run_heavy(FeatureService.extract_features, text, name)
+        fs = await run_tracked(request, None, FeatureService.extract_features, text, name)
         return FeatureSetSchema(
             circuit_name=fs.circuit_name,
             gate_features=[gf.to_dict() for gf in fs.gate_features],

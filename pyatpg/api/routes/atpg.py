@@ -1,8 +1,8 @@
 from typing import Any, Dict
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 
-from pyatpg.api.concurrency import run_heavy
+from pyatpg.api.concurrency import run_tracked
 from pyatpg.core import progress
 from pyatpg.core.rtl import decode_upload
 from fastapi.responses import FileResponse
@@ -72,6 +72,7 @@ async def atpg_progress(progress_id: str) -> Dict[str, Any]:
 
 @router.post("/run")
 async def run_atpg(
+    request: Request,
     file: UploadFile = File(...),
     mode: str = Form(AnalysisMode.COMPARE.value),
     patterns: int = Form(3000),
@@ -138,22 +139,23 @@ async def run_atpg(
         raise HTTPException(status_code=400, detail=str(exc))
 
     try:
-        with progress.track(progress_id):
-            analysis = await run_heavy(
-                _service.run,
-                source_text=source_text,
-                filename=filename,
-                mode=selected_mode,
-                toggle_patterns=patterns,
-                use_llm=use_llm,
-                api_key=api_key or None,
-                backtrack_limit=backtrack_limit,
-                llm_provider=llm_provider or None,
-                llm_model=llm_model or None,
-                llm_base_url=llm_base_url or None,
-                full_scan=full_scan,
-                llm_fallbacks=fallbacks,
-            )
+        analysis = await run_tracked(
+            request, progress_id, _service.run,
+            source_text=source_text,
+            filename=filename,
+            mode=selected_mode,
+            toggle_patterns=patterns,
+            use_llm=use_llm,
+            api_key=api_key or None,
+            backtrack_limit=backtrack_limit,
+            llm_provider=llm_provider or None,
+            llm_model=llm_model or None,
+            llm_base_url=llm_base_url or None,
+            full_scan=full_scan,
+            llm_fallbacks=fallbacks,
+        )
+    except progress.RunCancelled as exc:
+        raise HTTPException(status_code=499, detail=str(exc))
     except (ValueError, NoTargetableGates) as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     except AtalantaNotAvailable as exc:

@@ -10,9 +10,11 @@ from __future__ import annotations
 import os
 import time
 from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import TimeoutError as FuturesTimeout
 from dataclasses import dataclass, field
 from typing import Any
 
+from pyatpg.core.progress import check_cancelled as progress_check_cancelled
 from pyatpg.core.progress import report
 from pyatpg.atpg.structural import ParsedCircuit, StructuralProfile, parse_circuit, profile_circuit
 
@@ -299,10 +301,13 @@ class SequentialAtpgService:
             )
             baseline = None
             if future is not None:
-                try:
-                    baseline = future.result()
-                except Exception:  # noqa: BLE001 - worker failed: fall back to serial
-                    baseline = None
+                while baseline is None:
+                    try:
+                        baseline = future.result(timeout=1.0)
+                    except FuturesTimeout:
+                        progress_check_cancelled()
+                    except Exception:  # noqa: BLE001 - worker failed: fall back to serial
+                        break
             if baseline is None:
                 baseline, _baseline_usage = self._run_engine(
                     parsed, profile, source_text, False, None,

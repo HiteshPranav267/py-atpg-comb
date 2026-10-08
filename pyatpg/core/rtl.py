@@ -568,6 +568,8 @@ def _run_yosys(work: str) -> str:
         cmd = [sys.executable, "-c",
                "import sys, yowasp_yosys; sys.exit(yowasp_yosys.run_yosys(sys.argv[1:]))",
                "-q", "-l", "yosys.log", "-s", "synth.ys"]
+    from pyatpg.core import progress
+
     env = dict(os.environ)
     # build.sh compiles the WebAssembly Yosys into this directory once, so a
     # server does not redo that (slow, memory-hungry) step after every restart.
@@ -581,6 +583,10 @@ def _run_yosys(work: str) -> str:
                 proc.kill()
                 proc.wait()
                 raise RtlSynthesisError(f"Yosys synthesis did not finish within {timeout:.0f} s.")
+            if progress.is_cancelled():
+                proc.kill()
+                proc.wait()
+                progress.check_cancelled()
             rss = _rss_mb(proc.pid)
             if limit_mb and rss and rss > limit_mb:
                 proc.kill()

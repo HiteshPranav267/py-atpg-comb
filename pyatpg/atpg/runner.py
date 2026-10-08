@@ -9,7 +9,10 @@ from __future__ import annotations
 
 import os
 import subprocess
+import time
 from pathlib import Path
+
+from pyatpg.core import progress
 
 from .binary import AtalantaBinary, resolve_atalanta_binary
 from .models import AtalantaRun
@@ -59,6 +62,11 @@ class AtalantaRunner:
         if self._binary is None:
             self._binary = resolve_atalanta_binary()
         return self._binary
+
+    def _execute(self, command: list[str], cwd, label: str) -> subprocess.CompletedProcess:
+        if progress.current_id() is not None:
+            return _run_cancellable(command, cwd, self.timeout)
+        return subprocess.run(command, cwd=cwd, capture_output=True, text=True, timeout=self.timeout)
 
     def run(
         self,
@@ -151,13 +159,7 @@ class AtalantaRunner:
         ]
 
         try:
-            completed = subprocess.run(
-                command,
-                cwd=workspace.directory,
-                capture_output=True,
-                text=True,
-                timeout=self.timeout,
-            )
+            completed = self._execute(command, workspace.directory, label)
         except subprocess.TimeoutExpired as exc:
             raise AtalantaExecutionError(
                 f"Atalanta timed out after {self.timeout}s for run {label!r}."
@@ -256,6 +258,27 @@ def _describe_exit(returncode: int) -> str:
     if returncode < 0:
         return f"was killed by signal {-returncode}"
     return f"exited with code {returncode}"
+
+
+def _run_cancellable(command: list[str], cwd, timeout: float) -> subprocess.CompletedProcess:
+    """``subprocess.run`` that also stops when the current web request is cancelled.
+
+    Waited for in short slices, so a run whose browser has gone away stops
+    Atalanta instead of holding the server's analysis slot until it ends.
+    """
+    proc = subprocess.Popen(command, cwd=cwd, stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE, text=True)
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            stdout, stderr = proc.communicate(timeout=1.0)
+            return subprocess.CompletedProcess(command, proc.returncode, stdout, stderr)
+        except subprocess.TimeoutExpired:
+            if progress.is_cancelled() or time.monotonic() >= deadline:
+                proc.kill()
+                proc.communicate()
+                progress.check_cancelled()
+                raise
 
 
 def build_fault_lines(gates: list[str]) -> list[str]:
