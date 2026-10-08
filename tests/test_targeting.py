@@ -390,3 +390,43 @@ endmodule
             rate = feats["out"]["toggle_rate"]
             # 0.5 is the "no data" default; a driven output must have real data.
             assert rate != 0.5, f"{gtype} produced no simulated transitions"
+
+
+def _chain_netlist(n: int) -> str:
+    """A NAND chain of ``n`` gates, each with its own side input."""
+    lines = [
+        "module big(" + ", ".join(f"i{k}" for k in range(n + 1)) + ", out);",
+        "input " + ", ".join(f"i{k}" for k in range(n + 1)) + ";",
+        "output out;",
+        "wire " + ", ".join(f"w{k}" for k in range(n)) + ";",
+        "nand g0(w0, i0, i1);",
+    ]
+    lines += [f"nand g{k}(w{k}, w{k - 1}, i{k + 1});" for k in range(1, n)]
+    lines += [f"buf gout(out, w{n - 1});", "endmodule"]
+    return "\n".join(lines)
+
+
+class TestPromptBudget:
+    def test_many_forced_suspects_cannot_stall_the_prompt_shrink(self, monkeypatch):
+        """An uncapped forced list kept every pool over budget, so the shrink
+        loop never ended (an s38417 run sat in gate selection for an hour)."""
+        import time
+
+        monkeypatch.setenv("LLM_REQUEST_TOKEN_BUDGET", "1500")
+        p = _profile(_chain_netlist(300), toggle_patterns=200)
+
+        class Fake:
+            model_name, label, last_usage = "fake", "Fake", None
+
+            def complete(self, prompt, **kw):
+                return "g0,0.9"
+
+        extra = [(str(g["gate_id"]), "flagged") for g in p.gate_profiles]
+        start = time.monotonic()
+        sel = FaultTargetSelector(provider=Fake(), context_gate_limit=200).select(
+            p.gate_profiles, graph=p.graph, extra_suspects=extra
+        )
+        assert time.monotonic() - start < 20
+        assert sel.context["gates_sent"] <= sel.context["gate_limit"]
+        # Every flagged gate still reaches the fault list.
+        assert {g for g, _ in extra} <= set(sel.gates)

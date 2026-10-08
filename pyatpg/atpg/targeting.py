@@ -75,6 +75,9 @@ _MIN_CONFIDENCE = 0.3
 #: patterns rather than named gates: the point is to teach the shape, so it
 #: transfers to a netlist whose signals are named arbitrarily. Values are
 #: illustrative of the general profile, not copied from any test circuit.
+#: Upper bound on prompt-shrinking passes; each rebuilds the candidate pool.
+_MAX_SHRINK_ROUNDS = 12
+
 _FEW_SHOT_EXEMPLARS = """### Worked examples
 
 Example A -- a trigger. A 3-input AND sitting among 2-input NANDs, toggle
@@ -190,11 +193,16 @@ class FaultTargetSelector:
         suspects, reasons = self._find_suspects(profiles, graph)
         # Trigger-detector findings (pyatpg.atpg.trigger_detector), merged the
         # same way: force-sent to the model and force-included in the list.
+        # They go first: the prompt has room for only so many forced gates,
+        # and these outrank the XOR-shape matches.
         known = {str(p["gate_id"]) for p in profiles}
-        for gate, why in extra_suspects or []:
-            if gate in known and gate not in suspects:
-                suspects.append(gate)
-                reasons.append(f"{gate}: {why}")
+        trigger = list(dict.fromkeys(g for g, _ in extra_suspects or [] if g in known))
+        why = {g: w for g, w in extra_suspects or []}
+        shape = [g for g in suspects if g not in set(trigger)]
+        reasons = [f"{g}: {why[g]}" for g in trigger] + [
+            r for r in reasons if r.partition(":")[0].strip() not in set(trigger)
+        ]
+        suspects = trigger + shape
 
         if self.provider is not None:
             try:
@@ -535,11 +543,15 @@ Rarest-toggling first.
         effective_max_gates = max_gates
         if limit > 0 and budget > 0:
             pool_limit = limit
+            rounds = 0
             while (
                 estimate_prompt_tokens(prompt)
                 + reply_budget(effective_max_gates * _TOKENS_PER_TARGET_LINE)
                 > budget
+                and rounds < _MAX_SHRINK_ROUNDS
             ):
+                rounds += 1
+                before = (len(pool), effective_max_gates)
                 at_gate_floor = effective_max_gates <= _MIN_TARGET_GATES
                 at_pool_floor = len(pool) <= max(effective_max_gates, _MIN_CONTEXT_POOL)
                 if at_gate_floor and at_pool_floor:
@@ -553,6 +565,8 @@ Rarest-toggling first.
                 prompt, pool, pool_notes, alias_to_gate = self._compose_prompt(
                     profiles, summary, effective_max_gates, graph, suspects, pool_limit
                 )
+                if (len(pool), effective_max_gates) == before:
+                    break  # nothing left to shrink; send what fits best
             if effective_max_gates != max_gates or len(pool) < limit:
                 pool_notes = [
                     *pool_notes,

@@ -285,7 +285,11 @@ def build_candidate_pool(
         ]
 
     by_id = {str(p["gate_id"]): p for p in profiles}
-    forced = [g for g in (must_include or []) if g in by_id]
+    # Forced gates come first, strongest first, but never more than the pool
+    # holds: an uncapped list (hundreds of flagged gates on a large design)
+    # kept every pool over the request budget, so the caller's shrink loop
+    # never terminated -- one s38417 run spent an hour rebuilding prompts.
+    forced = list(dict.fromkeys(g for g in (must_include or []) if g in by_id))[:limit]
 
     rarest = sorted(profiles, key=rarity_key)
     hardest = sorted(

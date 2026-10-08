@@ -481,7 +481,7 @@ class AtpgAnalysisService:
                 summary="",
                 graph=profile.graph,
                 source_text=parsed.source_text,
-                extra_suspects=[(g, e[0][1]) for g, e in trigger_ev.by_gate.items()],
+                extra_suspects=[(g, trigger_ev.by_gate[g][0][1]) for g in trigger_ev.gates()],
             )
             analysis.targeting = {
                 "strategy": selection.strategy,
