@@ -41,6 +41,11 @@ SETTINGS: dict[str, Setting] = {s.key: s for s in [
     Setting("atalanta_seed", "PYATPG_ATALANTA_SEED", int, 1, "Atalanta random seed",
             "Fixed so repeated runs give identical patterns; 0 = seed from the clock "
             "(Atalanta's own default).", minimum=0),
+    Setting("llm_batches", "PYATPG_LLM_BATCHES", int, 4, "LLM selection batches",
+            "When a circuit's gates do not fit one LLM request, review them in this many "
+            "requests, each carrying the previous shortlist forward (1 = one trimmed "
+            "request). More batches see more gates but take longer on a rate-limited key.",
+            minimum=1),
     Setting("llm_timeout_s", "PYATPG_LLM_TIMEOUT", float, 90.0, "LLM request timeout (s)",
             "Per LLM request (retries and backup keys come on top).", minimum=1),
     Setting("seq_time_budget_s", "PYATPG_SEQ_TIME_BUDGET", float, 40.0,

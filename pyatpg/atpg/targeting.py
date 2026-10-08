@@ -15,6 +15,7 @@ from pyatpg.llm.token_tracker import TokenTracker
 from pyatpg.ranking.providers import LLMProvider, LLMUnavailableError, provider_from_request
 
 from .llm_context import (
+    llm_batches,
     COMPACT_LEGEND,
     REQUEST_TOKEN_BUDGET_ENV_VAR,
     LLMResultCache,
@@ -430,14 +431,22 @@ class FaultTargetSelector:
         graph: Any,
         suspects: list[str] | None,
         limit: int,
+        rows_pool: list[dict[str, Any]] | None = None,
+        carried: int = 0,
     ) -> tuple[str, list[dict[str, Any]], list[str], dict[str, str]]:
         """Build the pool and the prompt carrying it, for one pool ``limit``.
 
         Separate from :meth:`_select_with_llm` so the caller can rebuild at
         a smaller limit when the result would not fit the request budget.
-        Returns (prompt, pool, pool notes, alias -> real gate id).
+        ``rows_pool`` sends exactly those profiles instead (one batch of a
+        batched selection), the first ``carried`` of them being the shortlist
+        kept from earlier batches. Returns (prompt, pool, pool notes, alias ->
+        real gate id).
         """
-        pool, pool_notes = build_candidate_pool(profiles, graph, limit, suspects)
+        if rows_pool is not None:
+            pool, pool_notes = rows_pool, []
+        else:
+            pool, pool_notes = build_candidate_pool(profiles, graph, limit, suspects)
 
         # Anonymise gate names before they reach the model.
         #
@@ -462,6 +471,15 @@ class FaultTargetSelector:
         profile_block = compact_profile_block(rows)
 
         floor = min(_MIN_TARGET_GATES, len(pool))
+        order_note = "Rarest-toggling first."
+        if carried:
+            order_note = (
+                f"This is one batch of a larger circuit reviewed in parts. The first "
+                f"{carried} gates are the shortlist you kept from the earlier batches; "
+                "the rest are new, rarest-toggling first. Return the best gates among "
+                "ALL of them: keep shortlisted gates that still rank highest, replace "
+                "them with new gates that rank higher."
+            )
         prompt = f"""{summary}
 
 You are assisting with test-pattern generation for a combinational circuit,
@@ -502,11 +520,103 @@ headers. Return between {floor} and {max_gates} gates.
 
 ### Gate profiles
 {COMPACT_LEGEND}
-Rarest-toggling first.
+{order_note}
 
 {profile_block}
 """
         return prompt, pool, pool_notes, alias_to_gate
+
+    def _select_in_batches(
+        self,
+        profiles: list[dict[str, Any]],
+        summary: str,
+        max_gates: int,
+        answer_gates: int,
+        graph: Any,
+        suspects: list[str] | None,
+        batch_size: int,
+        batches: int,
+        source_text: str | None,
+        context: dict[str, Any],
+    ) -> tuple[list[str], dict[str, Any], bool]:
+        """Review more of the circuit than one request can carry.
+
+        Each request holds ``batch_size`` gate profiles -- what fits the
+        provider's per-request token limit. The first batch is the rarest
+        gates; every later one carries the shortlist the model kept so far
+        plus the next slice of new candidates, so the model ends up having
+        compared ``batches`` times as many gates as one request allows. The
+        selection is the final shortlist followed by what earlier batches
+        picked, up to ``max_gates``.
+        """
+        from pyatpg.core.progress import report
+
+        carry = max(1, min(answer_gates, batch_size // 3))
+        fresh = batch_size - carry
+        total = min(len(profiles), batch_size + (batches - 1) * fresh)
+        big_pool, big_notes = build_candidate_pool(profiles, graph, total, suspects)
+        slices = [big_pool[:batch_size]] + [
+            big_pool[i:i + fresh] for i in range(batch_size, len(big_pool), fresh)
+        ]
+        slices = [chunk for chunk in slices if chunk][:batches]
+        by_id = {str(p["gate_id"]): p for p in profiles}
+
+        cache_params = dict(
+            model=self.provider.model_name, max_gates=max_gates, answer=answer_gates,
+            batch_size=batch_size, batches=len(slices), names="v2", prompt="v3",
+        )
+        cache = self.cache
+        if cache is None and source_text is not None and cache_enabled():
+            cache = LLMResultCache()
+        context = {
+            **context,
+            "gates_sent": len(big_pool),
+            "batches": len(slices),
+            "notes": [
+                *big_notes,
+                f"Reviewed in {len(slices)} batches of up to {batch_size} gates to fit the "
+                f"{request_token_budget()}-token request budget: {len(big_pool)} of "
+                f"{len(profiles)} gates were seen, each batch carrying the best {carry} "
+                "forward to the next. Set the llm_batches setting to 1 for a single request.",
+            ],
+        }
+        if cache is not None and source_text is not None:
+            hit = cache.get(TOKEN_STAGE, source_text, **cache_params)
+            if isinstance(hit, dict) and isinstance(hit.get("gates"), list):
+                self.tracker.record_cached(TOKEN_STAGE)
+                return [str(g) for g in hit["gates"]], context, True
+
+        shortlist: list[dict[str, Any]] = []
+        picks: list[list[str]] = []
+        for index, chunk in enumerate(slices, start=1):
+            report(f"Selecting target gates with the LLM (batch {index} of {len(slices)})")
+            listed = {str(p["gate_id"]) for p in shortlist}
+            rows = shortlist + [p for p in chunk if str(p["gate_id"]) not in listed]
+            prompt, _, _, alias_to_gate = self._compose_prompt(
+                profiles, summary, answer_gates, graph, suspects, 0,
+                rows_pool=rows, carried=len(shortlist),
+            )
+            started = time.perf_counter()
+            response_text = self.provider.complete(
+                prompt,
+                max_output_tokens=reply_budget(answer_gates * _TOKENS_PER_TARGET_LINE),
+            ) or ""
+            self.tracker.record(
+                TOKEN_STAGE, prompt, response_text,
+                usage=getattr(self.provider, "last_usage", None),
+                duration_s=time.perf_counter() - started,
+            )
+            chosen = [g for g in self._parse_scored_response(response_text, alias_to_gate)
+                      if g in by_id]
+            picks.append(chosen)
+            if chosen:
+                shortlist = [by_id[g] for g in chosen[:carry]]
+
+        # Final shortlist first (it has seen everything), then earlier picks.
+        gates = list(dict.fromkeys(g for batch in reversed(picks) for g in batch))[:max_gates]
+        if cache is not None and source_text is not None:
+            cache.put(TOKEN_STAGE, source_text, {"gates": gates}, **cache_params)
+        return gates, context, False
 
     def _select_with_llm(
         self,
@@ -583,6 +693,15 @@ Rarest-toggling first.
             "gate_limit": limit,
             "notes": pool_notes,
         }
+        # The budget cut the pool short of what the model should see: review
+        # the rest in batches, each carrying the shortlist forward.
+        wanted = min(limit, len(profiles)) if limit else len(profiles)
+        batches = llm_batches()
+        if batches > 1 and len(pool) < wanted:
+            return self._select_in_batches(
+                profiles, summary, max_gates, effective_max_gates, graph, suspects,
+                len(pool), batches, source_text, context,
+            )
         # An identical netlist through the same model with the same pool
         # settings would get the same answer at full price.
         # Keyed on what was actually sent: a budget-trimmed request asks a

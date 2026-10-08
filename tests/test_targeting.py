@@ -430,3 +430,45 @@ class TestPromptBudget:
         assert sel.context["gates_sent"] <= sel.context["gate_limit"]
         # Every flagged gate still reaches the fault list.
         assert {g for g, _ in extra} <= set(sel.gates)
+
+
+class TestBatchedSelection:
+    """A circuit that overflows one request is reviewed in batches."""
+
+    @staticmethod
+    def _recording():
+        prompts = []
+
+        class Rec:
+            model_name, label, last_usage = "fake", "Fake", None
+
+            def complete(self, prompt, **kw):
+                prompts.append(prompt)
+                return "g0,0.9\ng1,0.8\ng2,0.7"
+
+        return Rec(), prompts
+
+    def test_overflowing_pool_is_split_and_the_shortlist_carried(self, monkeypatch):
+        from pyatpg.atpg import targeting as T
+
+        monkeypatch.setenv("LLM_REQUEST_TOKEN_BUDGET", "4000")
+        monkeypatch.setenv("PYATPG_LLM_BATCHES", "3")
+        provider, prompts = self._recording()
+        profiles = TestRequestTokenBudget._big_profiles()
+        sel = T.FaultTargetSelector(provider=provider).select(profiles)
+        assert len(prompts) == 3
+        assert "shortlist you kept from the earlier batches" not in prompts[0]
+        assert "shortlist you kept from the earlier batches" in prompts[1]
+        assert sel.context["batches"] == 3
+        # More of the circuit was seen than one request could carry.
+        assert sel.context["gates_sent"] > len(prompts[0].split("\n")) // 4
+        assert sel.gates
+
+    def test_one_batch_setting_sends_a_single_request(self, monkeypatch):
+        from pyatpg.atpg import targeting as T
+
+        monkeypatch.setenv("LLM_REQUEST_TOKEN_BUDGET", "4000")
+        monkeypatch.setenv("PYATPG_LLM_BATCHES", "1")
+        provider, prompts = self._recording()
+        T.FaultTargetSelector(provider=provider).select(TestRequestTokenBudget._big_profiles())
+        assert len(prompts) == 1

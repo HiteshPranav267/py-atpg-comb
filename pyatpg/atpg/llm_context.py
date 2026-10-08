@@ -341,3 +341,21 @@ def build_candidate_pool(
         "to send every gate."
     ]
     return pool, notes
+
+
+#: Most batches one selection may be split into (each is a model request).
+MAX_LLM_BATCHES = 8
+
+
+def llm_batches() -> int:
+    """How many batches a selection that overflows one request is split into.
+
+    Live setting ``llm_batches`` (admin page) / ``PYATPG_LLM_BATCHES``; 1
+    sends a single trimmed request, as before batching existed.
+    """
+    try:
+        from pyatpg.core import settings
+
+        return max(1, min(MAX_LLM_BATCHES, int(settings.get("llm_batches"))))
+    except Exception:  # noqa: BLE001 - never fail a run over this setting
+        return 1
