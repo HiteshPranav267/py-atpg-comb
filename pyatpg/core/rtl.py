@@ -98,7 +98,7 @@ stat
 write_verilog -noattr -noexpr netlist.v
 """
 
-_SYNTH_VERSION = "1"  # bump when the script or library changes, to invalidate the cache
+_SYNTH_VERSION = "2"  # bump when the script or library changes, to invalidate the cache
 
 
 class RtlSynthesisError(ValueError):
@@ -459,6 +459,7 @@ def synthesize(text: str, filename: str = "design.v", top: str | None = None) ->
 
     with tempfile.TemporaryDirectory(prefix="pyatpg_rtl_") as work:
         sources, include_dirs, has_module, vhdl = [], {"."}, {}, []
+        work_notes: list[str] = []
         for name, body in files.items():
             rel = _safe_relpath(name)
             full = os.path.join(work, rel)
@@ -475,7 +476,7 @@ def synthesize(text: str, filename: str = "design.v", top: str | None = None) ->
             converted = _vhdl_to_verilog(work, vhdl, top if not sources else None)
             sources.append(converted)
             has_module[converted] = True
-            notes = notes + [f"{len(vhdl)} VHDL file(s) converted to Verilog with GHDL before synthesis."]
+            work_notes.append(f"{len(vhdl)} VHDL file(s) converted to Verilog with GHDL before synthesis.")
         # A cell library's own Verilog models are not synthesized (they are
         # simulation models, often with UDPs/specify blocks); the cells the
         # design uses are declared as blackboxes instead.
@@ -488,8 +489,8 @@ def synthesize(text: str, filename: str = "design.v", top: str | None = None) ->
                 h.write(stubs)
             sources.append("pyatpg_cell_stubs.v")
             has_module["pyatpg_cell_stubs.v"] = True
-            notes = notes + ["Standard cells in the netlist were kept as-is; only the behavioural "
-                             "RTL was synthesized."]
+            work_notes.append("Standard cells in the netlist were kept as-is; only the "
+                              "behavioural RTL was synthesized.")
         if not sources:
             raise RtlSynthesisError("The upload contains only cell-library models, no design.")
         # Files holding only `define/`timescale go first so later files see them.
@@ -513,7 +514,9 @@ def synthesize(text: str, filename: str = "design.v", top: str | None = None) ->
         with open(netlist_path, encoding="utf-8") as h:
             netlist = h.read()
 
-    synth_notes = _synthesis_notes(log, len(sources))
+    # Notes about how this synthesis ran are cached with its netlist, so a
+    # cache hit reports them too.
+    synth_notes = work_notes + _synthesis_notes(log, len(sources))
     try:
         os.makedirs(cache_dir, exist_ok=True)
         with open(cached, "w", encoding="utf-8") as h:
