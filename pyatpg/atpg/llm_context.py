@@ -65,8 +65,11 @@ COMPACT_LEGEND = (
     "reconvergent fanout is where redundant and hard-to-test faults arise. "
     "mark flags what a deterministic analysis of the whole netlist found: "
     "trig = part of a connected group of 5+ gates that never changed value in "
-    "16384 random patterns; clk = logic that drives a register's clock; pay = "
-    "logic driven by such a logic-clocked register. Blank = nothing found."
+    "16384 random patterns (also common in benign logic); clk = logic that drives "
+    "a register's clock; pay = payload: logic driven by a logic-clocked register, or "
+    "a gate (and the isolated tree feeding it) spliced in front of an output that "
+    "it changes sharply; dup = a gate reading the same net twice, which synthesis "
+    "never produces. Blank = nothing found."
 )
 
 

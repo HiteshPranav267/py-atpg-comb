@@ -20,10 +20,25 @@ trigger itself:
 * **Rare nets a complete ATPG run never activates.** After a non-targeted
   run, clean s15850 has 1 such net; T100 has 14, 13 of them Trojan gates.
   Isolated misses happen; a connected group of them is a hidden condition.
+* **Payload splices.** s38584-T100's trigger fires in 10% of random
+  full-scan patterns -- not rare at all -- so every rarity signal misses
+  it. Its payload does not hide: an OR spliced in front of output g34028,
+  fed by a 17-gate tree that does nothing else, lifts that output from 0.4%
+  to 10.8% of patterns. Measured over clean s15850 and clean ISCAS s38584,
+  no benign output gate has a fanout-free side tree of 6+ gates that moves
+  its probability more than 2x.
+* **Duplicate gate inputs.** Synthesis never emits a gate reading the same
+  net twice; a hand-inserted Trojan can (s38584-T100's NOR(Tj_OUT1,
+  Tj_OUT1, ...)). One hit across all four circuits measured, the Trojan's.
 
-The first two need only the netlist and are available before ATPG, so they
-also feed the targeted fault list and are flagged in the LLM prompt. The
-third needs the run's patterns and feeds the verdict.
+Calibration on clean ISCAS s38584 (a 36-gate never-toggling group, and
+several 7-gate ones) showed never-toggling groups also occur in benign
+logic, so on their own they are a lead, not a finding.
+
+All but the never-activated nets need only the netlist and are available
+before ATPG, so they also feed the targeted fault list and are flagged in
+the LLM prompt. The never-activated nets need the run's patterns and feed
+the verdict.
 """
 from __future__ import annotations
 
@@ -48,13 +63,32 @@ MIN_UNACTIVATED_CLUSTER = 2
 RARE_THRESHOLD = 0.05
 #: How far forward from a logic-clocked register's output to mark payload.
 PAYLOAD_DEPTH = 3
+#: A payload splice: the side tree has at least this many gates ...
+MIN_SPLICE_TREE = 6
+#: ... and changes the output's probability by at least this factor.
+MIN_SPLICE_RATIO = 5.0
 
-#: Evidence kinds and how strongly each points at a Trojan on its own.
+#: Evidence kinds and how strongly each points at a Trojan on its own. Below
+#: the verdict's 0.7 a kind is a lead: it needs a second kind of evidence on
+#: the same gate (+0.05 each) to make the verdict "Trojan suspected".
 STRENGTH = {
     "logic_clock": 0.9,
-    "unactivated_cluster": 0.85,
-    "never_toggling_cluster": 0.75,
+    "payload_splice": 0.85,
     "logic_clock_payload": 0.7,
+    "unactivated_cluster": 0.65,
+    "duplicate_input": 0.65,
+    "never_toggling_cluster": 0.6,
+}
+
+#: Which mechanism each kind of evidence measures; kinds in the same family
+#: are not independent and do not add up (see TriggerEvidence.strength).
+FAMILY = {
+    "never_toggling_cluster": "rarity",
+    "unactivated_cluster": "rarity",
+    "logic_clock": "clock",
+    "logic_clock_payload": "clock",
+    "payload_splice": "payload",
+    "duplicate_input": "hand_edit",
 }
 
 #: Short marks shown to the LLM in the gate table (see llm_context).
@@ -62,6 +96,8 @@ PROMPT_MARK = {
     "logic_clock": "clk",
     "never_toggling_cluster": "trig",
     "logic_clock_payload": "pay",
+    "payload_splice": "pay",
+    "duplicate_input": "dup",
 }
 
 
@@ -90,8 +126,11 @@ class TriggerEvidence:
         if not entries:
             return 0.0
         best = STRENGTH.get(entries[0][0], 0.5)
-        # Independent kinds of evidence on one gate corroborate each other.
-        return round(min(0.97, best + 0.05 * (len(entries) - 1)), 2)
+        # Only independent mechanisms corroborate each other: a never-toggling
+        # net is also never activated by ATPG almost by definition, and adding
+        # those up raised clean ISCAS s38584 to "Trojan suspected".
+        families = {FAMILY.get(kind, kind) for kind, _ in entries}
+        return round(min(0.97, best + 0.05 * (len(families) - 1)), 2)
 
     def gates(self) -> list[str]:
         return sorted(self.by_gate, key=lambda g: (-self.strength(g), g))
@@ -159,7 +198,25 @@ def static_evidence(circuit: Circuit, logic_clocks: dict[str, str] | None = None
     fanout: dict[str, list[str]] = {}
     for out, gate in circuit.gates.items():
         for i in gate.inputs:
-            fanout.setdefault(i, []).append(out)
+            consumers = fanout.setdefault(i, [])
+            if out not in consumers:
+                consumers.append(out)
+
+    for out, gate in circuit.gates.items():
+        if len(set(gate.inputs)) < len(gate.inputs):
+            ev.add(out, "duplicate_input",
+                   "reads the same net on two inputs -- synthesis never emits this; "
+                   "hand-inserted logic can")
+
+    for out, side, tree, ratio in _payload_splices(circuit, fanout, probs):
+        ev.add(out, "payload_splice",
+               f"output gate whose side input comes from a {len(tree)}-gate tree that "
+               f"feeds nothing else, changing the output's probability {ratio:.0f}x -- "
+               "the shape of a payload spliced in front of an output")
+        for gate in tree:
+            ev.add(gate, "payload_splice",
+                   f"part of the {len(tree)}-gate side tree spliced into output {out}")
+
     for q, clk in sorted((logic_clocks or {}).items()):
         if clk in circuit.gates:
             p1 = probs.get(clk, 0.5)
@@ -196,6 +253,48 @@ def static_evidence(circuit: Circuit, logic_clocks: dict[str, str] | None = None
                     nxt.append(out)
             frontier, depth = nxt, depth + 1
     return ev
+
+
+def _side_tree(circuit: Circuit, fanout: dict[str, list[str]], root: str) -> list[str] | None:
+    """Gates of the fanout-free tree ending at ``root``; None if any branch leaves it."""
+    nodes, stack, seen = [], [root], set()
+    while stack:
+        n = stack.pop()
+        gate = circuit.gates.get(n)
+        if gate is None or n in seen:
+            continue
+        if n != root and len(fanout.get(n, [])) != 1:
+            return None
+        seen.add(n)
+        nodes.append(n)
+        stack.extend(gate.inputs)
+    return nodes
+
+
+def _payload_splices(circuit: Circuit, fanout: dict[str, list[str]],
+                     probs: dict[str, float]) -> list[tuple[str, str, list[str], float]]:
+    """(output gate, side input, side tree, probability ratio) for each splice found."""
+    found = []
+    for out in sorted(circuit.outputs):
+        gate = circuit.gates.get(out)
+        if gate is None or gate.gtype not in ("AND", "OR", "NAND", "NOR", "XOR") \
+                or len(set(gate.inputs)) != 2:
+            continue
+        a, b = sorted(set(gate.inputs))
+        for side, other in ((a, b), (b, a)):
+            if len(fanout.get(side, [])) != 1 or other not in probs or out not in probs:
+                continue
+            tree = _side_tree(circuit, fanout, side)
+            if not tree or len(tree) < MIN_SPLICE_TREE:
+                continue
+            p_out, p_other = probs[out], probs[other]
+            # Compare the rarer value of each: an OR payload lifts a mostly-0
+            # output, an AND payload pulls a mostly-1 output down.
+            r_out, r_other = min(p_out, 1 - p_out), min(p_other, 1 - p_other)
+            ratio = (max(r_out, r_other) + 1e-4) / (min(r_out, r_other) + 1e-4)
+            if ratio >= MIN_SPLICE_RATIO:
+                found.append((out, side, tree, ratio))
+    return found
 
 
 def activation_evidence(circuit: Circuit, vectors: TestVectorSet, *,

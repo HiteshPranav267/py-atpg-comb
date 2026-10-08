@@ -146,3 +146,59 @@ def test_rate_limit_retry_waits_as_long_as_the_provider_asks():
     assert _retry_delay("try again in 450ms", 0) == 1.45
     assert _retry_delay("try again in 5m0s", 0) == 65.0  # capped
     assert _retry_delay("503 UNAVAILABLE", 2) == 4.0
+
+
+def _bench(lines):
+    from pyatpg.atpg.structural import parse_circuit
+
+    return parse_circuit("\n".join(lines) + "\n", "t.bench").circuit
+
+
+def test_payload_splice_in_front_of_an_output_is_found():
+    """s38584-T100's shape: OR(trigger tree, rare original signal) -> output."""
+    from pyatpg.atpg.trigger_detector import static_evidence
+
+    lines = [f"INPUT(i{k})" for k in range(14)] + ["OUTPUT(y)"]
+    # Original logic: a rare signal (1 in 64 random patterns).
+    lines += ["d1 = AND(i0, i1, i2)", "d2 = AND(i3, i4, i5)", "data = AND(d1, d2)"]
+    # Inserted trigger: a fanout-free tree over other inputs, common under scan.
+    lines += ["t1 = NOT(i6)", "t2 = NOT(i7)", "t3 = AND(t1, t2)", "t4 = NOT(i8)",
+              "t5 = NOT(i9)", "t6 = AND(t4, t5)", "trig = OR(t3, t6)"]
+    lines += ["y = OR(trig, data)"]
+    ev = static_evidence(_bench(lines))
+    kinds = {g: [k for k, _ in e] for g, e in ev.by_gate.items()}
+    assert "payload_splice" in kinds["y"]
+    assert "payload_splice" in kinds["trig"] and "payload_splice" in kinds["t1"]
+    assert "data" not in kinds and "d1" not in kinds
+
+
+def test_ordinary_output_gate_is_not_a_splice():
+    from pyatpg.atpg.trigger_detector import static_evidence
+
+    lines = [f"INPUT(i{k})" for k in range(8)] + ["OUTPUT(y)"]
+    lines += ["a1 = AND(i0, i1)", "a2 = AND(i2, i3)", "a = OR(a1, a2)",
+              "b1 = AND(i4, i5)", "b2 = AND(i6, i7)", "b = OR(b1, b2)", "y = AND(a, b)"]
+    ev = static_evidence(_bench(lines))
+    assert not any(k == "payload_splice" for e in ev.by_gate.values() for k, _ in e)
+
+
+def test_duplicate_gate_input_is_a_lead():
+    from pyatpg.atpg.trigger_detector import static_evidence
+
+    lines = ["INPUT(a)", "INPUT(b)", "INPUT(c)", "OUTPUT(y)",
+             "n1 = AND(a, b)", "y = NOR(n1, n1, c)"]
+    ev = static_evidence(_bench(lines))
+    assert [k for k, _ in ev.by_gate["y"]] == ["duplicate_input"]
+    assert ev.strength("y") < 0.7  # a lead on its own, not a verdict
+
+
+def test_correlated_evidence_does_not_add_up():
+    """Never-toggling nets are also never activated: one mechanism, not two."""
+    from pyatpg.atpg.trigger_detector import TriggerEvidence
+
+    ev = TriggerEvidence()
+    ev.add("g", "never_toggling_cluster", "x")
+    ev.add("g", "unactivated_cluster", "y")
+    assert ev.strength("g") < 0.7
+    ev.add("g", "duplicate_input", "z")  # an independent mechanism does add
+    assert ev.strength("g") >= 0.7
