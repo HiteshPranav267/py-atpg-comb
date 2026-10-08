@@ -215,8 +215,7 @@ export default function ATPG() {
                 <Brain className="w-3.5 h-3.5 text-primary/70 shrink-0 mt-0.5" />
                 <p
                   key={progress.thought}
-                  className="llm-thought text-xs italic text-muted-foreground leading-relaxed"
-                  style={{ display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}
+                  className="llm-thought text-xs italic text-muted-foreground truncate min-w-0"
                   title="What the model is reasoning about right now"
                 >
                   {progress.thought}
@@ -422,11 +421,7 @@ function CircuitOverview({ report }: { report: AtpgReport }) {
               <p className="text-xs font-medium text-red-400 mb-1.5">
                 Structurally trojan-shaped logic detected
               </p>
-              {targeting.suspect_reasons.map((reason) => (
-                <p key={reason} className="text-[11px] text-red-300/90 leading-relaxed font-mono">
-                  {reason}
-                </p>
-              ))}
+              <SuspectReasons reasons={targeting.suspect_reasons} />
             </div>
           )}
           {targeting.toggle_seed != null && (
@@ -443,5 +438,43 @@ function CircuitOverview({ report }: { report: AtpgReport }) {
         </div>
       )}
     </Section>
+  );
+}
+
+/**
+ * Detector reasons, one line per distinct reason ("14 gates: part of the
+ * 14-gate side tree ..."), the first few shown. One line per gate ran to
+ * hundreds of near-identical rows on a large circuit.
+ */
+function SuspectReasons({ reasons }: { reasons: string[] }) {
+  const [showAll, setShowAll] = useState(false);
+  const groups = new Map<string, string[]>();
+  for (const entry of reasons) {
+    const cut = entry.indexOf(': ');
+    const gate = cut > 0 ? entry.slice(0, cut) : entry;
+    const why = cut > 0 ? entry.slice(cut + 2) : '';
+    groups.set(why, [...(groups.get(why) ?? []), gate]);
+  }
+  const rows = [...groups.entries()].sort((a, b) => b[1].length - a[1].length);
+  const shown = showAll ? rows : rows.slice(0, 5);
+  return (
+    <div className="flex flex-col gap-1">
+      {shown.map(([why, gates]) => (
+        <p key={why} className="text-[11px] text-red-300/90 leading-relaxed">
+          <span className="font-mono">
+            {gates.length === 1 ? gates[0] : `${gates.length} gates (${gates.slice(0, 3).join(', ')}${gates.length > 3 ? ', ...' : ''})`}
+          </span>
+          {why && `: ${why}`}
+        </p>
+      ))}
+      {rows.length > 5 && (
+        <button
+          onClick={() => setShowAll((v) => !v)}
+          className="self-start text-[11px] text-red-400 hover:underline"
+        >
+          {showAll ? 'Show fewer' : `Show all ${rows.length} reasons`}
+        </button>
+      )}
+    </div>
   );
 }

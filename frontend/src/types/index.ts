@@ -284,6 +284,10 @@ export interface TrojanGroundTruth {
   targeted_selection?: SelectionScore;
   structural_suspects?: SelectionScore;
   trigger_detector?: SelectionScore;
+  flagged_trojan?: SelectionScore;
+  without_llm_selection?: SelectionScore;
+  llm_only_hits?: string[];
+  baseline_only_hits?: string[];
   verdict_suspects?: SelectionScore;
   redundant_trojan_faults?: Record<
     string,

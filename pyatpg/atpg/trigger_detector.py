@@ -63,6 +63,8 @@ MIN_UNACTIVATED_CLUSTER = 2
 RARE_THRESHOLD = 0.05
 #: How far forward from a logic-clocked register's output to mark payload.
 PAYLOAD_DEPTH = 3
+#: How many levels back from the flagged logic the region grows.
+REGION_DEPTH = 2
 #: A payload splice: the side tree has at least this many gates ...
 MIN_SPLICE_TREE = 6
 #: ... and changes the output's probability by at least this factor.
@@ -75,6 +77,7 @@ STRENGTH = {
     "logic_clock": 0.9,
     "payload_splice": 0.85,
     "logic_clock_payload": 0.7,
+    "trojan_region": 0.7,
     "unactivated_cluster": 0.65,
     "duplicate_input": 0.65,
     "never_toggling_cluster": 0.6,
@@ -89,6 +92,7 @@ FAMILY = {
     "logic_clock_payload": "clock",
     "payload_splice": "payload",
     "duplicate_input": "hand_edit",
+    "trojan_region": "region",
 }
 
 #: Short marks shown to the LLM in the gate table (see llm_context).
@@ -106,6 +110,9 @@ class TriggerEvidence:
     """Gate -> list of (kind, reason); strongest kind first per gate."""
 
     by_gate: dict[str, list[tuple[str, str]]] = field(default_factory=dict)
+    #: Host-circuit nets at the Trojan's edge (signals its trigger taps, the
+    #: original signal a payload replaced): never grown into.
+    host: set[str] = field(default_factory=set)
 
     def add(self, gate: str, kind: str, reason: str) -> None:
         entries = self.by_gate.setdefault(gate, [])
@@ -114,7 +121,7 @@ class TriggerEvidence:
             entries.sort(key=lambda kr: -STRENGTH.get(kr[0], 0))
 
     def merge(self, other: "TriggerEvidence") -> "TriggerEvidence":
-        out = TriggerEvidence()
+        out = TriggerEvidence(host=self.host | other.host)
         for src in (self, other):
             for gate, entries in src.by_gate.items():
                 for kind, reason in entries:
@@ -208,7 +215,8 @@ def static_evidence(circuit: Circuit, logic_clocks: dict[str, str] | None = None
                    "reads the same net on two inputs -- synthesis never emits this; "
                    "hand-inserted logic can")
 
-    for out, side, tree, ratio in _payload_splices(circuit, fanout, probs):
+    for out, side, tree, ratio, original in _payload_splices(circuit, fanout, probs):
+        ev.host.add(original)
         ev.add(out, "payload_splice",
                f"output gate whose side input comes from a {len(tree)}-gate tree that "
                f"feeds nothing else, changing the output's probability {ratio:.0f}x -- "
@@ -217,6 +225,13 @@ def static_evidence(circuit: Circuit, logic_clocks: dict[str, str] | None = None
             ev.add(gate, "payload_splice",
                    f"part of the {len(tree)}-gate side tree spliced into output {out}")
 
+    _logic_clock_evidence(ev, circuit, logic_clocks, probs, never, fanout)
+    return complete_region(circuit, ev, logic_clocks)
+
+
+def _logic_clock_evidence(ev: TriggerEvidence, circuit: Circuit,
+                          logic_clocks: dict[str, str] | None, probs: dict[str, float],
+                          never: set[str], fanout: dict[str, list[str]]) -> None:
     for q, clk in sorted((logic_clocks or {}).items()):
         if clk in circuit.gates:
             p1 = probs.get(clk, 0.5)
@@ -229,10 +244,15 @@ def static_evidence(circuit: Circuit, logic_clocks: dict[str, str] | None = None
             # are the host circuit's own (rare, but not inserted), and
             # following rare nets past it flagged 84 benign gates on T100.
             if rare:
-                stack, seen = list(circuit.gates[clk].inputs), set()
+                stack, seen = list(circuit.gates[clk].inputs), {clk}
                 while stack:
                     n = stack.pop()
                     if n in seen or n not in circuit.gates or n not in never:
+                        continue
+                    if not set(fanout.get(n, [])) <= seen:
+                        # Also read by ordinary logic: a host signal the
+                        # trigger taps, not part of it.
+                        ev.host.add(n)
                         continue
                     seen.add(n)
                     ev.add(n, "logic_clock",
@@ -252,6 +272,64 @@ def static_evidence(circuit: Circuit, logic_clocks: dict[str, str] | None = None
                            "clocked by logic -- where a sequential Trojan's payload sits")
                     nxt.append(out)
             frontier, depth = nxt, depth + 1
+
+
+def complete_region(circuit: Circuit, ev: TriggerEvidence,
+                    logic_clocks: dict[str, str] | None = None) -> TriggerEvidence:
+    """Add the rest of the Trojan around its strongly flagged gates.
+
+    The aim is every Trojan gate, not the most suspicious few. On s15850-T100
+    the flagged trigger trees left out their own leaf conditions (rare, but
+    not never-toggling) and the trigger registers. Two rules close that gap
+    without reaching into host logic:
+
+    * a gate whose every consumer is already flagged exists only to feed the
+      Trojan, so it is part of it (repeated up to REGION_DEPTH levels back);
+    * a logic-clocked register whose clock logic is flagged is the Trojan's
+      state, together with the load logic modelling it.
+
+    Gates that also feed ordinary logic stay out, and a circuit with no
+    strong suspect (every clean circuit measured) grows nothing.
+    """
+    region = {g for g in ev.by_gate if ev.strength(g) >= 0.7}
+    if not region:
+        return ev
+    consumers: dict[str, set[str]] = {}
+    for out, gate in circuit.gates.items():
+        for i in gate.inputs:
+            consumers.setdefault(i, set()).add(out)
+
+    for q, clk in sorted((logic_clocks or {}).items()):
+        if clk in region:
+            ev.add(q, "trojan_region", f"register clocked by the flagged logic {clk}")
+            region.add(q)
+            # The load mux the parser built for it (Q' = clk ? D : Q).
+            for net in circuit.gates:
+                if net.startswith(f"{q}__") and net not in region:
+                    ev.add(net, "trojan_region", f"load logic of Trojan register {q}")
+                    region.add(net)
+
+    frontier = set(region)
+    for _ in range(REGION_DEPTH):
+        added = set()
+        for flagged in frontier:
+            gate = circuit.gates.get(flagged)
+            if gate is None:
+                continue
+            for src in gate.inputs:
+                if (src in region or src not in circuit.gates or src in ev.host
+                        or src in circuit.outputs):
+                    continue
+                users = consumers.get(src, set())
+                if users and users <= region:
+                    ev.add(src, "trojan_region",
+                           f"feeds only flagged Trojan logic ({sorted(users)[0]}"
+                           + (" ..." if len(users) > 1 else "") + ")")
+                    added.add(src)
+        region |= added
+        frontier = added
+        if not added:
+            break
     return ev
 
 
@@ -272,8 +350,8 @@ def _side_tree(circuit: Circuit, fanout: dict[str, list[str]], root: str) -> lis
 
 
 def _payload_splices(circuit: Circuit, fanout: dict[str, list[str]],
-                     probs: dict[str, float]) -> list[tuple[str, str, list[str], float]]:
-    """(output gate, side input, side tree, probability ratio) for each splice found."""
+                     probs: dict[str, float]) -> list[tuple[str, str, list[str], float, str]]:
+    """(output gate, side input, side tree, probability ratio, original input) per splice."""
     found = []
     for out in sorted(circuit.outputs):
         gate = circuit.gates.get(out)
@@ -293,7 +371,7 @@ def _payload_splices(circuit: Circuit, fanout: dict[str, list[str]],
             r_out, r_other = min(p_out, 1 - p_out), min(p_other, 1 - p_other)
             ratio = (max(r_out, r_other) + 1e-4) / (min(r_out, r_other) + 1e-4)
             if ratio >= MIN_SPLICE_RATIO:
-                found.append((out, side, tree, ratio))
+                found.append((out, side, tree, ratio, other))
     return found
 
 

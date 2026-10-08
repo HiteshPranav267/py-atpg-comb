@@ -963,10 +963,8 @@ class OpenAIProvider(LLMProvider):
             close = getattr(stream, "close", None)
             if close:
                 close()
-        if reasoning:
-            # Fast servers finish inside one refresh interval; leave the last
-            # of the reasoning showing until the next step replaces it.
-            progress.think("".join(reasoning[-60:]))
+        # The model is done: show nothing until it thinks again.
+        progress.think("")
         self._note_usage(
             getattr(usage, "prompt_tokens", None) if usage else None,
             getattr(usage, "completion_tokens", None) if usage else None,

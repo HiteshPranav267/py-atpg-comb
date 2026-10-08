@@ -84,7 +84,7 @@ def test_llm_thought_is_shown_trimmed_and_cleared_on_the_next_step():
         progress.report("Selecting target gates with the LLM")
         progress.think("word " * 200 + "the final thought")
         shown = progress.snapshot("thought-test")["thought"]
-        assert shown.endswith("the final thought") and len(shown) <= 222
+        assert shown.endswith("the final thought") and len(shown) <= 112
         progress.report("Running Atalanta")
         assert progress.snapshot("thought-test")["thought"] is None
 

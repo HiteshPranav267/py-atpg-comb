@@ -1,5 +1,5 @@
 import { AlertTriangle, Crosshair, Info } from 'lucide-react';
-import type { AtpgReport, SelectionScore } from '@/types';
+import type { AtpgReport, SelectionScore, TrojanGroundTruth } from '@/types';
 import { Pill, Section, Stat } from './primitives';
 
 const RUN_LABEL: Record<string, string> = {
@@ -88,6 +88,7 @@ export function TrojanCheckPanel({ report }: { report: AtpgReport }) {
             <span className="font-medium">{truth.trojan_gates.length} Trojan gates identified by name</span>
             <span className="text-xs text-muted-foreground"> ({truth.source})</span>
           </div>
+          <RecallSummary truth={truth} />
           <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3">
             <ScoreCard title="Targeted gate selection" score={truth.targeted_selection} />
             <ScoreCard title="Trigger detector" score={truth.trigger_detector} />
@@ -130,6 +131,53 @@ export function TrojanCheckPanel({ report }: { report: AtpgReport }) {
         </p>
       )}
     </Section>
+  );
+}
+
+/** The goal is every Trojan gate: headline recall, and what the LLM added. */
+function RecallSummary({ truth }: { truth: TrojanGroundTruth }) {
+  const total = truth.trojan_gates.length;
+  const flagged = truth.flagged_trojan;
+  const withLlm = truth.targeted_selection;
+  const without = truth.without_llm_selection;
+  const count = (s?: SelectionScore) => (s ? s.trojan_gates_hit.length : null);
+  return (
+    <div className="grid sm:grid-cols-3 gap-3">
+      <div className="border border-border rounded-lg p-3">
+        <div className="text-xs text-muted-foreground font-medium">Trojan gates flagged (verdict)</div>
+        <div className="text-xl font-bold tabular-nums">
+          {count(flagged) ?? '—'} / {total}
+        </div>
+        <div className="text-[11px] text-muted-foreground">recall {pct(flagged?.recall)} · precision {pct(flagged?.precision)}</div>
+      </div>
+      {without && withLlm && (
+        <>
+          <div className="border border-border rounded-lg p-3">
+            <div className="text-xs text-muted-foreground font-medium">Targeted list: without LLM → with LLM</div>
+            <div className="text-xl font-bold tabular-nums">
+              {count(without)} → {count(withLlm)} / {total}
+            </div>
+            <div className="text-[11px] text-muted-foreground">
+              recall {pct(without.recall)} → {pct(withLlm.recall)}
+            </div>
+          </div>
+          <div className="border border-border rounded-lg p-3">
+            <div className="text-xs text-muted-foreground font-medium">Found only with the LLM</div>
+            <div className="text-xl font-bold tabular-nums">{truth.llm_only_hits?.length ?? 0}</div>
+            <div className="flex flex-wrap gap-1 mt-1">
+              {(truth.llm_only_hits ?? []).slice(0, 8).map((g) => (
+                <Pill key={g} tone="info">{g}</Pill>
+              ))}
+              {!!truth.baseline_only_hits?.length && (
+                <span className="text-[11px] text-red-400">
+                  missed by the LLM run: {truth.baseline_only_hits.join(', ')}
+                </span>
+              )}
+            </div>
+          </div>
+        </>
+      )}
+    </div>
   );
 }
 

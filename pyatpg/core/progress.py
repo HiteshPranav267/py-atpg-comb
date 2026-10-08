@@ -179,17 +179,18 @@ def snapshot(progress_id: str) -> dict[str, Any] | None:
         }
 
 
-#: How much of the model's reasoning the UI is given: about two lines.
-_THOUGHT_CHARS = 220
+#: How much of the model's reasoning the UI is given: one line.
+_THOUGHT_CHARS = 110
 
 
 def think(reasoning: str) -> None:
     """Show the tail of what the model is reasoning about right now.
 
     Called repeatedly while a reasoning model streams its answer; only the
-    last ~two lines are kept, starting at a word boundary, so the UI shows
-    what it is thinking now rather than the whole trace. Cleared by the
-    next :func:`report`. A no-op outside a tracked request.
+    last line's worth is kept, starting at a word boundary, so the UI shows
+    what it is thinking now rather than the whole trace. An empty string
+    clears it (the model finished); so does the next :func:`report`. A
+    no-op outside a tracked request.
     """
     pid = _current.get()
     if pid is None:

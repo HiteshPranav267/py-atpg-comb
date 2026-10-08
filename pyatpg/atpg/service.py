@@ -471,6 +471,7 @@ class AtpgAnalysisService:
         tracker = TokenTracker()
 
         selection = None
+        baseline_gates = None
         if mode.runs_targeted:
             from .targeting import FaultTargetSelector
 
@@ -483,6 +484,20 @@ class AtpgAnalysisService:
                 source_text=parsed.source_text,
                 extra_suspects=[(g, trigger_ev.by_gate[g][0][1]) for g in trigger_ev.gates()],
             )
+            # The same selection without the model (structural heuristic plus
+            # the detector), so every LLM run reports what the LLM added.
+            baseline_gates = None
+            if selection.used_llm:
+                try:
+                    baseline_gates = FaultTargetSelector(provider=None).select(
+                        profile.gate_profiles,
+                        summary="",
+                        graph=profile.graph,
+                        extra_suspects=[(g, trigger_ev.by_gate[g][0][1])
+                                        for g in trigger_ev.gates()],
+                    ).gates
+                except Exception:  # noqa: BLE001 - a comparison must not fail the run
+                    baseline_gates = None
             analysis.targeting = {
                 "strategy": selection.strategy,
                 "used_llm": selection.used_llm,
@@ -592,6 +607,8 @@ class AtpgAnalysisService:
             verdict=analysis.verdict,
             runs=analysis.runs,
             trigger=trigger_ev.gates(),
+            baseline=baseline_gates if mode.runs_targeted and selection else None,
+            strong=[s.gate for s in analysis.verdict.suspects if s.confidence >= 0.7],
         )
 
         if use_llm and not mode.runs_targeted:
@@ -926,7 +943,8 @@ def _write_sequential_artifacts(workspace: "JobWorkspace", name: str, runs: dict
 
 
 def _ground_truth_report(truth, *, selected=None, llm_selected=None, structural=None,
-                         verdict=None, runs=None, trigger=None) -> dict[str, Any] | None:
+                         verdict=None, runs=None, trigger=None, baseline=None,
+                         strong=None) -> dict[str, Any] | None:
     """Score each gate list against the Trojan gates found by name, if any."""
     if not truth:
         return None
@@ -940,6 +958,16 @@ def _ground_truth_report(truth, *, selected=None, llm_selected=None, structural=
         report_["structural_suspects"] = score_selection(structural, truth)
     if trigger is not None:
         report_["trigger_detector"] = score_selection(trigger, truth)
+    if strong is not None:
+        # The verdict's strong suspects: the tool's own answer to "which gates
+        # are the Trojan", the list whose recall is the goal.
+        report_["flagged_trojan"] = score_selection(strong, truth)
+    if baseline is not None and selected is not None:
+        with_llm = set(selected) & set(truth)
+        without = set(baseline) & set(truth)
+        report_["without_llm_selection"] = score_selection(baseline, truth)
+        report_["llm_only_hits"] = sorted(with_llm - without)
+        report_["baseline_only_hits"] = sorted(without - with_llm)
     if verdict is not None and getattr(verdict, "suspects", None):
         report_["verdict_suspects"] = score_selection([s.gate for s in verdict.suspects], truth)
     # Faults on the Trojan's own logic that Atalanta proved untestable. A
