@@ -89,12 +89,18 @@ On a normal data path both inputs of an XOR swing at comparable rates. This
 asymmetry is the signature of logic spliced into an existing path, where one
 side is the original signal and the other is a trigger.
 
-Example C -- NOT suspicious. A gate with the circuit's single lowest toggle
-rate, high CC0/CC1, sitting in a deep arithmetic cone with several fan-outs
-and neighbours of similar rarity. Extreme testability numbers alone are
-ordinary in benign logic -- deep carry chains and comparators look like this.
-Rarity matters when it is anomalous for its neighbourhood, not when it is
-simply the tail of the distribution."""
+Example C -- NOT suspicious on its own. A single gate with a very low toggle
+rate, high CC0/CC1, sitting in a deep arithmetic cone with several fan-outs.
+Isolated extreme testability numbers are ordinary in benign logic -- deep
+carry chains and comparators look like this.
+
+Example D -- a sequential trigger (Trust-Hub style). A tree of AND/NOR gates,
+every one with toggle_rate 0.0000, wired into each other and converging on
+one net that clocks a register (mark trig / clk), and the gates that register
+drives (mark pay). Unlike Example C this is a connected GROUP of
+never-toggling gates feeding a clock or select line: the trigger is built
+from many rare conditions precisely so it never fires in normal use. Always
+select every gate of such a group, and the payload gates it controls."""
 
 
 @dataclass
@@ -167,6 +173,7 @@ class FaultTargetSelector:
         summary: str = "",
         graph: Any = None,
         source_text: str | None = None,
+        extra_suspects: list[tuple[str, str]] | None = None,
     ) -> TargetSelection:
         """Choose the gates for the targeted fault list.
 
@@ -181,6 +188,13 @@ class FaultTargetSelector:
         """
         max_gates = self._effective_max_gates(profiles)
         suspects, reasons = self._find_suspects(profiles, graph)
+        # Trigger-detector findings (pyatpg.atpg.trigger_detector), merged the
+        # same way: force-sent to the model and force-included in the list.
+        known = {str(p["gate_id"]) for p in profiles}
+        for gate, why in extra_suspects or []:
+            if gate in known and gate not in suspects:
+                suspects.append(gate)
+                reasons.append(f"{gate}: {why}")
 
         if self.provider is not None:
             try:
@@ -464,10 +478,10 @@ Weigh two different kinds of evidence:
 
 {_FEW_SHOT_EXEMPLARS}
 
-Do not return only the single most extreme gate. One gate being a clear
-outlier on toggle rate does not mean the rest are uninteresting -- inserted
-logic is usually NOT the most extreme thing in the circuit, so a one-gate
-answer will miss it. Return a spread of at least {floor} gates unless the
+Gates with a mark were flagged by deterministic analysis of the full
+netlist; include them unless the profile clearly contradicts the mark. Do
+not stop at the most extreme gates either: inserted logic can also hide
+mid-distribution, so return a spread of at least {floor} gates unless the
 circuit is smaller than that, covering both kinds of evidence above.
 
 ### Output format
@@ -569,6 +583,9 @@ Rarest-toggling first.
             # separator "/" -> "__"), so an old answer naming gates that no
             # longer exist is not reused -- they would all be filtered out.
             names="v2",
+            # Bumped when the prompt itself changes (v3: trigger marks and
+            # Example D), so an answer to the old prompt is not reused.
+            prompt="v3",
         )
         cache = self.cache
         if cache is None and source_text is not None and cache_enabled():

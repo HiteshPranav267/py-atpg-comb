@@ -633,6 +633,7 @@ class VerilogParser:
             self._mux(ff.q, load, ff.q, ff.d or ff.q, clk, invert=False)
             ff.d = load
             gated.append(ff.q)
+            self.circuit.logic_clocks[ff.q] = clk
         if gated:
             shown = ", ".join(gated[:8]) + (" ..." if len(gated) > 8 else "")
             self.notes.append(

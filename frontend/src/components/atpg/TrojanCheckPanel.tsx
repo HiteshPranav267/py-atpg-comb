@@ -88,9 +88,10 @@ export function TrojanCheckPanel({ report }: { report: AtpgReport }) {
             <span className="font-medium">{truth.trojan_gates.length} Trojan gates identified by name</span>
             <span className="text-xs text-muted-foreground"> ({truth.source})</span>
           </div>
-          <div className="grid sm:grid-cols-3 gap-3">
+          <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3">
             <ScoreCard title="Targeted gate selection" score={truth.targeted_selection} />
-            <ScoreCard title="Structural suspects" score={truth.structural_suspects} />
+            <ScoreCard title="Trigger detector" score={truth.trigger_detector} />
+            <ScoreCard title="XOR-shape suspects" score={truth.structural_suspects} />
             <ScoreCard title="Verdict suspects" score={truth.verdict_suspects} />
           </div>
           {keyWatched.length > 0 && (

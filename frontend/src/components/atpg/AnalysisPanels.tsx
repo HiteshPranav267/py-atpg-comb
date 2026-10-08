@@ -11,10 +11,11 @@ import { KeyValue, Pill, Section, Stat, metric } from './primitives';
 
 export function VerdictPanel({ verdict }: { verdict: TrojanVerdict }) {
   const suspected = verdict.verdict === 'trojan_suspected';
+  const inconclusive = verdict.verdict === 'inconclusive';
   return (
     <Section
       title="Trojan verdict"
-      subtitle="Gates matching the structural shape of an inserted trigger/payload, confirmed against what ATPG could generate for them."
+      subtitle="Trigger-like logic (never-toggling gate groups, logic-clocked registers, rare conditions ATPG never produced), with weaker structural leads after it."
       actions={
         suspected ? (
           <ShieldAlert className="w-4 h-4 text-red-400" />
@@ -25,9 +26,9 @@ export function VerdictPanel({ verdict }: { verdict: TrojanVerdict }) {
     >
       <div className="flex items-center gap-2 mb-2">
         <Pill tone={suspected ? 'warn' : 'neutral'}>
-          {suspected ? 'Trojan suspected' : 'No trojan indicated'}
+          {suspected ? 'Trojan suspected' : inconclusive ? 'Inconclusive' : 'No trojan indicated'}
         </Pill>
-        {suspected && (
+        {(suspected || inconclusive) && (
           <span className="text-xs text-muted-foreground font-mono">
             top confidence {verdict.confidence.toFixed(2)}
           </span>
@@ -44,6 +45,7 @@ export function VerdictPanel({ verdict }: { verdict: TrojanVerdict }) {
                 <Pill tone={item.atpg_status === 'detected' ? 'warn' : 'neutral'}>
                   {item.atpg_status}
                 </Pill>
+                <span className="text-[11px] text-muted-foreground font-mono">{item.evidence}</span>
                 <span className="text-xs text-muted-foreground font-mono ml-auto">
                   confidence {item.confidence.toFixed(2)}
                 </span>

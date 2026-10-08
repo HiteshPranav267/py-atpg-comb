@@ -89,3 +89,60 @@ def test_atalanta_gets_a_fixed_seed(monkeypatch):
     assert runner._seed() == 1
     monkeypatch.setenv("PYATPG_ATALANTA_SEED", "0")
     assert runner._seed() == 0
+
+
+def test_trigger_detector_flags_logic_clock_and_payload():
+    from pyatpg.atpg.trigger_detector import static_evidence
+
+    circuit, _ = _parse(T100_LIKE)
+    comb, _ = to_full_scan(circuit)
+    assert comb.logic_clocks == {"Tg1": "Tg1_Trigger1"}
+    ev = static_evidence(comb, comb.logic_clocks)
+    kinds = {g: [k for k, _ in e] for g, e in ev.by_gate.items()}
+    assert "logic_clock" in kinds["Tg1_Trigger1"]
+    assert "logic_clock_payload" in kinds["y"]
+    assert "q_out" not in kinds and "r0" not in kinds
+
+
+def test_never_toggling_cluster_is_found():
+    from pyatpg.atpg.trigger_detector import MIN_CLUSTER, static_evidence
+
+    # A 10-level chain of 4-input ANDs, three fresh inputs per level: from
+    # level 4 on (probability <= 2**-16) it is never 1 in 16384 random patterns.
+    lines = ["module t(" + ", ".join(f"i{k}" for k in range(40)) + ", y);",
+             "input " + ", ".join(f"i{k}" for k in range(40)) + ";", "output y;"]
+    prev = None
+    for lvl in range(10):
+        ins = [f"i{4 * lvl + j}" for j in range(4)] if prev is None else [prev] + [f"i{4 * lvl + j}" for j in range(3)]
+        lines.append(f"AND4X1 a{lvl} (.IN1({ins[0]}), .IN2({ins[1]}), .IN3({ins[2]}), .IN4({ins[3]}), .Q(t{lvl}));")
+        prev = f"t{lvl}"
+    lines += ["NBUFFX2 o (.IN(t9), .Q(y));", "endmodule"]
+    circuit, _ = _parse("\n".join(lines))
+    ev = static_evidence(circuit)
+    flagged = [g for g, e in ev.by_gate.items() if any(k == "never_toggling_cluster" for k, _ in e)]
+    assert len(flagged) >= MIN_CLUSTER
+
+
+def test_scan_enable_is_held_low_under_full_scan():
+    circuit, _ = _parse("""
+module t (CK, a, test_se, test_si, y);
+  input CK, a, test_se, test_si;
+  output y;
+  SDFFX1 r (.D(a), .SI(test_si), .SE(test_se), .CLK(CK), .Q(q));
+  INVX0 n (.IN(test_se), .QN(se_n));
+  AND2X1 g (.IN1(q), .IN2(se_n), .Q(y));
+endmodule
+""")
+    comb, counts = to_full_scan(circuit)
+    assert counts["scan_enables_held_low"] == ["test_se"]
+    assert "test_se" not in comb.inputs
+    assert comb.gates["y"].gtype == "BUF" and comb.gates["y"].inputs == ["q"]
+
+
+def test_rate_limit_retry_waits_as_long_as_the_provider_asks():
+    from pyatpg.ranking.providers import _retry_delay
+
+    assert _retry_delay("Rate limit ... Please try again in 12.855s. Need more", 0) == 13.855
+    assert _retry_delay("try again in 450ms", 0) == 1.45
+    assert _retry_delay("try again in 5m0s", 0) == 65.0  # capped
+    assert _retry_delay("503 UNAVAILABLE", 2) == 4.0

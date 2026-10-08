@@ -32,10 +32,22 @@ def to_full_scan(circuit: Circuit) -> tuple[Circuit, dict[str, int]]:
     gates = {out: (g.gtype, list(g.inputs)) for out, g in circuit.gates.items()}
     sources = set(circuit.inputs) | {ff.q for ff in circuit.flipflops}
 
+    # Scan enable is 0 during the capture cycle a full-scan pattern tests.
+    # Holding it there matters when logic other than the scan muxes reads
+    # it: a Trojan that disables its payload in test mode (Trust-Hub
+    # s15850-T100: Trigger_select = Tg2 AND NOT test_se) must not be
+    # testable only through a scan-enable value the tester never applies.
+    scan_enables = sorted({ff.se for ff in circuit.flipflops
+                           if getattr(ff, "is_scan", False) and ff.se in circuit.inputs})
+    consts = _fold_constants(gates, {se: 0 for se in scan_enables})
+
     undriven = []
     outputs = []
+    constant_outputs = []
     for po in sorted(circuit.outputs):
-        if po not in gates and po not in sources:
+        if po in consts:
+            constant_outputs.append(po)
+        elif po not in gates and po not in sources:
             # An output nothing drives (e.g. an unconnected scan_out port)
             # carries no testable logic; Atalanta rejects it as floating.
             undriven.append(po)
@@ -49,7 +61,7 @@ def to_full_scan(circuit: Circuit) -> tuple[Circuit, dict[str, int]]:
     constant_d = 0
     for ff in circuit.flipflops:
         d = ff.d
-        if d in tie_nets:
+        if d in tie_nets or d in consts:
             constant_d += 1
             continue
         if d not in gates:
@@ -77,8 +89,9 @@ def to_full_scan(circuit: Circuit) -> tuple[Circuit, dict[str, int]]:
 
     comb = Circuit()
     comb.name = getattr(circuit, "name", "circuit")
+    comb.logic_clocks = dict(getattr(circuit, "logic_clocks", {}) or {})
     for pi in sorted(circuit.inputs):
-        if pi in live:
+        if pi in live and pi not in consts:
             comb.add_input(pi)
     ppis = []
     for ff in circuit.flipflops:
@@ -98,4 +111,44 @@ def to_full_scan(circuit: Circuit) -> tuple[Circuit, dict[str, int]]:
         "undriven_outputs": undriven,
         "pruned_gates": len(gates) - len(comb.gates),
         "constant_d_flip_flops": constant_d,
+        "scan_enables_held_low": scan_enables,
+        "constant_outputs": constant_outputs,
     }
+
+
+def _fold_constants(gates: dict[str, tuple[str, list[str]]], consts: dict[str, int]) -> dict[str, int]:
+    """Propagate constant nets through ``gates`` in place; return every constant net.
+
+    Gates whose output becomes constant are removed; the rest are simplified
+    (an XNOR left by folding is rebuilt as XOR + NOT for the .bench writer).
+    """
+    if not consts:
+        return {}
+    from pyatpg.core.verilog_parser import _fold
+
+    consts = dict(consts)
+    fanout: dict[str, list[str]] = {}
+    for out, (_, ins) in gates.items():
+        for i in ins:
+            fanout.setdefault(i, []).append(out)
+    work = list(consts)
+    while work:
+        net = work.pop()
+        for out in fanout.get(net, ()):
+            if out not in gates:
+                continue
+            folded = _fold(list(gates[out]), consts)
+            if folded is None:
+                continue
+            if isinstance(folded, int):
+                consts[out] = folded
+                del gates[out]
+                work.append(out)
+            else:
+                gates[out] = (folded[0], list(folded[1]))
+    for out, (gtype, ins) in list(gates.items()):
+        if gtype == "XNOR":
+            x = f"{out}__xor"
+            gates[x] = ("XOR", ins)
+            gates[out] = ("NOT", [x])
+    return consts

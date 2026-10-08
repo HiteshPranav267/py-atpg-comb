@@ -88,25 +88,35 @@ def _vectors_for(runs: list[AtalantaRun], limit: int = 3) -> list[str]:
     return []
 
 
+#: Confidence of a suspect backed only by the XOR-splice shape. Low on
+#: purpose: on Trust-Hub s15850 that shape matches the same 63 benign gates
+#: in the clean and the infected netlist, so on its own it is a lead, not a
+#: finding.
+_SHAPE_ONLY_CONFIDENCE = 0.35
+#: A verdict of "trojan_suspected" needs a suspect at least this confident.
+_SUSPECTED_THRESHOLD = 0.7
+
+
 def build_verdict(
     structural_suspects: list[str],
     suspect_reasons: list[str],
     runs: list[AtalantaRun],
     targeted_gates: list[str] | None = None,
+    trigger_evidence: Any = None,
 ) -> TrojanVerdict:
-    """Combine structural evidence with what ATPG measured.
+    """Combine trigger evidence, structural shape and what ATPG measured.
 
     Args:
-        structural_suspects: gates the deterministic shape detector flagged.
+        structural_suspects: gates the XOR-splice shape detector flagged
+            (pyatpg.atpg.suspects) -- weak evidence on its own.
         suspect_reasons: parallel human-readable reasons, "gate: why".
         runs: every Atalanta run performed for this circuit.
-        targeted_gates: gates the Phase-3 prioritizer selected, used as
-            weaker corroborating evidence only.
-
-    Returns:
-        A verdict that can actually be reached: structural evidence is the
-        trigger, and ATPG's confirmation that the logic is testable raises
-        confidence rather than being required to lower it.
+        targeted_gates: gates the targeted selection chose, used as weak
+            corroborating evidence only.
+        trigger_evidence: a :class:`pyatpg.atpg.trigger_detector.TriggerEvidence`
+            (never-toggling clusters, logic-clocked registers, rare nets the
+            complete run never activated). Only this evidence can make the
+            verdict "trojan_suspected".
     """
     verdict = TrojanVerdict()
     reason_map: dict[str, list[str]] = {}
@@ -117,76 +127,91 @@ def build_verdict(
     statuses = _fault_index(runs)
     vectors = _vectors_for(runs)
     targeted = set(targeted_gates or [])
+    trigger_by_gate = getattr(trigger_evidence, "by_gate", {}) or {}
+    shape = set(structural_suspects)
 
-    for gate in structural_suspects:
+    for gate in sorted(shape | set(trigger_by_gate)):
         gate_statuses = statuses.get(gate, set())
         blocked = bool(gate_statuses & _NO_PATTERN)
+        status = ", ".join(sorted(gate_statuses)) if blocked else "detected"
+        kinds = [k for k, _ in trigger_by_gate.get(gate, [])]
+        reasons = [r for _, r in trigger_by_gate.get(gate, [])] + reason_map.get(gate, [])
 
-        if blocked:
-            # Suspicious in a different way: the logic exists but ATPG could
-            # not produce a pattern for it. Genuinely unusual, and worth
-            # surfacing -- but it is weaker evidence of a *working* trojan
-            # than logic we can demonstrably activate.
-            confidence = 0.6
-            status = ", ".join(sorted(gate_statuses))
-            statement = (
-                f"Gate {gate} matches a trojan-like structural pattern, and ATPG "
-                f"reported its fault(s) as {status} -- no activating pattern was "
-                f"produced. Either genuinely redundant logic or a trigger condition "
-                f"the backtrack limit could not reach."
-            )
+        if kinds:
+            confidence = trigger_evidence.strength(gate)
+            if gate in shape:
+                confidence = min(0.97, confidence + 0.05)
+            evidence = "+".join(kinds + (["shape"] if gate in shape else []))
+            if blocked:
+                statement = (
+                    f"Gate {gate} is part of a trigger-like structure ({', '.join(kinds)}), "
+                    f"and ATPG proved/left its fault(s) {status}: the condition it computes "
+                    "is never produced by any pattern ATPG found -- hidden or unreachable logic."
+                )
+            else:
+                statement = (
+                    f"Gate {gate} is part of a trigger-like structure ({', '.join(kinds)}); "
+                    "ATPG reaches it, so the patterns below exercise it."
+                )
         else:
-            confidence = 0.85
-            status = "detected"
+            confidence = _SHAPE_ONLY_CONFIDENCE
+            evidence = "shape"
             statement = (
-                f"Gate {gate} matches a trojan-like structural pattern, and ATPG "
-                f"generated a detecting pattern for its fault(s) -- the logic is "
-                f"real, reachable and can be exercised on silicon."
+                f"Gate {gate} matches the rare-conjunction-into-XOR splice shape. This shape "
+                "also occurs in benign logic, so it is a lead to inspect, not a finding."
             )
-
         if gate in targeted:
-            confidence = min(0.95, confidence + 0.05)
+            confidence = min(0.97, confidence + 0.03)
+            evidence += "+targeted"
 
         verdict.suspects.append(
             SuspectGate(
                 gate=gate,
                 confidence=round(confidence, 2),
-                evidence="structural+atpg" if gate in targeted else "structural",
-                reasons=reason_map.get(gate, []),
+                evidence=evidence,
+                reasons=reasons,
                 atpg_status=status,
                 activating_vectors=vectors if not blocked else [],
                 statement=statement,
             )
         )
 
-    verdict.suspects.sort(key=lambda s: -s.confidence)
+    verdict.suspects.sort(key=lambda s: (-s.confidence, s.gate))
+    strong = [s for s in verdict.suspects if s.confidence >= _SUSPECTED_THRESHOLD]
 
-    if verdict.suspects:
+    if strong:
         verdict.verdict = "trojan_suspected"
+        verdict.confidence = strong[0].confidence
+        verdict.summary = (
+            f"{len(strong)} gate(s) form trigger-like logic: connected groups of nets that "
+            "almost never change value, logic driving a register's clock, or rare conditions "
+            "a complete ATPG run never produced. Weaker leads are listed after them."
+        )
+    elif verdict.suspects:
+        verdict.verdict = "inconclusive"
         verdict.confidence = verdict.suspects[0].confidence
         verdict.summary = (
-            f"{len(verdict.suspects)} gate(s) carry the structural signature of an "
-            f"inserted trojan: a rarely-satisfied conjunction feeding a payload "
-            f"spliced into an existing signal path. This is a structural finding "
-            f"about the netlist's shape, corroborated by what ATPG could generate."
+            f"{len(verdict.suspects)} gate(s) match the XOR-splice shape, but nothing "
+            "trigger-like was found around them. The shape also appears in clean designs, so "
+            "this is not evidence of a Trojan on its own."
         )
     else:
         verdict.verdict = "no_trojan_indicated"
         verdict.confidence = 0.0
         verdict.summary = (
-            "No gate in this netlist matches the structural signature of an "
-            "inserted combinational trojan. This is not proof the circuit is "
-            "clean -- only that nothing matched the shapes this detector encodes."
+            "No trigger-like structure was found: no connected group of never-toggling "
+            "gates, no logic-clocked register, no hidden rare condition. This is not proof "
+            "the circuit is clean -- only that nothing matched what the detectors look for."
         )
 
     verdict.caveats = [
-        "The detector encodes specific structural shapes (rare conjunction driving "
-        "a spliced XOR/XNOR payload). A trojan built differently will not match it, "
-        "so a clean verdict is an absence of evidence, not evidence of absence.",
-        "Detection is based on netlist topology, never on signal names, so the "
+        "Only trigger evidence (never-toggling gate groups, logic-clocked registers, "
+        "rare conditions a complete ATPG run never produced) can make the verdict "
+        "'Trojan suspected'; the XOR-splice shape alone gives 'inconclusive'.",
+        "A Trojan whose trigger is a common condition, or which has no trigger, will "
+        "not match; a clean verdict is an absence of evidence, not evidence of absence.",
+        "Detection uses netlist structure and simulation, never signal names, so the "
         "result is unchanged by renaming every wire in the design.",
-        "ATPG confirms a suspect's logic is reachable and supplies patterns that "
-        "exercise it; it does not itself decide whether that logic is malicious.",
         "Test vectors listed are the run's generated patterns, not patterns proven "
         "to activate one specific gate.",
     ]

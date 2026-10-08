@@ -323,27 +323,30 @@ class TestVerdict:
         assert v.confidence == 0.0
         assert v.caveats
 
-    def test_structural_suspect_produces_a_verdict(self):
-        """The old rule required an undetected fault and so never fired."""
+    def test_shape_alone_is_only_inconclusive(self):
+        """The XOR-splice shape matches 63 benign gates in clean s15850."""
         from pyatpg.atpg.verdict import build_verdict
 
         v = build_verdict(
             ["ht_trig"], ["ht_trig: rarely-satisfied AND feeding an XOR"], []
         )
-        assert v.verdict == "trojan_suspected"
+        assert v.verdict == "inconclusive"
         assert v.suspects[0].gate == "ht_trig"
-        assert v.suspects[0].confidence > 0.5
+        assert v.suspects[0].confidence < 0.5
 
-    def test_detectable_suspect_scores_above_an_undetectable_one(self):
-        from pyatpg.atpg.models import AtalantaRun, FaultEntry
+    def test_trigger_evidence_makes_a_trojan_suspected(self):
+        from pyatpg.atpg.trigger_detector import TriggerEvidence
         from pyatpg.atpg.verdict import build_verdict
 
-        run = AtalantaRun(label="x", targeted=False)
-        run.faults = [FaultEntry("a/0", "blocked", "sa0", "redundant")]
-        v = build_verdict(["reachable", "blocked"], [], [run])
+        ev = TriggerEvidence()
+        ev.add("tg_clk", "logic_clock", "clocks register tg although it is logic")
+        ev.add("ht_trig", "never_toggling_cluster", "one of 6 never-toggling gates")
+        v = build_verdict(["ht_trig", "benign_xor"], [], [], trigger_evidence=ev)
+        assert v.verdict == "trojan_suspected"
         by = {s.gate: s for s in v.suspects}
-        assert by["reachable"].confidence > by["blocked"].confidence
-        assert by["blocked"].atpg_status == "redundant"
+        assert by["tg_clk"].confidence >= 0.9
+        # Shape plus trigger evidence outranks shape alone.
+        assert by["ht_trig"].confidence > by["benign_xor"].confidence
 
 
 class TestGateTypeCoverage:

@@ -51,7 +51,7 @@ _POOL_SHARE_RECONVERGENT = 0.3
 #: each row is bare values.
 COMPACT_COLUMNS = (
     "id", "type", "role", "fan_in", "fan_out", "level", "cc0", "cc1", "co", "toggle_rate",
-    "reconv",
+    "reconv", "mark",
 )
 COMPACT_HEADER = ",".join(COMPACT_COLUMNS)
 
@@ -62,7 +62,11 @@ COMPACT_LEGEND = (
     "(higher = harder). toggle_rate is the fraction of random patterns on "
     "which the net switched (lower = rarer). reconv is how many gates this "
     "net's fanout branches reconverge at (0 = not a reconverging stem); "
-    "reconvergent fanout is where redundant and hard-to-test faults arise."
+    "reconvergent fanout is where redundant and hard-to-test faults arise. "
+    "mark flags what a deterministic analysis of the whole netlist found: "
+    "trig = part of a connected group of 5+ gates that never changed value in "
+    "16384 random patterns; clk = logic that drives a register's clock; pay = "
+    "logic driven by such a logic-clocked register. Blank = nothing found."
 )
 
 
@@ -195,6 +199,7 @@ def compact_profile_line(gate_id: str, features: dict[str, Any]) -> str:
             str(features.get("co", 0)),
             f"{float(features.get('toggle_rate', 0.0)):.4f}",
             str(features.get("reconvergence", 0)),
+            str(features.get("mark", "")),
         )
     )
 

@@ -14,6 +14,7 @@ from pyatpg.core.progress import report
 from .circuit_analyst import CircuitAnalysis, CircuitAnalyst
 from .correlation import CorrelationReport, correlate
 from .faultsim import simulate_pattern_coverage
+from .trigger_detector import activation_evidence, mark_profiles, static_evidence
 from .trojan_metrics import ground_truth_gates, rare_node_activation, score_selection
 from .verdict import TrojanVerdict, build_verdict
 from .models import AnalysisMode, AtalantaRun, RunComparison, SequentialSummary, build_comparison
@@ -363,6 +364,13 @@ class AtpgAnalysisService:
                 f"{counts['pseudo_outputs']} pseudo-outputs from flip-flop inputs); "
                 "each pattern is scanned in, clocked once and scanned out."
             )
+            if counts.get("scan_enables_held_low"):
+                parsed.parse_notes.append(
+                    "Scan enable held at 0 (its value in the capture cycle a full-scan "
+                    "pattern tests): " + ", ".join(counts["scan_enables_held_low"])
+                    + ". Logic that reads it, such as a payload that disables itself in "
+                    "test mode, is modelled as in functional operation."
+                )
             if counts.get("constant_d_flip_flops"):
                 parsed.parse_notes.append(
                     f"{counts['constant_d_flip_flops']} flip-flop(s) with a constant D input "
@@ -447,6 +455,17 @@ class AtpgAnalysisService:
         except Exception:  # noqa: BLE001 - detector failure must not fail the run
             structural_suspects, suspect_reasons = [], []
 
+        # Trigger evidence from the netlist alone: flagged in the LLM's gate
+        # table and force-included in the targeted fault list.
+        report("Looking for trigger-like logic")
+        try:
+            trigger_ev = static_evidence(parsed.circuit, getattr(parsed.circuit, "logic_clocks", {}))
+        except Exception:  # noqa: BLE001 - detector failure must not fail the run
+            from .trigger_detector import TriggerEvidence
+
+            trigger_ev = TriggerEvidence()
+        mark_profiles(profile.gate_profiles, trigger_ev)
+
         # One tracker across both model stages, so the response can say
         # exactly what the whole request cost.
         tracker = TokenTracker()
@@ -462,6 +481,7 @@ class AtpgAnalysisService:
                 summary="",
                 graph=profile.graph,
                 source_text=parsed.source_text,
+                extra_suspects=[(g, e[0][1]) for g, e in trigger_ev.by_gate.items()],
             )
             analysis.targeting = {
                 "strategy": selection.strategy,
@@ -548,11 +568,21 @@ class AtpgAnalysisService:
         analysis.correlation = correlate(
             analysis.circuit_analysis, list(analysis.runs.values())
         )
+        # Rare conditions the complete (non-targeted) run never produced.
+        complete = analysis.runs.get(self.NON_TARGETED_KEY)
+        if complete is not None:
+            try:
+                trigger_ev = trigger_ev.merge(
+                    activation_evidence(parsed.circuit, complete.test_vectors)
+                )
+            except Exception:  # noqa: BLE001 - detector failure must not fail the run
+                pass
         analysis.verdict = build_verdict(
             structural_suspects,
             suspect_reasons,
             list(analysis.runs.values()),
             targeted_gates=(selection.gates if selection else []),
+            trigger_evidence=trigger_ev,
         )
         analysis.trojan_ground_truth = _ground_truth_report(
             truth,
@@ -561,6 +591,7 @@ class AtpgAnalysisService:
             structural=structural_suspects,
             verdict=analysis.verdict,
             runs=analysis.runs,
+            trigger=trigger_ev.gates(),
         )
 
         if use_llm and not mode.runs_targeted:
@@ -793,9 +824,19 @@ class AtpgAnalysisService:
         # Same structural detector and verdict as the combinational path; no
         # Atalanta runs exist to corroborate it, so the verdict rests on
         # structure alone.
-        analysis.verdict = build_verdict(suspects, reasons, [])
+        # Same trigger detector, on the full-scan view of the circuit (every
+        # register output free), which is where "never toggles" is meaningful.
+        try:
+            from pyatpg.core.scan import to_full_scan
+
+            scan_view, _ = to_full_scan(parsed.circuit)
+            trigger_ev = static_evidence(scan_view, getattr(parsed.circuit, "logic_clocks", {}))
+        except Exception:  # noqa: BLE001 - detector failure must not fail the run
+            trigger_ev = None
+        analysis.verdict = build_verdict(suspects, reasons, [], trigger_evidence=trigger_ev)
         analysis.trojan_ground_truth = _ground_truth_report(
-            ground_truth_gates(parsed.circuit), structural=suspects, verdict=analysis.verdict
+            ground_truth_gates(parsed.circuit), structural=suspects, verdict=analysis.verdict,
+            trigger=trigger_ev.gates() if trigger_ev is not None else None,
         )
         analysis.cpu_time = {
             "extraction_s": extraction_s,
@@ -885,7 +926,7 @@ def _write_sequential_artifacts(workspace: "JobWorkspace", name: str, runs: dict
 
 
 def _ground_truth_report(truth, *, selected=None, llm_selected=None, structural=None,
-                         verdict=None, runs=None) -> dict[str, Any] | None:
+                         verdict=None, runs=None, trigger=None) -> dict[str, Any] | None:
     """Score each gate list against the Trojan gates found by name, if any."""
     if not truth:
         return None
@@ -897,6 +938,8 @@ def _ground_truth_report(truth, *, selected=None, llm_selected=None, structural=
         report_["targeted_selection"] = score_selection(selected, truth)
     if structural:
         report_["structural_suspects"] = score_selection(structural, truth)
+    if trigger is not None:
+        report_["trigger_detector"] = score_selection(trigger, truth)
     if verdict is not None and getattr(verdict, "suspects", None):
         report_["verdict_suspects"] = score_selection([s.gate for s in verdict.suspects], truth)
     # Faults on the Trojan's own logic that Atalanta proved untestable. A

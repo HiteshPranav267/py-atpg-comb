@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, replace
@@ -84,6 +85,30 @@ _NO_KEY_MARKERS = (
 #: batch runner (``pyatpg.automation.retry``) reports them as a distinct
 #: "credentials" category rather than a transient blip.
 ACCOUNT_ERROR_MARKERS = _QUOTA_MARKERS + _AUTH_MARKERS + _NO_KEY_MARKERS
+
+
+#: A rate-limit error that says how long to wait ("Please try again in
+#: 12.855s" -- Groq, OpenAI). A per-minute token window never needs longer
+#: than this to reopen.
+_RETRY_AFTER = re.compile(r"try again in\s+(?:(\d+)m)?\s*([\d.]+)\s*(ms|s)\b", re.IGNORECASE)
+_MAX_RETRY_WAIT_S = 65.0
+
+
+def _retry_delay(error_text: str, attempt: int) -> float:
+    """Seconds to wait before retrying: the provider's own hint, else 1s/2s/4s.
+
+    Groq's free tier allows 8000 tokens per minute; two stages of one run
+    can exceed that, and its 429 says exactly when the window reopens
+    (often 10-15 s) -- longer than the fixed back-off, so every retry used
+    to fail the same way.
+    """
+    m = _RETRY_AFTER.search(error_text or "")
+    if m:
+        minutes = int(m.group(1) or 0)
+        value = float(m.group(2))
+        seconds = minutes * 60 + (value / 1000 if m.group(3).lower() == "ms" else value)
+        return min(_MAX_RETRY_WAIT_S, seconds + 1.0)
+    return float(2 ** attempt)
 
 
 class LLMUnavailableError(RuntimeError):
@@ -658,7 +683,7 @@ class LLMProvider(ABC):
                 retryable = not account_problem and any(m in text for m in _RETRYABLE_MARKERS)
                 if not retryable or attempt == max_retries - 1:
                     raise LLMUnavailableError(self.label, text) from e
-                time.sleep(2 ** attempt)  # 1s, 2s, 4s
+                time.sleep(_retry_delay(text, attempt))
         raise LLMUnavailableError(self.label, str(last_error)) from last_error
 
 

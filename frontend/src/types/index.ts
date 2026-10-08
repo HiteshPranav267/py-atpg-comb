@@ -283,6 +283,7 @@ export interface TrojanGroundTruth {
   source: string;
   targeted_selection?: SelectionScore;
   structural_suspects?: SelectionScore;
+  trigger_detector?: SelectionScore;
   verdict_suspects?: SelectionScore;
   redundant_trojan_faults?: Record<
     string,

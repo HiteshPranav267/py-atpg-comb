@@ -41,6 +41,9 @@ class Circuit:
         self.gates = {}       # output -> Gate
         self.flipflops = []
         self.dffs = self.flipflops  # alias
+        #: Q net -> clock net, for registers clocked by logic rather than the
+        #: clock input (see VerilogParser._model_logic_clocks).
+        self.logic_clocks = {}
 
         self.scan_inputs = set()
         self.scan_outputs = set()
