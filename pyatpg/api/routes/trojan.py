@@ -4,6 +4,7 @@ import zipfile
 
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException
 
+from pyatpg.api.concurrency import run_heavy
 from pyatpg.core.rtl import decode_upload
 from fastapi.responses import StreamingResponse
 
@@ -58,7 +59,8 @@ async def generate_dataset(
         # sources arrives here as one bundle named "<archive>.v".
         text, filename = decode_upload(file.filename or "circuit.v", content)
         name = filename.rsplit('.', 1)[0]
-        result = TrojanService.generate_dataset(
+        result = await run_heavy(
+            TrojanService.generate_dataset,
             text, name, variants, strategy,
             filename=filename, seed=seed, verify_activation=verify_activation,
             num_trigger_inputs=num_trigger_inputs,

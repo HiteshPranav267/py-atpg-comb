@@ -1,5 +1,6 @@
 from fastapi import APIRouter, UploadFile, File, HTTPException
 
+from pyatpg.api.concurrency import run_heavy
 from pyatpg.core.rtl import decode_upload
 from typing import Optional
 
@@ -16,7 +17,7 @@ async def extract_features(file: UploadFile = File(...)):
         content = await file.read()
         text, name = decode_upload(file.filename or "unknown.v", content)
 
-        fs = FeatureService.extract_features(text, name)
+        fs = await run_heavy(FeatureService.extract_features, text, name)
         return FeatureSetSchema(
             circuit_name=fs.circuit_name,
             gate_features=[gf.to_dict() for gf in fs.gate_features],

@@ -546,6 +546,15 @@ export interface SystemInfo {
   python_version: string;
 }
 
+/** Live state of an in-flight ATPG run (GET /api/atpg/progress/{id}). */
+export interface AtpgProgress {
+  stage: string;
+  elapsed_s: number;
+  stage_elapsed_s: number;
+  done: boolean;
+  history: { stage: string; at_s: number }[];
+}
+
 export interface AtpgReport {
   job_id: string;
   mode: AnalysisMode;

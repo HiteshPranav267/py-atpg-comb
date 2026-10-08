@@ -2,6 +2,8 @@ from typing import Any, Dict
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 
+from pyatpg.api.concurrency import run_heavy
+from pyatpg.core import progress
 from pyatpg.core.rtl import decode_upload
 from fastapi.responses import FileResponse
 
@@ -59,6 +61,15 @@ def list_modes() -> list[Dict[str, str]]:
     ]
 
 
+@router.get("/progress/{progress_id}")
+async def atpg_progress(progress_id: str) -> Dict[str, Any]:
+    """What a running analysis (started with this ``progress_id``) is doing now."""
+    snap = progress.snapshot(progress_id)
+    if snap is None:
+        raise HTTPException(status_code=404, detail="Unknown progress id.")
+    return snap
+
+
 @router.post("/run")
 async def run_atpg(
     file: UploadFile = File(...),
@@ -72,6 +83,7 @@ async def run_atpg(
     llm_base_url: str = Form(""),
     full_scan: bool = Form(False),
     llm_fallbacks: str = Form(""),
+    progress_id: str = Form(""),
 ) -> Dict[str, Any]:
     """Run an ATPG analysis over an uploaded circuit.
 
@@ -126,20 +138,22 @@ async def run_atpg(
         raise HTTPException(status_code=400, detail=str(exc))
 
     try:
-        analysis = _service.run(
-            source_text=source_text,
-            filename=filename,
-            mode=selected_mode,
-            toggle_patterns=patterns,
-            use_llm=use_llm,
-            api_key=api_key or None,
-            backtrack_limit=backtrack_limit,
-            llm_provider=llm_provider or None,
-            llm_model=llm_model or None,
-            llm_base_url=llm_base_url or None,
-            full_scan=full_scan,
-            llm_fallbacks=fallbacks,
-        )
+        with progress.track(progress_id):
+            analysis = await run_heavy(
+                _service.run,
+                source_text=source_text,
+                filename=filename,
+                mode=selected_mode,
+                toggle_patterns=patterns,
+                use_llm=use_llm,
+                api_key=api_key or None,
+                backtrack_limit=backtrack_limit,
+                llm_provider=llm_provider or None,
+                llm_model=llm_model or None,
+                llm_base_url=llm_base_url or None,
+                full_scan=full_scan,
+                llm_fallbacks=fallbacks,
+            )
     except (ValueError, NoTargetableGates) as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     except AtalantaNotAvailable as exc:

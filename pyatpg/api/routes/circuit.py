@@ -1,5 +1,6 @@
 from fastapi import APIRouter, UploadFile, File, HTTPException
 
+from pyatpg.api.concurrency import run_heavy
 from pyatpg.core.rtl import decode_upload
 from typing import Dict, Any
 
@@ -15,7 +16,7 @@ async def parse_circuit(file: UploadFile = File(...)) -> Dict[str, Any]:
     try:
         content = await file.read()
         text, name = decode_upload(file.filename or "unknown.v", content)
-        result = CircuitService.parse_verilog(text, name)
+        result = await run_heavy(CircuitService.parse_verilog, text, name)
         get_analytics_store().record(
             "circuit_parsed",
             circuit_name=name,

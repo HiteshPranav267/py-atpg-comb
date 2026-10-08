@@ -48,19 +48,37 @@ export default function ATPG() {
     placeholderData: FALLBACK_MODES,
   });
 
+  const [progressId, setProgressId] = useState<string | null>(null);
+
   const runMutation = useMutation({
     mutationFn: api.runAtpg,
     onSuccess: (data) => setActiveAtpgReport(data),
   });
 
+  // Follow the run while it is in flight, so a long analysis shows what it
+  // is doing instead of a spinner that looks hung.
+  const { data: progress } = useQuery({
+    queryKey: ['atpg-progress', progressId],
+    queryFn: () => api.getAtpgProgress(progressId as string),
+    enabled: runMutation.isPending && !!progressId,
+    refetchInterval: 1500,
+    retry: false,
+  });
+
   const handleRun = () => {
     if (activeCircuitFile) {
+      const id =
+        typeof crypto !== 'undefined' && 'randomUUID' in crypto
+          ? crypto.randomUUID()
+          : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      setProgressId(id);
       runMutation.mutate({
         file: activeCircuitFile,
         mode,
         patterns,
         use_llm: true,
         full_scan: fullScan,
+        progress_id: id,
       });
     }
   };
@@ -179,6 +197,19 @@ export default function ATPG() {
           {runMutation.isPending ? 'Running ATPG...' : 'Run analysis'}
         </button>
 
+        {runMutation.isPending && progress && !progress.done && (
+          <div className="text-sm text-muted-foreground flex items-center gap-2" aria-live="polite">
+            <Activity className="w-3.5 h-3.5 animate-spin shrink-0" />
+            <span>
+              {progress.stage}
+              <span className="font-mono text-xs ml-2">
+                {formatSeconds(progress.stage_elapsed_s)} in this step ·{' '}
+                {formatSeconds(progress.elapsed_s)} total
+              </span>
+            </span>
+          </div>
+        )}
+
         {errorMsg && (
           <div className="p-4 rounded-md border border-red-500/50 bg-red-500/10 text-red-400 text-sm font-mono flex items-start gap-2">
             <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
@@ -190,6 +221,11 @@ export default function ATPG() {
       {report && <ReportView report={report} />}
     </div>
   );
+}
+
+function formatSeconds(s: number): string {
+  if (s < 60) return `${Math.round(s)}s`;
+  return `${Math.floor(s / 60)}m ${String(Math.round(s % 60)).padStart(2, '0')}s`;
 }
 
 function ReportView({ report }: { report: AtpgReport }) {

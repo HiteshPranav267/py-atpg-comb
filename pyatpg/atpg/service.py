@@ -9,6 +9,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from pyatpg.core.progress import report
+
 from .circuit_analyst import CircuitAnalysis, CircuitAnalyst
 from .correlation import CorrelationReport, correlate
 from .faultsim import simulate_pattern_coverage
@@ -339,11 +341,13 @@ class AtpgAnalysisService:
         """
         prune_old_jobs()
 
+        report("Parsing the circuit (synthesizing RTL first, if needed)")
         parsed = parse_circuit(source_text, filename)
 
         if parsed.circuit.flipflops and full_scan:
             from pyatpg.core.scan import to_full_scan
 
+            report("Building the full-scan model")
             comb, counts = to_full_scan(parsed.circuit)
             parsed.circuit = comb
             parsed.derived = True
@@ -370,6 +374,7 @@ class AtpgAnalysisService:
                 toggle_patterns=toggle_patterns,
             )
 
+        report("Profiling the circuit (SCOAP, toggle rates)")
         profile = profile_circuit(parsed, toggle_patterns=toggle_patterns)
         if not profile.statistics.get("is_dag", True):
             raise ValueError(
@@ -439,6 +444,7 @@ class AtpgAnalysisService:
             from .targeting import FaultTargetSelector
 
             selector = FaultTargetSelector(provider=provider, tracker=tracker)
+            report("Selecting target gates" + (" with the LLM" if provider is not None else ""))
             selection = selector.select(
                 profile.gate_profiles,
                 summary="",
@@ -476,6 +482,7 @@ class AtpgAnalysisService:
                 )
 
         if mode.runs_non_targeted:
+            report("Running Atalanta on the full fault list")
             analysis.runs[self.NON_TARGETED_KEY] = self.runner.run(
                 workspace,
                 bench_text,
@@ -484,6 +491,7 @@ class AtpgAnalysisService:
             )
 
         if selection is not None:
+            report("Running Atalanta on the targeted faults")
             analysis.runs[self.TARGETED_KEY] = self._run_targeted(
                 workspace, bench_text, selection.gates, backtrack_limit, analysis.notes
             )
@@ -493,6 +501,7 @@ class AtpgAnalysisService:
         # circuit and not only against the handful of faults they were
         # written for.
         for run in analysis.runs.values():
+            report("Fault-simulating the generated patterns")
             run.pattern_coverage = self._score_patterns(parsed, run)
 
         if self.TARGETED_KEY in analysis.runs and self.NON_TARGETED_KEY in analysis.runs:
@@ -510,6 +519,7 @@ class AtpgAnalysisService:
                 _targeted_scope_note(analysis.runs[self.TARGETED_KEY], selection.gates)
             )
 
+        report("Writing the circuit analysis" + (" with the LLM" if provider is not None else ""))
         analyst = CircuitAnalyst(provider=provider, tracker=tracker)
         analysis.circuit_analysis = analyst.analyze(
             circuit_source=parsed.source_text,

@@ -41,13 +41,11 @@ class BenchmarkService:
             await asyncio.sleep(0.5) 
             
             runner = BenchmarkRunner(dataset_dir=dataset_dir, ranker=ranker, k=k)
-            # This is a blocking call. In a prod server we'd use run_in_executor,
-            # but for a local desktop app this is fine inside create_task for now.
-            # Real progress reporting would require injecting a callback into BenchmarkRunner.
-            # For now, we jump from 0 -> 100 on completion.
+            # Off the event loop, so the server keeps answering (status polls,
+            # /health) while the benchmark runs. Progress still jumps 0 -> 100.
             
             job.message = "Running evaluations across dataset..."
-            results = runner.run()
+            results = await asyncio.to_thread(runner.run)
             
             job.results = results
             job.progress = 100.0

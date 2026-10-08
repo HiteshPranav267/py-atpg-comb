@@ -479,6 +479,9 @@ def synthesize(text: str, filename: str = "design.v", top: str | None = None) ->
         )
         with open(os.path.join(work, "synth.ys"), "w", encoding="utf-8") as h:
             h.write(script)
+        from pyatpg.core.progress import report
+
+        report(f"Synthesizing RTL with Yosys ({len(sources)} file(s)) -- large designs take minutes")
         log = _run_yosys(work)
         netlist_path = os.path.join(work, "netlist.v")
         if not os.path.exists(netlist_path):

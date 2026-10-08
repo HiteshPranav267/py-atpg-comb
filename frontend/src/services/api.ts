@@ -8,6 +8,7 @@ import type {
   BenchmarkStatusResponse,
   BenchmarkResultResponse,
   AtpgReport,
+  AtpgProgress,
   AnalysisMode,
   AnalysisModeOption,
   TrojanGenerateResult,
@@ -208,6 +209,14 @@ export const api = {
   },
 
   // ATPG
+  /** What a run started with this progress id is doing right now. */
+  getAtpgProgress: async (progressId: string): Promise<AtpgProgress> => {
+    const res = await apiClient.get(`/atpg/progress/${encodeURIComponent(progressId)}`, {
+      timeout: 10000,
+    });
+    return res.data;
+  },
+
   getAnalysisModes: async (): Promise<AnalysisModeOption[]> => {
     const res = await apiClient.get('/atpg/modes');
     return res.data;
@@ -219,9 +228,12 @@ export const api = {
     patterns?: number;
     use_llm?: boolean;
     full_scan?: boolean;
+    /** Lets getAtpgProgress follow this run while it is in flight. */
+    progress_id?: string;
   }): Promise<AtpgReport> => {
     const formData = new FormData();
     formData.append('file', params.file);
+    if (params.progress_id) formData.append('progress_id', params.progress_id);
     formData.append('mode', params.mode ?? 'compare');
     formData.append('patterns', String(params.patterns ?? 3000));
     formData.append('use_llm', String(params.use_llm ?? true));
