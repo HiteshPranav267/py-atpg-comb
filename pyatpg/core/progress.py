@@ -133,6 +133,7 @@ def report(stage: str) -> None:
             return
         entry["stage"] = stage
         entry["stage_started"] = now
+        entry["thought"] = None  # a new step starts with no model reasoning shown
         entry["history"].append({"stage": stage, "at_s": round(now - entry["started"], 1)})
         del entry["history"][:-20]
 
@@ -174,7 +175,34 @@ def snapshot(progress_id: str) -> dict[str, Any] | None:
             "stage_elapsed_s": round(end - entry["stage_started"], 1),
             "done": entry["done"],
             "history": list(entry["history"]),
+            "thought": entry.get("thought"),
         }
+
+
+#: How much of the model's reasoning the UI is given: about two lines.
+_THOUGHT_CHARS = 220
+
+
+def think(reasoning: str) -> None:
+    """Show the tail of what the model is reasoning about right now.
+
+    Called repeatedly while a reasoning model streams its answer; only the
+    last ~two lines are kept, starting at a word boundary, so the UI shows
+    what it is thinking now rather than the whole trace. Cleared by the
+    next :func:`report`. A no-op outside a tracked request.
+    """
+    pid = _current.get()
+    if pid is None:
+        return
+    text = " ".join((reasoning or "").split())
+    if len(text) > _THOUGHT_CHARS:
+        text = text[-_THOUGHT_CHARS:]
+        cut = text.find(" ")
+        text = "…" + (text[cut + 1:] if 0 <= cut < 40 else text)
+    with _lock:
+        entry = _entries.get(pid)
+        if entry is not None:
+            entry["thought"] = text or None
 
 
 def _prune(now: float) -> None:

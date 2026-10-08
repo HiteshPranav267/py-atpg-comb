@@ -76,3 +76,13 @@
     @apply bg-background text-foreground font-sans;
   }
 }
+
+/* Live LLM reasoning under the ATPG progress line: each new thought fades in. */
+@keyframes llm-thought-in {
+  from { opacity: 0; transform: translateY(2px); }
+  to { opacity: 1; transform: none; }
+}
+.llm-thought { animation: llm-thought-in 0.5s ease-out; }
+@media (prefers-reduced-motion: reduce) {
+  .llm-thought { animation: none; }
+}

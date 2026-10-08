@@ -655,6 +655,9 @@ export interface AtpgProgress {
   stage_elapsed_s: number;
   done: boolean;
   history: { stage: string; at_s: number }[];
+  // The tail (~2 lines) of what the LLM is reasoning about in this step,
+  // for reasoning models that stream it; null otherwise.
+  thought?: string | null;
 }
 
 export interface AtpgReport {

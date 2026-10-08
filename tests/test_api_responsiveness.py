@@ -75,3 +75,25 @@ def test_cancelled_run_stops_at_its_next_checkpoint():
         with pytest.raises(progress.RunCancelled):
             progress.report("next stage")
     assert not progress.is_cancelled()  # outside the run, nothing is cancelled
+
+
+def test_llm_thought_is_shown_trimmed_and_cleared_on_the_next_step():
+    from pyatpg.core import progress
+
+    with progress.track("thought-test"):
+        progress.report("Selecting target gates with the LLM")
+        progress.think("word " * 200 + "the final thought")
+        shown = progress.snapshot("thought-test")["thought"]
+        assert shown.endswith("the final thought") and len(shown) <= 222
+        progress.report("Running Atalanta")
+        assert progress.snapshot("thought-test")["thought"] is None
+
+
+def test_reasoning_is_read_from_either_server_field():
+    from types import SimpleNamespace
+
+    from pyatpg.ranking.providers import _reasoning_piece
+
+    assert _reasoning_piece(SimpleNamespace(model_extra={"reasoning": "Need list"})) == "Need list"
+    assert _reasoning_piece(SimpleNamespace(reasoning_content="step 1", model_extra={})) == "step 1"
+    assert _reasoning_piece(SimpleNamespace(content="g1,0.9", model_extra={})) == ""

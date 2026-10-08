@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Activity, AlertTriangle, Cpu, Play, Zap } from 'lucide-react';
+import { Activity, AlertTriangle, Brain, Cpu, Play, Zap } from 'lucide-react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { api } from '@/services/api';
 import { useAppStore } from '@/store';
@@ -199,15 +199,30 @@ export default function ATPG() {
         </button>
 
         {runMutation.isPending && progress && !progress.done && (
-          <div className="text-sm text-muted-foreground flex items-center gap-2" aria-live="polite">
-            <Activity className="w-3.5 h-3.5 animate-spin shrink-0" />
-            <span>
-              {progress.stage}
-              <span className="font-mono text-xs ml-2">
-                {formatSeconds(progress.stage_elapsed_s)} in this step ·{' '}
-                {formatSeconds(progress.elapsed_s)} total
+          <div className="flex flex-col gap-1.5">
+            <div className="text-sm text-muted-foreground flex items-center gap-2" aria-live="polite">
+              <Activity className="w-3.5 h-3.5 animate-spin shrink-0" />
+              <span>
+                {progress.stage}
+                <span className="font-mono text-xs ml-2">
+                  {formatSeconds(progress.stage_elapsed_s)} in this step ·{' '}
+                  {formatSeconds(progress.elapsed_s)} total
+                </span>
               </span>
-            </span>
+            </div>
+            {progress.thought && (
+              <div className="ml-5 pl-3 border-l-2 border-primary/40 flex gap-2 items-start">
+                <Brain className="w-3.5 h-3.5 text-primary/70 shrink-0 mt-0.5" />
+                <p
+                  key={progress.thought}
+                  className="llm-thought text-xs italic text-muted-foreground leading-relaxed"
+                  style={{ display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}
+                  title="What the model is reasoning about right now"
+                >
+                  {progress.thought}
+                </p>
+              </div>
+            )}
           </div>
         )}
 

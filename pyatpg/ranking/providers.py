@@ -677,6 +677,8 @@ class LLMProvider(ABC):
             try:
                 return call()
             except Exception as e:  # noqa: BLE001 - classified below
+                if type(e).__name__ == "RunCancelled":
+                    raise  # the user left: stop, do not report an LLM failure
                 last_error = e
                 text = str(e)
                 account_problem = any(m in text.lower() for m in ACCOUNT_ERROR_MARKERS)
@@ -883,6 +885,13 @@ class OpenAIProvider(LLMProvider):
                 # (Ollama included) 400 on it for non-reasoning models.
                 kwargs["reasoning_effort"] = "low"
 
+        from pyatpg.core import progress
+
+        if progress.current_id() is not None:
+            # A tracked web request: stream, so the model's reasoning can be
+            # shown live (progress.think) and a cancelled run stops at once.
+            return self._with_retry(lambda: self._stream(client, prompt, kwargs), max_retries)
+
         def call() -> str:
             response = client.chat.completions.create(
                 model=self.model_name,
@@ -898,6 +907,93 @@ class OpenAIProvider(LLMProvider):
             return (choice.message.content if choice and choice.message else "") or ""
 
         return self._with_retry(call, max_retries)
+
+
+    #: How often the live reasoning shown in the UI is refreshed.
+    _THINK_EVERY_S = 0.3
+
+    def _stream(self, client, prompt: str, kwargs: dict[str, Any]) -> str:
+        """One streamed completion, publishing the model's reasoning as it arrives.
+
+        Reasoning models served over the OpenAI API send their trace in a
+        delta field beside ``content`` -- ``reasoning`` (Groq's gpt-oss,
+        OpenRouter) or ``reasoning_content`` (DeepSeek, vLLM). The SDK's
+        per-read timeout no longer bounds the whole call once tokens flow,
+        so a total deadline is enforced here as well.
+        """
+        from pyatpg.core import progress
+
+        deadline = time.monotonic() + 3 * request_timeout_s()
+        stream = client.chat.completions.create(
+            model=self.model_name,
+            messages=[{"role": "user", "content": prompt}],
+            stream=True,
+            **kwargs,
+        )
+        content: list[str] = []
+        reasoning: list[str] = []
+        usage = None
+        last_shown = 0.0
+        seen_chars = 0
+        try:
+            for chunk in stream:
+                if progress.is_cancelled():
+                    progress.check_cancelled()
+                if time.monotonic() > deadline:
+                    raise TimeoutError(f"{self.label} request timed out while streaming")
+                usage = getattr(chunk, "usage", None) or _groq_usage(chunk) or usage
+                if not chunk.choices:
+                    continue
+                delta = chunk.choices[0].delta
+                if delta is None:
+                    continue
+                if delta.content:
+                    content.append(delta.content)
+                piece = _reasoning_piece(delta)
+                if piece:
+                    reasoning.append(piece)
+                    seen_chars += len(piece)
+                    now = time.monotonic()
+                    # Wait for about half a line, so a step never shows a
+                    # lone first word ("Need", "We").
+                    if seen_chars >= 40 and now - last_shown >= self._THINK_EVERY_S:
+                        progress.think("".join(reasoning[-60:]))
+                        last_shown = now
+        finally:
+            close = getattr(stream, "close", None)
+            if close:
+                close()
+        if reasoning:
+            # Fast servers finish inside one refresh interval; leave the last
+            # of the reasoning showing until the next step replaces it.
+            progress.think("".join(reasoning[-60:]))
+        self._note_usage(
+            getattr(usage, "prompt_tokens", None) if usage else None,
+            getattr(usage, "completion_tokens", None) if usage else None,
+        )
+        return "".join(content)
+
+
+def _reasoning_piece(delta: Any) -> str:
+    """The reasoning text in one streamed delta, whichever field the server uses."""
+    for name in ("reasoning", "reasoning_content"):
+        value = getattr(delta, name, None)
+        if value is None:
+            value = (getattr(delta, "model_extra", None) or {}).get(name)
+        if isinstance(value, str) and value:
+            return value
+    return ""
+
+
+def _groq_usage(chunk: Any) -> Any:
+    """Groq reports a stream's token usage under ``x_groq.usage`` on the last chunk."""
+    extra = (getattr(chunk, "model_extra", None) or {}).get("x_groq") or {}
+    usage = extra.get("usage") if isinstance(extra, dict) else None
+    if isinstance(usage, dict):
+        from types import SimpleNamespace
+
+        return SimpleNamespace(**usage)
+    return None
 
 
 class AnthropicProvider(LLMProvider):
