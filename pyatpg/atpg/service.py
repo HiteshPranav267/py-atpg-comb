@@ -609,7 +609,17 @@ class AtpgAnalysisService:
             trigger=trigger_ev.gates(),
             baseline=baseline_gates if mode.runs_targeted and selection else None,
             strong=[s.gate for s in analysis.verdict.suspects if s.confidence >= 0.7],
+            clock_nets=set((getattr(parsed.circuit, "logic_clocks", {}) or {}).values()),
         )
+        dead = _dead_logic_clocks(analysis.runs, getattr(parsed.circuit, "logic_clocks", {}))
+        if dead:
+            analysis.notes.append(
+                f"{len(dead)} logic net(s) clocking a register can never be 1: ATPG proved "
+                "a stuck-at-0 on them redundant, and under full scan every register state "
+                "and input is allowed, so no reachable state fires them -- "
+                + ", ".join(sorted(dead)[:8]) + ". A trigger built on them cannot activate "
+                "in this model; the registers they clock never load."
+            )
 
         if use_llm and not mode.runs_targeted:
             analysis.notes.append(
@@ -944,7 +954,7 @@ def _write_sequential_artifacts(workspace: "JobWorkspace", name: str, runs: dict
 
 def _ground_truth_report(truth, *, selected=None, llm_selected=None, structural=None,
                          verdict=None, runs=None, trigger=None, baseline=None,
-                         strong=None) -> dict[str, Any] | None:
+                         strong=None, clock_nets=None) -> dict[str, Any] | None:
     """Score each gate list against the Trojan gates found by name, if any."""
     if not truth:
         return None
@@ -980,7 +990,7 @@ def _ground_truth_report(truth, *, selected=None, llm_selected=None, structural=
                             if f.status == "redundant" and _fault_gate(f.gate) in truth_set})
         if not redundant:
             continue
-        triggers = [r for r in redundant if _is_trigger_output_fault(r)]
+        triggers = [r for r in redundant if _is_trigger_output_fault(r, clock_nets)]
         report_.setdefault("redundant_trojan_faults", {})[key] = {
             "count": len(redundant),
             "faults": redundant[:60],
@@ -990,19 +1000,40 @@ def _ground_truth_report(truth, *, selected=None, llm_selected=None, structural=
     return report_
 
 
-def _is_trigger_output_fault(fault: str) -> bool:
+def _is_trigger_output_fault(fault: str, clock_nets: set[str] | None = None) -> bool:
     """A stuck-at-0 on a trigger net itself (a stem, not a branch into a gate).
 
-    Only that fault being untestable proves the trigger can never be 1. The
-    name test looks at the net's own name, not its module path: every gate
-    of s38584-T300 sits in a module called ``TrojanTrigger``, and a redundant
-    branch inside its counter was misread as an unreachable trigger.
+    Only that fault being untestable proves the trigger can never be 1. A
+    net clocking a logic-clocked register is a trigger whatever it is called
+    (s38584-T200's is ``TrojanTrigger__n59``); otherwise the name test looks
+    at the net's own name, not its module path: every gate of s38584-T300
+    sits in a module called ``TrojanTrigger``, and a redundant branch inside
+    its counter was misread as an unreachable trigger.
     """
     net, _, value = fault.rpartition(" /")
     if value.strip() != "0" or "->" in net:
         return False
+    if clock_nets and net in clock_nets:
+        return True
     leaf = net.rsplit("__", 1)[-1].lower()
     return "trig" in leaf
+
+
+def _dead_logic_clocks(runs: dict[str, Any] | None, logic_clocks: dict[str, str] | None) -> list[str]:
+    """Clock nets of logic-clocked registers whose stuck-at-0 ATPG proved redundant.
+
+    The parser models such a register as Q' = clk ? D : Q, so clk = 1 is
+    observable at the register whenever D can differ from Q; a redundant
+    stuck-at-0 on clk therefore means clk can never be 1. Uses no names.
+    """
+    clocks = set((logic_clocks or {}).values())
+    dead = set()
+    for run in (runs or {}).values():
+        for f in run.faults:
+            net, _, value = f.fault_name.rpartition(" /")
+            if f.status == "redundant" and value.strip() == "0" and net in clocks:
+                dead.add(net)
+    return sorted(dead)
 
 
 def _fault_gate(gate: str) -> str:
