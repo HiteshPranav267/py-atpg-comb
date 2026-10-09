@@ -980,7 +980,7 @@ def _ground_truth_report(truth, *, selected=None, llm_selected=None, structural=
                             if f.status == "redundant" and _fault_gate(f.gate) in truth_set})
         if not redundant:
             continue
-        triggers = [r for r in redundant if r.endswith("/0") and "trigger" in r.lower()]
+        triggers = [r for r in redundant if _is_trigger_output_fault(r)]
         report_.setdefault("redundant_trojan_faults", {})[key] = {
             "count": len(redundant),
             "faults": redundant[:60],
@@ -988,6 +988,21 @@ def _ground_truth_report(truth, *, selected=None, llm_selected=None, structural=
             "trigger_faults": triggers,
         }
     return report_
+
+
+def _is_trigger_output_fault(fault: str) -> bool:
+    """A stuck-at-0 on a trigger net itself (a stem, not a branch into a gate).
+
+    Only that fault being untestable proves the trigger can never be 1. The
+    name test looks at the net's own name, not its module path: every gate
+    of s38584-T300 sits in a module called ``TrojanTrigger``, and a redundant
+    branch inside its counter was misread as an unreachable trigger.
+    """
+    net, _, value = fault.rpartition(" /")
+    if value.strip() != "0" or "->" in net:
+        return False
+    leaf = net.rsplit("__", 1)[-1].lower()
+    return "trig" in leaf
 
 
 def _fault_gate(gate: str) -> str:

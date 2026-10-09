@@ -202,3 +202,13 @@ def test_correlated_evidence_does_not_add_up():
     assert ev.strength("g") < 0.7
     ev.add("g", "duplicate_input", "z")  # an independent mechanism does add
     assert ev.strength("g") >= 0.7
+
+
+def test_never_fires_needs_the_trigger_net_itself():
+    """s38584-T300: a redundant branch inside module TrojanTrigger is not the trigger."""
+    from pyatpg.atpg.service import _is_trigger_output_fault
+
+    assert _is_trigger_output_fault("Tg1_Trigger1 /0")
+    assert not _is_trigger_output_fault("Tg1_Trigger1 /1")
+    assert not _is_trigger_output_fault("TrojanTrigger__Clock_counter[31]->TrojanTrigger__N319 /0")
+    assert not _is_trigger_output_fault("TrojanTrigger__N319 /0")
