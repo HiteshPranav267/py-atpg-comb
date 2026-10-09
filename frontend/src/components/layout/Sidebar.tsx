@@ -6,7 +6,6 @@ import {
   BarChart2, 
   Zap, 
   ListOrdered, 
-  Rocket, 
   BarChart, 
   FileText,
   ShieldAlert
@@ -20,7 +19,6 @@ const navItems = [
   { icon: BarChart2, label: 'Feature Analysis', path: '/features' },
   { icon: Zap, label: 'ATPG', path: '/atpg' },
   { icon: ListOrdered, label: 'Ranking', path: '/ranking' },
-  { icon: Rocket, label: 'Benchmark', path: '/benchmark' },
   { icon: BarChart, label: 'Results', path: '/results' },
   { icon: FileText, label: 'Reports', path: '/reports' },
   { icon: ShieldAlert, label: 'Admin', path: '/admin' },

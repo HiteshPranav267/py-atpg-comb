@@ -12,7 +12,6 @@ const NAV_SECTIONS = [
   { id: 'workflow', label: 'Workflow' },
   { id: 'concepts', label: 'Concepts' },
   { id: 'results', label: 'Understanding Results' },
-  { id: 'benchmark-explained', label: 'The Benchmark Page' },
   { id: 'math', label: 'Mathematical Foundations' },
   { id: 'faq', label: 'FAQ' },
   { id: 'technical', label: 'Technical Details' },
@@ -209,12 +208,11 @@ export default function Help() {
                 <Wrench className="w-4 h-4 text-primary" /> A separate path: testing the ranker itself
               </div>
               <p className="text-sm text-muted-foreground leading-relaxed">
-                <Link to="/trojan" className="text-primary hover:underline font-medium">Trojan Dataset</Link> and{' '}
-                <Link to="/benchmark" className="text-primary hover:underline font-medium">Benchmark Suite</Link> aren't
-                part of analyzing your circuit — they answer a different question: "how accurate is this ranking
-                model in general?" Trojan Dataset creates synthetic infected circuits with a known answer key, and
-                Benchmark Suite scores a ranker against that answer key. Use this if you want to evaluate or compare
-                rankers, not when you're investigating a specific circuit.
+                <Link to="/trojan" className="text-primary hover:underline font-medium">Trojan Dataset</Link> isn't
+                part of analyzing your circuit — it answers a different question: "how accurate is this ranking
+                model in general?" It creates synthetic infected circuits with a known answer key, so a ranker can
+                be scored against it. Use it to evaluate or compare rankers, not when you're investigating a
+                specific circuit.
               </p>
             </div>
           </section>
@@ -292,79 +290,6 @@ export default function Help() {
               <MetricRow name="CC0 / CC1" meaning="How hard it is to force this gate to 0 or to 1." direction="Higher = harder to control" why="A gate that's hard to control is hard to test — and hard to trigger by accident." />
               <MetricRow name="CO" meaning="How hard it is to see this gate's effect at an output." direction="Higher = harder to observe" why="Payload gates are specifically built to be hard to observe." />
               <MetricRow name="Fault coverage" meaning="The percentage of test targets the generated patterns successfully checked." direction="Lower on a targeted run = more concerning" why="A gate that resists a targeted test is exactly what 'Trojan Candidate' means." />
-            </div>
-          </section>
-
-          {/* ---------------------------------------------- Benchmark page */}
-          <section id="benchmark-explained" className="scroll-mt-6 flex flex-col gap-4">
-            <SectionHeading
-              title="Understanding the Benchmark Page"
-              subtitle="It answers a different question than every other page in the app — this explains what, and why it's here at all."
-            />
-
-            <div className="border border-border bg-secondary/20 rounded-lg p-5 flex flex-col gap-3">
-              <p className="text-sm text-muted-foreground leading-relaxed">
-                Every other page answers <em className="text-foreground">"is this specific circuit I loaded suspicious?"</em>{' '}
-                The <Link to="/benchmark" className="text-primary hover:underline font-medium">Benchmark</Link> page
-                answers a completely different question: <em className="text-foreground">"if I hand a gate ranker a pile
-                of circuits where I already know exactly where the Trojans are, how often does it actually find them?"</em>{' '}
-                It exists because a ranker's suspicion scores are only useful if they're calibrated against ground
-                truth — otherwise "flagged as suspicious" is just an opinion. This is also literally the evaluation
-                methodology the accompanying research paper uses to report accuracy numbers for each ranker.
-              </p>
-            </div>
-
-            <div className="flex flex-col gap-3">
-              <h3 className="font-semibold text-sm">Step by step</h3>
-              <ol className="flex flex-col gap-3">
-                <li className="flex gap-3 text-sm">
-                  <span className="w-6 h-6 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-xs font-bold shrink-0">1</span>
-                  <span className="text-muted-foreground">
-                    <strong className="text-foreground">Build an answer key first, on the{' '}
-                    <Link to="/trojan" className="text-primary hover:underline">Trojan Dataset</Link> page.</strong>{' '}
-                    Upload a clean circuit and generate, say, 20 variants. Each variant is that circuit with one
-                    synthetic Trojan inserted, plus a <code className="font-mono text-xs bg-secondary px-1 rounded">metadata.json</code>{' '}
-                    recording <em>exactly</em> which gates are the trigger and payload — the ground truth. This is
-                    saved on the server under <code className="font-mono text-xs bg-secondary px-1 rounded">datasets/&lt;circuit&gt;/</code>.
-                  </span>
-                </li>
-                <li className="flex gap-3 text-sm">
-                  <span className="w-6 h-6 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-xs font-bold shrink-0">2</span>
-                  <span className="text-muted-foreground">
-                    <strong className="text-foreground">Point Benchmark at that directory.</strong> The "Dataset
-                    Directory" field is a server-side path — <code className="font-mono text-xs bg-secondary px-1 rounded">datasets</code>{' '}
-                    to sweep everything you've generated, or a narrower path for one circuit's variants only.
-                  </span>
-                </li>
-                <li className="flex gap-3 text-sm">
-                  <span className="w-6 h-6 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-xs font-bold shrink-0">3</span>
-                  <span className="text-muted-foreground">
-                    <strong className="text-foreground">Pick a ranker and a Top-K</strong>, then start. The
-                    ranker (RandomRanker as a floor baseline, ScoapRanker, RareNodeRanker, or the LLM ranker) is run
-                    against <em>every</em> variant in the directory, blind — it never sees the metadata, only the
-                    infected netlist. Top-K is how far down the ranked list counts as "found" (K=10 means: did the
-                    real trigger/payload gate land somewhere in the ranker's top 10 most-suspicious guesses?).
-                  </span>
-                </li>
-                <li className="flex gap-3 text-sm">
-                  <span className="w-6 h-6 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-xs font-bold shrink-0">4</span>
-                  <span className="text-muted-foreground">
-                    <strong className="text-foreground">Read the results table.</strong> One row per circuit, columns
-                    Top-1/5/10 accuracy, Recall@K, Precision@K, MRR, and SSR — each is defined exactly in{' '}
-                    <a href="#math" className="text-primary hover:underline">Mathematical Foundations</a> below.
-                  </span>
-                </li>
-              </ol>
-            </div>
-
-            <div className="border border-dashed border-border rounded-lg p-4 bg-secondary/10">
-              <p className="text-xs text-muted-foreground leading-relaxed">
-                <strong className="text-foreground">Worked example:</strong> you generate 20 low-SCOAP-strategy
-                variants of c880, run ScoapRanker at K=10 against them, and the table shows Top-10 accuracy = 0.85.
-                That means in 17 of the 20 infected circuits, the real Trojan gate was somewhere in ScoapRanker's 10
-                most-suspicious picks — a concrete, checkable number, not a guess about whether the ranker "seems
-                good."
-              </p>
             </div>
           </section>
 
@@ -632,12 +557,8 @@ g ∉ F  ∧  g ∉ U   →  (not reported — nothing suspicious, nothing undet
                     Inserts a configurable trigger gate (default AND) and payload gate (default XOR) into a cloned
                     copy of the circuit, targeting nets chosen either randomly or by rare toggle activity. Each
                     variant is exported with a <code className="font-mono text-xs">metadata.json</code> recording
-                    the exact trigger/payload gates — the ground truth Benchmark scores against.
+                    the exact trigger/payload gates — the ground truth a ranker is scored against.
                   </p>
-                </div>
-                <div>
-                  <h4 className="font-semibold text-foreground mb-1">Benchmark metrics</h4>
-                  <p>Top-K accuracy, precision/recall at K, mean reciprocal rank, and search-space reduction, aggregated across every circuit/variant in a dataset directory for a given ranker.</p>
                 </div>
               </div>
             </details>

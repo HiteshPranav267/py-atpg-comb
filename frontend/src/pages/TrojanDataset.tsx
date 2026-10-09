@@ -203,9 +203,7 @@ export default function TrojanDataset() {
             {' '}The zip also includes a clean (uninfected) copy, each as both Verilog (.v) and .bench, for comparison.
             <br />
             <span className="text-muted-foreground">
-              A copy was also saved on the server under <span className="font-mono">datasets/{result.circuit}</span> — point the{' '}
-              <Link to="/benchmark" className="text-primary hover:underline">Benchmark</Link> tab's Dataset Directory at{' '}
-              <span className="font-mono">datasets</span> to evaluate rankers against it.
+              A copy was also saved on the server under <span className="font-mono">datasets/{result.circuit}</span>.
             </span>
           </div>
         )}
@@ -248,7 +246,7 @@ function InsertionExplainer() {
           </p>
           <p>
             Each generated variant ships with a <span className="font-mono text-xs bg-secondary px-1 rounded">metadata.json</span> recording
-            exactly which gates are the trigger/payload (the ground truth used by the <Link to="/benchmark" className="text-primary hover:underline">Benchmark</Link> tab)
+            exactly which gates are the trigger/payload (the ground truth a ranker is scored against)
             and an <strong className="text-foreground">ICP score</strong> — the percentage of the circuit's inputs
             actually needed to activate it. Higher ICP means a rarer, stealthier trigger condition.
           </p>

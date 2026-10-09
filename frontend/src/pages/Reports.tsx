@@ -85,7 +85,6 @@ export default function Reports() {
                     : `${coverage} %`;
                 })()}
               />
-              <SummaryRow label="Benchmark Runs (session)" value={String(benchmarkHistory.length)} />
               <SummaryRow
                 label="CPU (this run)"
                 value={
