@@ -65,7 +65,9 @@ def _random_probabilities(circuit: Circuit, order: list[str], patterns: int,
                           seed: int) -> dict[str, float]:
     rng = random.Random(seed)
     mask = (1 << patterns) - 1
-    values = {pi: rng.getrandbits(patterns) for pi in circuit.inputs}
+    # Sorted: a set's order changes with the process's hash seed, and the same
+    # seed must give the same patterns (and the same verdict) on every run.
+    values = {pi: rng.getrandbits(patterns) for pi in sorted(circuit.inputs)}
     for out in order:
         gate = circuit.gates[out]
         values[out] = _eval(gate.gtype, [values.get(i, 0) for i in gate.inputs], mask)

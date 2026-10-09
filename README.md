@@ -67,11 +67,13 @@ For every gate: type, fan-in/fan-out, logic level, **SCOAP** CC0/CC1/CO, **toggl
 | --- | --- | --- | --- |
 | `logic_clock` | clock | 0.90 | Logic that drives a register's clock, and the never-toggling tree feeding it (the walk stops at host signals the trigger only taps) |
 | `payload_splice` | payload | 0.85 | A gate in front of an output whose side input comes from a fanout-free tree of ≥ 6 gates that changes the output's probability ≥ 5× (s38584-T100: 0.4% → 10.8%), plus that tree |
+| `trojan_timer` | timer | 0.80 | An `autonomous_timer` (below) whose logic feeds gates already flagged by another mechanism (s38584-T300's 50-cycle window counter feeds its flagged trigger logic) |
 | `logic_clock_payload` | clock | 0.70 | Logic within 3 gates downstream of a logic-clocked register |
 | `trojan_region` | region | 0.70 | Completes a found Trojan: gates whose every consumer is flagged (2 levels back), and logic-clocked registers with their load logic. Never crosses into host nets (tapped signals, a payload's original signal, outputs) |
 | `unactivated_cluster` | rarity | 0.65 (lead) | Connected rare nets that the complete (non-targeted) ATPG run never drove to their rare value |
 | `duplicate_input` | hand edit | 0.65 (lead) | A gate reading the same net twice — synthesis never emits this (s38584-T100's `NOR(Tj_OUT1, Tj_OUT1, …)`) |
 | `never_toggling_cluster` | rarity | 0.60 (lead) | ≥ 5 connected gates that never changed value in 16384 random patterns (also occurs in clean designs, e.g. a 36-gate group in ISCAS s38584) |
+| `autonomous_timer` | timer | 0.60 (lead) | ≥ 4 registers whose next state reads nothing but the group, with the logic computing it: a free-running counter on the ordinary clock, which every other sign misses. Needs the full-scan model. None in the ~50 clean ISCAS'89 netlists in `benchmarks/`; benign designs can still have one, hence a lead |
 
 **XOR-splice detector** (`pyatpg/atpg/suspects.py`). A rare conjunction feeding a 2-input XOR spliced into a path — the shape this tool's own Trojan generator inserts. It matches benign logic in real designs (the same 63 gates in clean and infected s15850), so on its own it is only a weak lead (0.35).
 
@@ -83,6 +85,10 @@ Measured on the circuits used to calibrate it (without the LLM):
 | s15850-T100 | Trojan suspected (0.97) | 36 / 37 | 0.84 |
 | s38584 clean (ISCAS) | Inconclusive | — | — |
 | s38584-T100 | Trojan suspected (0.93) | 15 / 15 | 1.00 |
+| s38584-T300 (TjIn as shipped)\* | Trojan suspected | 1932 / 1937 | 0.97 |
+| s38584-T300 (TjIn_fixed)\* | Trojan suspected | 2166 / 2170 | 0.97 |
+
+\* Trigger detector alone on the full-scan model, before ATPG. Before the timer rule, a full T300 run missed 122 Trojan gates (recall 0.937), almost all of them the 32-bit window counter and its incrementer/compare logic. In the shipped TjIn the trigger output drives nothing (the payload reads an undriven `Trigger_out`), so the timer stays a lead there; in TjIn_fixed it feeds the trigger and is a `trojan_timer`.
 
 ### 5. LLM gate selection (targeted and compare modes; `pyatpg/atpg/targeting.py`, `llm_context.py`)
 

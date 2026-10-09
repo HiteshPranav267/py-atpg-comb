@@ -69,7 +69,8 @@ COMPACT_LEGEND = (
     "a register's clock; pay = payload: logic driven by a logic-clocked register, or "
     "a gate (and the isolated tree feeding it) spliced in front of an output that "
     "it changes sharply; dup = a gate reading the same net twice, which synthesis "
-    "never produces. Blank = nothing found."
+    "never produces; tmr = a free-running timer, registers whose next state "
+    "reads nothing but themselves. Blank = nothing found."
 )
 
 

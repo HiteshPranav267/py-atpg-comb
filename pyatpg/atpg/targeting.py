@@ -717,8 +717,9 @@ headers. Return between {floor} and {max_gates} gates.
             # longer exist is not reused -- they would all be filtered out.
             names="v2",
             # Bumped when the prompt itself changes (v3: trigger marks and
-            # Example D), so an answer to the old prompt is not reused.
-            prompt="v3",
+            # Example D; v4: tmr mark), so an answer to the old prompt is
+            # not reused.
+            prompt="v4",
         )
         cache = self.cache
         if cache is None and source_text is not None and cache_enabled():

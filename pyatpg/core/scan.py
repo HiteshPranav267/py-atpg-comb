@@ -59,6 +59,7 @@ def to_full_scan(circuit: Circuit) -> tuple[Circuit, dict[str, int]]:
     tie_nets = {out for out, (_, ins) in gates.items() if set(ins) == {TIE_SRC, TIE_SRC + "_n"}}
     ppos = []
     constant_d = 0
+    d_net: dict[str, str] = {}
     for ff in circuit.flipflops:
         d = ff.d
         if d in tie_nets or d in consts:
@@ -70,6 +71,7 @@ def to_full_scan(circuit: Circuit) -> tuple[Circuit, dict[str, int]]:
             buf = f"{d}{PPO_SUFFIX}"
             gates.setdefault(buf, ("BUF", [d]))
             d = buf
+        d_net[ff.q] = d
         if d not in outputs:
             outputs.append(d)
             ppos.append(d)
@@ -103,6 +105,10 @@ def to_full_scan(circuit: Circuit) -> tuple[Circuit, dict[str, int]]:
             comb.add_gate(gtype, out, ins)
     for po in outputs:
         comb.add_output(po)
+    #: Scan cell Q (pseudo input) -> the net it captures (pseudo output), so
+    #: analyses can still see which state feeds which (see
+    #: trigger_detector._autonomous_timers).
+    comb.scan_cells = {q: d for q, d in d_net.items() if q in comb.inputs and d in live}
 
     return comb, {
         "flip_flops": len(circuit.flipflops),

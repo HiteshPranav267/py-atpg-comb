@@ -212,3 +212,40 @@ def test_never_fires_needs_the_trigger_net_itself():
     assert not _is_trigger_output_fault("Tg1_Trigger1 /1")
     assert not _is_trigger_output_fault("TrojanTrigger__Clock_counter[31]->TrojanTrigger__N319 /0")
     assert not _is_trigger_output_fault("TrojanTrigger__N319 /0")
+
+
+def _counter(enable: bool) -> str:
+    # A 4-bit ripple incrementer; with ``enable`` it counts only when input en is 1.
+    lines = ["module t (CK, en, a, y);", "  input CK, en, a;", "  output y;"]
+    carry = "en" if enable else None
+    for k in range(4):
+        if carry is None:
+            lines.append(f"  INVX0 s{k} (.IN(c{k}), .QN(d{k}));")
+            carry = f"c{k}"
+        else:
+            lines.append(f"  XOR2X1 s{k} (.IN1(c{k}), .IN2({carry}), .Q(d{k}));")
+            lines.append(f"  AND2X1 k{k} (.IN1(c{k}), .IN2({carry}), .Q(k{k}_o));")
+            carry = f"k{k}_o"
+        lines.append(f"  DFFX1 r{k} (.D(d{k}), .CLK(CK), .Q(c{k}));")
+    lines += ["  AND2X1 g (.IN1(a), .IN2(c3), .Q(y));", "endmodule"]
+    return "\n".join(lines)
+
+
+def test_free_running_timer_is_a_lead():
+    from pyatpg.atpg.trigger_detector import static_evidence
+
+    comb, _ = to_full_scan(_parse(_counter(enable=False))[0])
+    assert set(comb.scan_cells) == {"c0", "c1", "c2", "c3"}
+    ev = static_evidence(comb, comb.logic_clocks)
+    for net in ("c0", "c3", "d0", "d3"):
+        assert [k for k, _ in ev.by_gate[net]] == ["autonomous_timer"]
+    assert ev.strength("c0") < 0.7  # benign designs have counters too
+    assert "y" not in ev.by_gate
+
+
+def test_counter_that_reads_an_input_is_not_a_timer():
+    from pyatpg.atpg.trigger_detector import static_evidence
+
+    comb, _ = to_full_scan(_parse(_counter(enable=True))[0])
+    ev = static_evidence(comb, comb.logic_clocks)
+    assert not any("timer" in k for e in ev.by_gate.values() for k, _ in e)

@@ -30,6 +30,14 @@ trigger itself:
 * **Duplicate gate inputs.** Synthesis never emits a gate reading the same
   net twice; a hand-inserted Trojan can (s38584-T100's NOR(Tj_OUT1,
   Tj_OUT1, ...)). One hit across all four circuits measured, the Trojan's.
+* **Autonomous timers.** s38584-T300 counts activity over a 50-cycle
+  window kept by a 32-bit counter on the ordinary clock: its next state
+  depends only on itself, so it is clocked normally, toggles freely and
+  feeds no output -- every other sign misses it. A group of registers whose
+  next state reads nothing but the group is a free-running timer that takes
+  no input from the design. Across the ~50 clean ISCAS'89 netlists in
+  benchmarks/ (and clean s38584 / s15850) the largest such group is a single
+  register; T300 has exactly its 32-bit window counter.
 
 Calibration on clean ISCAS s38584 (a 36-gate never-toggling group, and
 several 7-gate ones) showed never-toggling groups also occur in benign
@@ -69,6 +77,9 @@ REGION_DEPTH = 2
 MIN_SPLICE_TREE = 6
 #: ... and changes the output's probability by at least this factor.
 MIN_SPLICE_RATIO = 5.0
+#: Registers in a self-contained group before it counts as a timer (a lone
+#: self-looped register is ordinary; clean s38584 has one).
+MIN_TIMER = 4
 
 #: Evidence kinds and how strongly each points at a Trojan on its own. Below
 #: the verdict's 0.7 a kind is a lead: it needs a second kind of evidence on
@@ -76,11 +87,13 @@ MIN_SPLICE_RATIO = 5.0
 STRENGTH = {
     "logic_clock": 0.9,
     "payload_splice": 0.85,
+    "trojan_timer": 0.8,
     "logic_clock_payload": 0.7,
     "trojan_region": 0.7,
     "unactivated_cluster": 0.65,
     "duplicate_input": 0.65,
     "never_toggling_cluster": 0.6,
+    "autonomous_timer": 0.6,
 }
 
 #: Which mechanism each kind of evidence measures; kinds in the same family
@@ -93,6 +106,8 @@ FAMILY = {
     "payload_splice": "payload",
     "duplicate_input": "hand_edit",
     "trojan_region": "region",
+    "autonomous_timer": "timer",
+    "trojan_timer": "timer",
 }
 
 #: Short marks shown to the LLM in the gate table (see llm_context).
@@ -102,6 +117,8 @@ PROMPT_MARK = {
     "logic_clock_payload": "pay",
     "payload_splice": "pay",
     "duplicate_input": "dup",
+    "autonomous_timer": "tmr",
+    "trojan_timer": "tmr",
 }
 
 
@@ -226,7 +243,78 @@ def static_evidence(circuit: Circuit, logic_clocks: dict[str, str] | None = None
                    f"part of the {len(tree)}-gate side tree spliced into output {out}")
 
     _logic_clock_evidence(ev, circuit, logic_clocks, probs, never, fanout)
-    return complete_region(circuit, ev, logic_clocks)
+    ev = complete_region(circuit, ev, logic_clocks)
+    # After the region: a timer counts as a Trojan's when it feeds the
+    # registers' load logic the region adds. Its logic is closed (nothing
+    # outside feeds it), so there is nothing further to grow into.
+    _autonomous_timers(ev, circuit, order, fanout)
+    return ev
+
+
+def _autonomous_timers(ev: TriggerEvidence, circuit: Circuit, order: list[str],
+                       fanout: dict[str, list[str]]) -> None:
+    """Register groups whose next state depends only on the group itself.
+
+    Needs the full-scan model's ``scan_cells`` (Q -> captured D net). A
+    timer alone is a lead -- real designs have benign free-running counters
+    -- and becomes a Trojan timer when its logic feeds gates already flagged
+    by an independent mechanism (T300's window counter feeds its
+    trigger).
+    """
+    cells: dict[str, str] = getattr(circuit, "scan_cells", None) or {}
+    if not cells:
+        return
+    group = set(cells)
+    while True:
+        # Gates computed from the candidate registers alone.
+        pure: set[str] = set()
+        for out in order:
+            ins = circuit.gates[out].inputs
+            if ins and all(i in pure or i in group for i in ins):
+                pure.add(out)
+        keep = {q for q in group if cells[q] in pure}
+        if keep == group:
+            break
+        group = keep
+    if not group:
+        return
+
+    # Split into separate timers: a register joins the registers its D reads.
+    parent = {n: n for n in group | pure}
+
+    def find(n: str) -> str:
+        while parent[n] != n:
+            parent[n] = parent[parent[n]]
+            n = parent[n]
+        return n
+
+    for out in pure:
+        for i in circuit.gates[out].inputs:
+            parent[find(i)] = find(out)
+    for q in group:
+        parent[find(q)] = find(cells[q])
+    members: dict[str, list[str]] = {}
+    for n in group | pure:
+        members.setdefault(find(n), []).append(n)
+
+    strong = {g for g in ev.by_gate if ev.strength(g) >= 0.7}
+    for nets in members.values():
+        regs = [n for n in nets if n in group]
+        if len(regs) < MIN_TIMER:
+            continue
+        logic = [n for n in nets if n in circuit.gates]
+        feeds = sorted({c for n in nets for c in fanout.get(n, ()) if c in strong} - set(nets))
+        if feeds:
+            kind = "trojan_timer"
+            why = (f"part of a {len(regs)}-register free-running timer (its next state reads "
+                   f"nothing but itself) whose logic feeds flagged Trojan logic ({feeds[0]}"
+                   + (" ..." if len(feeds) > 1 else "") + ")")
+        else:
+            kind = "autonomous_timer"
+            why = (f"part of a {len(regs)}-register free-running timer: its next state reads "
+                   "nothing but itself, so it counts time with no input from the design")
+        for n in regs + logic:
+            ev.add(n, kind, why)
 
 
 def _logic_clock_evidence(ev: TriggerEvidence, circuit: Circuit,

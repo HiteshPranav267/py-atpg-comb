@@ -184,9 +184,10 @@ def build_verdict(
         verdict.confidence = strong[0].confidence
         verdict.summary = (
             f"{len(strong)} gate(s) form Trojan-like logic: logic driving a register's clock, "
-            "a payload spliced in front of an output, or several independent weaker signs "
-            "(never-toggling groups, rare conditions a complete ATPG run never produced, "
-            "hand-edited gates). Weaker leads are listed after them."
+            "a payload spliced in front of an output, a free-running timer feeding that "
+            "logic, or several independent weaker signs (never-toggling groups, rare "
+            "conditions a complete ATPG run never produced, hand-edited gates). Weaker leads "
+            "are listed after them."
         )
     elif verdict.suspects:
         verdict.verdict = "inconclusive"
@@ -209,7 +210,8 @@ def build_verdict(
         "'Trojan suspected' needs a logic-clocked register, a payload spliced in front of "
         "an output, or two independent weaker signs on the same gate. Never-toggling "
         "groups and never-activated rare nets also occur in clean designs, so alone they "
-        "are leads; the XOR-splice shape alone gives 'inconclusive'.",
+        "are leads, as is a free-running timer (benign designs have counters too); the "
+        "XOR-splice shape alone gives 'inconclusive'.",
         "A Trojan whose trigger is a common condition, or which has no trigger, will "
         "not match; a clean verdict is an absence of evidence, not evidence of absence.",
         "Detection uses netlist structure and simulation, never signal names, so the "
