@@ -563,7 +563,7 @@ headers. Return between {floor} and {max_gates} gates.
 
         cache_params = dict(
             model=self.provider.model_name, max_gates=max_gates, answer=answer_gates,
-            batch_size=batch_size, batches=len(slices), names="v2", prompt="v3",
+            batch_size=batch_size, batches=len(slices), names="v2", prompt="v4",
         )
         cache = self.cache
         if cache is None and source_text is not None and cache_enabled():
@@ -717,8 +717,8 @@ headers. Return between {floor} and {max_gates} gates.
             # longer exist is not reused -- they would all be filtered out.
             names="v2",
             # Bumped when the prompt itself changes (v3: trigger marks and
-            # Example D; v4: tmr mark), so an answer to the old prompt is
-            # not reused.
+            # Example D; v4: tmr mark, fewer flagged gates in the pool), so
+            # an answer to the old prompt is not reused.
             prompt="v4",
         )
         cache = self.cache

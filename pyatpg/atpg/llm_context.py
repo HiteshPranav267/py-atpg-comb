@@ -46,6 +46,13 @@ _POOL_SHARE_ANOMALOUS = 0.2
 #: ISCAS benchmarks a far better predictor of the faults Atalanta cannot
 #: detect than toggle rate or SCOAP alone.
 _POOL_SHARE_RECONVERGENT = 0.3
+#: Most of the pool that detector-flagged gates may take (never fewer than
+#: _MIN_FORCED). They enter the fault list whether or not the model sees
+#: them, so showing all of them only lets it repeat the detector: on
+#: s38584-T300, ~2000 flagged gates filled all 306 slots, the model saw no
+#: other gate, and recall with and without it was identical.
+_POOL_SHARE_FORCED = 0.25
+_MIN_FORCED = 20
 
 #: Columns of the compact encoding, in order. The header names them once;
 #: each row is bare values.
@@ -289,11 +296,15 @@ def build_candidate_pool(
         ]
 
     by_id = {str(p["gate_id"]): p for p in profiles}
-    # Forced gates come first, strongest first, but never more than the pool
-    # holds: an uncapped list (hundreds of flagged gates on a large design)
-    # kept every pool over the request budget, so the caller's shrink loop
-    # never terminated -- one s38417 run spent an hour rebuilding prompts.
-    forced = list(dict.fromkeys(g for g in (must_include or []) if g in by_id))[:limit]
+    # Forced gates come first, strongest first, but only a share of the pool:
+    # an uncapped list (hundreds of flagged gates on a large design) kept
+    # every pool over the request budget, so the caller's shrink loop never
+    # terminated -- one s38417 run spent an hour rebuilding prompts. The
+    # rest of the pool goes to gates the detector did not flag, the only
+    # ones where the model can add anything.
+    flagged = list(dict.fromkeys(g for g in (must_include or []) if g in by_id))
+    forced = flagged[:max(int(limit * _POOL_SHARE_FORCED), min(limit, _MIN_FORCED))]
+    skip = set(flagged)
 
     rarest = sorted(profiles, key=rarity_key)
     hardest = sorted(
@@ -322,16 +333,19 @@ def build_candidate_pool(
             if taken >= quota:
                 break
             gid = str(p["gate_id"])
-            if gid not in chosen:
+            if gid not in chosen and gid not in skip:
                 chosen[gid] = p
                 taken += 1
         counts.append(taken)
     # Top up from the rarity ranking so the pool is always exactly `limit`
-    # when the circuit allows it.
-    for p in rarest:
-        if len(chosen) >= limit:
-            break
-        chosen.setdefault(str(p["gate_id"]), p)
+    # when the circuit allows it: unflagged gates first, then flagged ones.
+    for pass_skip in (skip, set()):
+        for p in rarest:
+            if len(chosen) >= limit:
+                break
+            gid = str(p["gate_id"])
+            if gid not in pass_skip:
+                chosen.setdefault(gid, p)
 
     pool = sorted(chosen.values(), key=rarity_key)
     share = 100.0 * len(pool) / total if total else 0.0
@@ -340,7 +354,8 @@ def build_candidate_pool(
         f"{counts[0]} rarest-toggling, {counts[1]} hardest-to-observe, "
         f"{counts[2]} anomalous for their neighbourhood, "
         f"{counts[3]} most-reconvergent fanout stems"
-        + (f", plus {len(forced)} flagged by the structural detector" if forced else "")
+        + (f", plus {len(forced)} of the {len(flagged)} gates flagged by the structural "
+           "detector (all of them enter the fault list either way)" if forced else "")
         + f", topped up from the rarity ranking. Set {CONTEXT_GATE_LIMIT_ENV_VAR}=0 "
         "to send every gate."
     ]
