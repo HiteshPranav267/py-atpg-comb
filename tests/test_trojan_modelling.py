@@ -249,3 +249,26 @@ def test_counter_that_reads_an_input_is_not_a_timer():
     comb, _ = to_full_scan(_parse(_counter(enable=True))[0])
     ev = static_evidence(comb, comb.logic_clocks)
     assert not any("timer" in k for e in ev.by_gate.values() for k, _ in e)
+
+
+def test_payload_mux_selected_by_the_trigger_is_flagged_whole():
+    from pyatpg.atpg.trigger_detector import static_evidence
+
+    circuit, _ = _parse("""
+module top (CK, a, b, c, d, e, f, y);
+  input CK, a, b, c, d, e, f;
+  output y;
+  AND4X1 Tg1_Tj_Trigger (.IN1(a), .IN2(b), .IN3(c), .IN4(d), .Q(Tg1_Trigger1));
+  DFFNX2 Tg1_Trigger (.CLK(Tg1_Trigger1), .D(1'b1), .Q(Tg1));
+  NBUFFX2 s1 (.IN(Tg1), .Q(s2));
+  NBUFFX2 s3 (.IN(s2), .Q(s4));
+  NBUFFX2 s5 (.IN(s4), .Q(sel));
+  MUX21X2 Trojan_Payload (.IN1(e), .IN2(f), .S(sel), .Q(y));
+endmodule
+""")
+    comb, _ = to_full_scan(circuit)
+    ev = static_evidence(comb, comb.logic_clocks)
+    mux = {g for g, e in ev.by_gate.items() if any(k == "payload_mux" for k, _ in e)}
+    assert "y" in mux and len(mux) == 4  # NOT(sel), both AND legs, the OR
+    # The register's own load mux (select = its clock) is state, not payload.
+    assert not any(g.startswith("Tg1__") for g in mux)

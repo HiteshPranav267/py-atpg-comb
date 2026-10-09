@@ -178,6 +178,8 @@ class FaultTargetSelector:
         graph: Any = None,
         source_text: str | None = None,
         extra_suspects: list[tuple[str, str]] | None = None,
+        use_detector: bool = True,
+        force_shape: bool = True,
     ) -> TargetSelection:
         """Choose the gates for the targeted fault list.
 
@@ -189,8 +191,19 @@ class FaultTargetSelector:
         ``source_text`` is the netlist the profiles came from; when given,
         the model's answer is cached against it so an identical re-run
         costs no tokens.
+
+        ``use_detector=False`` leaves both detectors out entirely: nothing is
+        forced into the pool or the list, so the selection is the model's (or
+        the heuristic's) alone -- the setting for measuring what the LLM finds
+        by itself.
+
+        ``force_shape=False`` keeps the XOR-shape matches out of the fault
+        list (they are still reported); the service passes it when the
+        trigger detector found something strong.
         """
         max_gates = self._effective_max_gates(profiles)
+        if not use_detector:
+            graph, extra_suspects = None, None
         suspects, reasons = self._find_suspects(profiles, graph)
         # Trigger-detector findings (pyatpg.atpg.trigger_detector), merged the
         # same way: force-sent to the model and force-included in the list.
@@ -204,6 +217,13 @@ class FaultTargetSelector:
             r for r in reasons if r.partition(":")[0].strip() not in set(trigger)
         ]
         suspects = trigger + shape
+        # The XOR-shape matches join the fault list only when asked. Where the
+        # trigger detector finds a real Trojan they are noise: on s38584-T200
+        # 19 of their 134 gates were Trojan gates and on T300 181 of 295, every
+        # one also a trigger-detector finding. On this tool's generated
+        # combinational Trojans (c432..c2670) they are the detector that works
+        # (16 of 18 Trojan gates; the trigger detector finds 1).
+        forced = suspects if force_shape else trigger
 
         if self.provider is not None:
             try:
@@ -239,8 +259,9 @@ class FaultTargetSelector:
                         self._structural_selection(profiles, max_gates, selection.notes),
                         suspects,
                         reasons,
+                        forced,
                     )
-                return self._merge_suspects(selection, suspects, reasons)
+                return self._merge_suspects(selection, suspects, reasons, forced)
             except LLMUnavailableError:
                 # The model could not be consulted at all (no credits, rate
                 # limited, provider 5xx). The user asked for an LLM-assisted
@@ -256,9 +277,10 @@ class FaultTargetSelector:
                     ),
                     suspects,
                     reasons,
+                    forced,
                 )
         return self._merge_suspects(
-            self._structural_selection(profiles, max_gates, []), suspects, reasons
+            self._structural_selection(profiles, max_gates, []), suspects, reasons, forced
         )
 
     @staticmethod
@@ -276,9 +298,10 @@ class FaultTargetSelector:
 
     @staticmethod
     def _merge_suspects(
-        selection: TargetSelection, suspects: list[str], reasons: list[str]
+        selection: TargetSelection, suspects: list[str], reasons: list[str],
+        forced: list[str] | None = None,
     ) -> TargetSelection:
-        """Force structurally-suspicious gates into the selection.
+        """Force the ``forced`` suspects (default: all) into the selection.
 
         Appended rather than inserted, and exempt from ``max_gates``: the cap
         exists to keep the targeted run small relative to a full one, and a
@@ -287,6 +310,8 @@ class FaultTargetSelector:
         """
         selection.structural_suspects = list(suspects)
         selection.suspect_reasons = list(reasons)
+        if forced is not None:
+            suspects = list(forced)
         if not suspects:
             return selection
 
@@ -564,6 +589,7 @@ headers. Return between {floor} and {max_gates} gates.
         cache_params = dict(
             model=self.provider.model_name, max_gates=max_gates, answer=answer_gates,
             batch_size=batch_size, batches=len(slices), names="v2", prompt="v4",
+            forced=len(suspects or []),
         )
         cache = self.cache
         if cache is None and source_text is not None and cache_enabled():
@@ -720,6 +746,9 @@ headers. Return between {floor} and {max_gates} gates.
             # Example D; v4: tmr mark, fewer flagged gates in the pool), so
             # an answer to the old prompt is not reused.
             prompt="v4",
+            # Detector findings shown/forced (0 with detector_in_targeting
+            # off): a different question, so never the same cached answer.
+            forced=len(suspects or []),
         )
         cache = self.cache
         if cache is None and source_text is not None and cache_enabled():

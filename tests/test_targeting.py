@@ -472,3 +472,21 @@ class TestBatchedSelection:
         provider, prompts = self._recording()
         T.FaultTargetSelector(provider=provider).select(TestRequestTokenBudget._big_profiles())
         assert len(prompts) == 1
+
+
+class TestDetectorSwitches:
+    def test_shape_matches_stay_out_of_the_list_when_not_forced(self):
+        p = _profile(TROJAN, toggle_patterns=600)
+        sel = FaultTargetSelector(api_key=None, max_gates=1).select(
+            p.gate_profiles, graph=p.graph, force_shape=False
+        )
+        assert sel.structural_suspects  # still reported
+        assert not set(sel.structural_suspects) <= set(sel.gates)
+
+    def test_detector_off_forces_nothing(self):
+        p = _profile(TROJAN, toggle_patterns=600)
+        sel = FaultTargetSelector(api_key=None, max_gates=1).select(
+            p.gate_profiles, graph=p.graph, use_detector=False,
+            extra_suspects=[(str(p.gate_profiles[0]["gate_id"]), "flagged")],
+        )
+        assert sel.structural_suspects == [] and len(sel.gates) == 1

@@ -67,6 +67,7 @@ For every gate: type, fan-in/fan-out, logic level, **SCOAP** CC0/CC1/CO, **toggl
 | --- | --- | --- | --- |
 | `logic_clock` | clock | 0.90 | Logic that drives a register's clock, and the never-toggling tree feeding it (the walk stops at host signals the trigger only taps) |
 | `payload_splice` | payload | 0.85 | A gate in front of an output whose side input comes from a fanout-free tree of ≥ 6 gates that changes the output's probability ≥ 5× (s38584-T100: 0.4% → 10.8%), plus that tree |
+| `payload_mux` | payload | 0.80 | A 2:1 multiplexer (as the parser builds it: NOT(s), AND(d0, ¬s), AND(d1, s), OR) whose select `s` is already a strong suspect — s38584-T200/T300's payload in front of output `g10122`. A register's own load mux (select = its clock) is excluded |
 | `trojan_timer` | timer | 0.80 | An `autonomous_timer` (below) whose logic feeds gates already flagged by another mechanism (s38584-T300's 50-cycle window counter feeds its flagged trigger logic) |
 | `logic_clock_payload` | clock | 0.70 | Logic within 3 gates downstream of a logic-clocked register |
 | `trojan_region` | region | 0.70 | Completes a found Trojan: gates whose every consumer is flagged (2 levels back), and logic-clocked registers with their load logic. Never crosses into host nets (tapped signals, a payload's original signal, outputs) |
@@ -75,7 +76,7 @@ For every gate: type, fan-in/fan-out, logic level, **SCOAP** CC0/CC1/CO, **toggl
 | `never_toggling_cluster` | rarity | 0.60 (lead) | ≥ 5 connected gates that never changed value in 16384 random patterns (also occurs in clean designs, e.g. a 36-gate group in ISCAS s38584) |
 | `autonomous_timer` | timer | 0.60 (lead) | ≥ 4 registers whose next state reads nothing but the group, with the logic computing it: a free-running counter on the ordinary clock, which every other sign misses. Needs the full-scan model. None in the ~50 clean ISCAS'89 netlists in `benchmarks/`; benign designs can still have one, hence a lead |
 
-**XOR-splice detector** (`pyatpg/atpg/suspects.py`). A rare conjunction feeding a 2-input XOR spliced into a path — the shape this tool's own Trojan generator inserts. It matches benign logic in real designs (the same 63 gates in clean and infected s15850), so on its own it is only a weak lead (0.35).
+**XOR-splice detector** (`pyatpg/atpg/suspects.py`). A rare conjunction feeding a 2-input XOR spliced into a path — the shape this tool's own Trojan generator inserts. It matches benign logic in real designs (the same 63 gates in clean and infected s15850), so on its own it is only a weak lead (0.35). Its matches are forced into the targeted fault list **only when the trigger detector found nothing strong**: on s38584-T200/T300 every Trojan gate it caught (19 of 134, 181 of 295) was also a trigger-detector finding, while on the generated c432–c2670 Trojans it is the detector that works (16 of 18 Trojan gates; the trigger detector finds 1).
 
 Measured on the circuits used to calibrate it (without the LLM):
 
@@ -86,13 +87,13 @@ Measured on the circuits used to calibrate it (without the LLM):
 | s38584 clean (ISCAS) | Inconclusive | — | — |
 | s38584-T100 | Trojan suspected (0.93) | 15 / 15 | 1.00 |
 | s38584-T300 (TjIn as shipped)\* | Trojan suspected | 1932 / 1937 | 0.97 |
-| s38584-T300 (TjIn_fixed)\* | Trojan suspected | 2166 / 2170 | 0.97 |
+| s38584-T300 (TjIn_fixed)\* | Trojan suspected | 2169 / 2170 | 0.97 |
 
 \* Trigger detector alone on the full-scan model, before ATPG. Before the timer rule, a full T300 run missed 122 Trojan gates (recall 0.937), almost all of them the 32-bit window counter and its incrementer/compare logic. In the shipped TjIn the trigger output drives nothing (the payload reads an undriven `Trigger_out`), so the timer stays a lead there; in TjIn_fixed it feeds the trigger and is a `trojan_timer`.
 
 ### 5. LLM gate selection (targeted and compare modes; `pyatpg/atpg/targeting.py`, `llm_context.py`)
 
-1. **Candidate pool.** The model cannot read 10,000 gates, so a pool (default 300, `LLM_CONTEXT_GATES`) is built from several views: the rarest-toggling (35%), hardest-to-observe (15%), most out of place for their neighbourhood (20%) and most reconvergent (30%) gates. Detector findings go in first, strongest first, but take at most 25% of the pool (at least 20 gates); the views skip flagged gates. Every flagged gate enters the fault list anyway, so the model's slots go to gates the detector missed. Previously the flagged gates could fill the whole pool: on s38584-T300 all 306 slots were flagged gates, and recall with and without the LLM was identical.
+1. **Candidate pool.** The model cannot read 10,000 gates, so a pool (default 300, `LLM_CONTEXT_GATES`) is built from several views: the rarest-toggling (35%), hardest-to-observe (15%), most out of place for their neighbourhood (20%) and most reconvergent (30%) gates. Detector findings go in first, strongest first, but take at most 25% of the pool (at least 20 gates); the views skip flagged gates. Every flagged gate enters the fault list anyway, so the model's slots go to gates the detector missed. Previously the flagged gates could fill the whole pool: on s38584-T300 all 306 slots were flagged gates, and recall with and without the LLM was identical. To measure the LLM on its own, turn the live setting `detector_in_targeting` off (`PYATPG_DETECTOR_IN_TARGETING=0`): the fault list is then the model's picks alone, no marks are shown to it, the no-LLM baseline is the plain heuristic, and `llm_only_hits` is what the LLM found that the heuristic did not. The verdict still uses the detector.
 2. **Anonymised gate table.** Gate names are replaced by `g0`, `g1`, … so the model reasons on structure, not names (Trojan gates are often literally named `Trojan_*`). Each gate is one CSV row: `id,type,role,fan_in,fan_out,level,cc0,cc1,co,toggle_rate,reconv,mark`. The `mark` column carries the detector's findings (`trig`, `clk`, `pay`, `dup`).
 3. **Prompt.** Instructions to weigh testability and structural anomaly, four worked examples (a rare-AND trigger, an XOR payload, a benign deep comparator, and a sequential trigger tree driving a register clock), and an output format of one `gate,confidence` line per gate.
 4. **Token budget and batching.** Groq's free tier refuses a request over ~8000 tokens, so each request is kept under `LLM_REQUEST_TOKEN_BUDGET` (default 7000) — about 100 gates. When the pool does not fit, the review is split into up to `llm_batches` requests (default 4): the first batch is the rarest gates, and each later batch carries the shortlist the model kept so far plus the next new candidates. The selection is the final shortlist, then earlier picks. On s38584 this reviews 306 of 11,088 gates in 4 requests.
@@ -248,13 +249,15 @@ python scripts/run_suite.py research --circuits benchmarks/incoming             
 
 See [docs/automation.md](docs/automation.md) and, for collaborators, [docs/friend-quickstart.md](docs/friend-quickstart.md).
 
+What changed and why, with measured effects, is in the development log: [docs/changelog.md](docs/changelog.md) (LaTeX: `docs/changelog.tex`, regenerated with `python docs/changelog_to_tex.py`).
+
 ---
 
 ## Running it hosted
 
 - **One analysis at a time.** Analyses run on worker threads behind a slot pool (`max_concurrent_runs`, default 1); extra requests wait and the page says what they are waiting for. A run whose browser disconnects is cancelled at its next checkpoint (including mid-LLM-request), so it frees the slot.
 - **Progress.** The page polls `/api/atpg/progress/{id}` every 1.5 s for the current stage, its elapsed time and the LLM's current reasoning line.
-- **Live settings** (Admin page, or environment): `maintenance`, `max_concurrent_runs`, `max_gates`, `yosys_max_mb`, `atalanta_timeout_s`, `atalanta_seed`, `llm_batches`, `llm_timeout_s`, `seq_time_budget_s`, `yosys_timeout_s`. Admin changes last until the server restarts.
+- **Live settings** (Admin page, or environment): `maintenance`, `max_concurrent_runs`, `max_gates`, `yosys_max_mb`, `atalanta_timeout_s`, `atalanta_seed`, `llm_batches`, `detector_in_targeting`, `llm_timeout_s`, `seq_time_budget_s`, `yosys_timeout_s`. Admin changes last until the server restarts.
 - **Admin page** (needs `PYATPG_ADMIN_TOKEN` on the server): server status, queue (cancel one or all runs), live settings, recent runs, storage cleanup, restart, and the run database.
 - **Run database:** set `DATABASE_URL` (PostgreSQL, e.g. Neon) and every run is recorded — circuit classification, parameters, LLM, outcome, timings and per-engine results ([docs/run-database.md](docs/run-database.md)). `PYATPG_RECORD_RUNS=0` turns it off.
 

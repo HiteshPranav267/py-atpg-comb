@@ -39,7 +39,7 @@ PyATPG finds hardware Trojans in gate-level and RTL designs. It parses (or synth
 * **`atpg/` — combinational and full-scan analysis**
   * `service.py`: the single entry point (`AtpgAnalysisService.run`): parse → full scan or sequential routing → profile → detectors → gate selection → ATALANTA runs → pattern simulation → rare-net activation → verdict → ground truth → circuit analysis.
   * `structural.py`: parsing wrapper and gate profiles.
-  * `trigger_detector.py`: trigger/payload evidence (logic clocks, payload splices, duplicate inputs, free-running timers, never-toggling groups, never-activated rare nets), evidence families, region completion.
+  * `trigger_detector.py`: trigger/payload evidence (logic clocks, payload splices, duplicate inputs, free-running timers, payload multiplexers, never-toggling groups, never-activated rare nets), evidence families, region completion.
   * `suspects.py`: XOR-splice shape detector (weak lead).
   * `targeting.py` + `llm_context.py`: candidate pool, anonymised compact gate table with detector marks, prompt, token budget, batched review carrying a shortlist, answer parsing, answer cache.
   * `runner.py` / `parsing.py`: ATALANTA execution (fixed seed, timeout, cancellable) and output parsing.

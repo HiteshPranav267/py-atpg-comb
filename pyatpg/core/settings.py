@@ -46,6 +46,12 @@ SETTINGS: dict[str, Setting] = {s.key: s for s in [
             "requests, each carrying the previous shortlist forward (1 = one trimmed "
             "request). More batches see more gates but take longer on a rate-limited key.",
             minimum=1),
+    Setting("detector_in_targeting", "PYATPG_DETECTOR_IN_TARGETING", bool, True,
+            "Detector feeds the targeted list",
+            "Off = the targeted fault list is the LLM's picks alone (no detector gates "
+            "forced in, no marks shown to it), and the 'without LLM' baseline is the plain "
+            "heuristic -- for measuring what the LLM finds by itself. The verdict still "
+            "uses the detector."),
     Setting("llm_timeout_s", "PYATPG_LLM_TIMEOUT", float, 90.0, "LLM request timeout (s)",
             "Per LLM request (retries and backup keys come on top).", minimum=1),
     Setting("seq_time_budget_s", "PYATPG_SEQ_TIME_BUDGET", float, 40.0,

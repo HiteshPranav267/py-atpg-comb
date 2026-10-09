@@ -1,0 +1,111 @@
+% Generated from changelog.md by changelog_to_tex.py -- do not edit by hand.
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage{parskip}
+\usepackage{enumitem}
+\usepackage[hidelinks]{hyperref}
+\setlist{nosep,leftmargin=1.4em}
+\begin{document}
+\title{PyATPG development log}
+\author{}
+\date{}
+\maketitle
+What changed, why, and what it measurably did. Newest first. The LaTeX version (\texttt{docs/changelog.tex}) is generated from this file by \texttt{python docs/changelog\_to\_tex.py}; edit this file, not the \texttt{.tex}.
+
+Numbers marked \emph{detector only} come from running the trigger detector on the full-scan model with no ATPG and no LLM (a few seconds per circuit). Numbers from full runs say so.
+
+\section*{2026-10-09: payload muxes, measuring the LLM alone, fewer junk targets}
+Prompted by the s38584-T200 report (compare mode, full scan, LLM on): recall 258/260, verdict \emph{Trojan suspected} (0.97), no LLM-only hits, targeted precision 0.48, and 347 of the 419 redundant faults inside the Trojan.
+
+\subsection*{Payload multiplexer rule (\texttt{trigger\_detector.py})}
+\begin{itemize}
+  \item \textbf{Problem.} T200 and T300 both replace output \texttt{g10122} with a 2:1 mux whose select is the trigger. The parser expands a mux to NOT(s), AND(d0, NOT s), AND(d1, s), OR. The 3-gate payload walk from the trigger registers reached only part of it, so 2 (T200) to 3 (T300 fixed) mux gates were always missed.
+  \item \textbf{Change.} New evidence \texttt{payload\_mux} (0.80, payload family): a mux of that shape whose select is already a strong suspect is flagged whole. A register's own load mux (select = its clock net) is excluded; without that exclusion the rule matched 1024 load-mux gates on T300.
+  \item \textbf{Effect (detector only).} T300 TjIn\_fixed 2166 $\rightarrow$ 2169 of 2170 (the last miss is \texttt{g10122\_Tj\_\_ppo}, the host's original output signal). s15850-T100 precision 0.78 $\rightarrow$ 0.80. Shipped T300 TjIn unchanged: its select is the undriven \texttt{Trigger\_out}, a free input, so nothing upstream is flagged.
+\end{itemize}
+
+\subsection*{\texttt{detector\_in\_targeting} setting: measure the LLM on its own}
+\begin{itemize}
+  \item \textbf{Problem.} With the detector forcing \textasciitilde{}260 (T200) to \textasciitilde{}2000 (T300) gates into the fault list, the LLM could add at most the 2 to 5 gates left over. \texttt{llm\_only\_hits} was always empty and said nothing about the LLM.
+  \item \textbf{Change.} Live setting \texttt{detector\_in\_targeting} (env \texttt{PYATPG\_DETECTOR\_IN\_TARGETING}, default on). Off: no detector gate is forced into the pool or the list, no marks appear in the LLM's table, the no-LLM baseline is the plain heuristic, and the run notes say so. The verdict still uses the detector. The LLM cache key includes the number of forced gates, so an off run never reuses an on run's answer.
+\end{itemize}
+
+\subsection*{XOR-shape matches forced in only when nothing strong was found}
+\begin{itemize}
+  \item \textbf{Problem.} The older XOR-splice detector forced its matches into every targeted list. On T200 19 of its 134 gates were Trojan gates; on T300 181 of 295. Every one of those was also a trigger-detector finding.
+  \item \textbf{Check before changing it.} On the tool's own generated Trojans (c432, c1355, c2670, 18 circuits) the XOR shape finds 16 of 18 Trojan gates and the trigger detector finds 1. Dropping it everywhere would have wrecked those benchmarks.
+  \item \textbf{Change.} Its matches are still reported and still verdict leads, but join the fault list only when the trigger detector has no finding of strength 0.7 or more. Expected effect on T200: the targeted list loses \textasciitilde{}115 non-Trojan gates and no Trojan gates (not yet confirmed by a full run).
+\end{itemize}
+
+\subsection*{T200: why its trigger can never fire}
+\begin{itemize}
+  \item ATPG proved \texttt{TrojanTrigger\_\_n37 /0} redundant in both runs: the net clocking the Trojan counter can never be 1, so the counter never loads.
+  \item It is \textbf{not} the scan enable held at 0: none of the trigger's input nets (\texttt{n2601}, \texttt{n5111}, \texttt{n1422}, \texttt{n3279}, \texttt{n3121}, \texttt{n3180}) read \texttt{test\_se} (checked on the shared s38584 host netlist).
+  \item Likely cause: \texttt{n3121} and \texttt{n3180}, two NANDs sharing input \texttt{n1288}, were never 0 together in 65,536 random full-scan patterns, while every other combination appeared. Not proven exhaustively (35-input cone); Atalanta's redundancy result is the proof that the clock is unreachable.
+\end{itemize}
+
+\section*{2026-10-09: dead triggers found structurally (\texttt{9ff5dc4})}
+\begin{itemize}
+  \item The "trigger never fires" flag matched net names containing "trig", so T200's clock net \texttt{TrojanTrigger\_\_n37} was missed and the report said \texttt{trigger\_never\_fires: false}.
+  \item Now any stem stuck-at-0 on a net that clocks a logic-clocked register counts (the parser models it as Q' = clk ? D : Q, so clk = 1 is observable). The run notes report it with or without ground truth. Replayed on the T200 report: \texttt{true} for both runs.
+\end{itemize}
+
+\section*{2026-10-09: circuit-analysis prompt anonymised (\texttt{23f4f81})}
+\begin{itemize}
+  \item The circuit-analysis LLM stage sent real gate ids, the file name and 3000 characters of Verilog. Trust-Hub names its Trojan logic; on T300 the model reported a "Trojan payload carry chain".
+  \item It now gets \texttt{g0..gN} aliases and statistics only; aliases in its answer are mapped back to real ids. On the next T200 run the model's own wording contained no Trojan, counter or module names.
+\end{itemize}
+
+\section*{2026-10-09: LLM shown gates the detector missed (\texttt{cdc0acd})}
+\begin{itemize}
+  \item Flagged gates could fill the whole LLM pool: on T300 all 306 slots were flagged gates, so the LLM only re-confirmed the detector.
+  \item Flagged gates now take at most 25\% of the pool (minimum 20); the other views skip flagged gates. On T300 the model sees 230 unflagged gates, including one payload gate the detector missed.
+\end{itemize}
+
+\section*{2026-10-09: free-running timers; reproducible simulation (\texttt{8ce6325})}
+\begin{itemize}
+  \item T300's 50-cycle window counter (32 registers on the ordinary clock, next state depends only on itself) matched no rule: 122 Trojan gates missed, recall 0.937.
+  \item New evidence \texttt{autonomous\_timer} (lead, 0.60) / \texttt{trojan\_timer} (0.80 when it feeds other flagged logic). Zero matches on \textasciitilde{}50 clean ISCAS'89 netlists. Full T300 run afterwards: recall 0.937 $\rightarrow$ 0.9974.
+  \item Random simulation iterated a set of inputs, so never-toggling counts changed between identical runs. Inputs are now sorted.
+\end{itemize}
+
+\section*{Earlier history (2026-07-24 to 2026-10-09, 128 commits)}
+Summarised by phase from the commit history.
+
+\subsection*{Phase 1: framework and deployment (Jul 24 to Aug 11)}
+\begin{itemize}
+  \item Initial PyATPG framework with a FastAPI backend and React frontend.
+  \item Hosted on Render (backend) and Vercel (frontend). Atalanta is compiled from source and statically linked at build time, after glibc mismatches between Render's build and runtime containers.
+  \item Bench format import and export; Atalanta failures reported loudly instead of as 0\% coverage; real CPU time and memory on Linux.
+  \item First LLM ranker, a Trojan insertion tool, and removal of legacy ATPG code.
+\end{itemize}
+
+\subsection*{Phase 2: sequential ATPG and honest comparisons (Aug 14 to Aug 30)}
+\begin{itemize}
+  \item Sequential ATPG engine with a context-reduced LLM fault prioritiser, and its results in the frontend.
+  \item Compare mode made to actually compare deterministic vs LLM-assisted runs.
+  \item Gate names anonymised before the targeting prompt (\texttt{c23c039}).
+  \item Cyclic netlists stopped before reaching Atalanta; false "feedback loop" errors on dangling signals fixed.
+\end{itemize}
+
+\subsection*{Phase 3: reliable Trojan generation and evaluation (Sep 2 to Sep 28)}
+\begin{itemize}
+  \item Trojan placements sampled instead of repeating; a trigger accepted only if it can actually activate; two variants never share a payload target.
+  \item Redundant faults told apart from aborted ones.
+  \item Multi-provider LLM support, unattended batch automation, a research pipeline, and zero-install runs for collaborators against the hosted API.
+  \item Targeted coverage made honest: effort escalation, whole-circuit pattern simulation, compact LLM context, per-request token budgets.
+  \item Exact parsing of synthesized hierarchical Verilog; a full-scan model for circuits with flip-flops; MUX payloads; an LLM judge for trigger/payload candidates with baselines.
+\end{itemize}
+
+\subsection*{Phase 4: Trust-Hub designs and the Trojan detector (Oct 1 to Oct 9)}
+\begin{itemize}
+  \item Up to five rotating LLM keys; Groq \texttt{openai/gpt-oss-120b} as the default.
+  \item RTL designs accepted via Yosys synthesis; size and timeout guards for the hosted backend.
+  \item Server stays responsive during runs, with live progress, cancellation of disconnected runs, an admin page and a PostgreSQL run database.
+  \item Logic-clocked registers modelled (Trust-Hub sequential triggers); trigger detector; scan enable held low under full scan; LLM batches that carry a shortlist forward.
+  \item Payload splices, hand-edited gates, evidence families that do not double count, region completion aiming for every Trojan gate, and recall reported with and without the LLM.
+\end{itemize}
+
+\end{document}

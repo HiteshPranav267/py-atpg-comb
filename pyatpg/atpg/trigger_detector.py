@@ -30,6 +30,12 @@ trigger itself:
 * **Duplicate gate inputs.** Synthesis never emits a gate reading the same
   net twice; a hand-inserted Trojan can (s38584-T100's NOR(Tj_OUT1,
   Tj_OUT1, ...)). One hit across all four circuits measured, the Trojan's.
+* **Payload multiplexers.** s38584-T200/T300 replace output g10122 with a
+  2:1 mux whose select is the trigger. The parser builds it as NOT(s),
+  AND(d0, NOT s), AND(d1, s), OR; the payload-depth walk from the trigger
+  registers reached only part of it. A mux whose select is already a strong
+  suspect is flagged whole (the original data input is the host's own
+  signal and stays out).
 * **Autonomous timers.** s38584-T300 counts activity over a 50-cycle
   window kept by a 32-bit counter on the ordinary clock: its next state
   depends only on itself, so it is clocked normally, toggles freely and
@@ -87,6 +93,7 @@ MIN_TIMER = 4
 STRENGTH = {
     "logic_clock": 0.9,
     "payload_splice": 0.85,
+    "payload_mux": 0.8,
     "trojan_timer": 0.8,
     "logic_clock_payload": 0.7,
     "trojan_region": 0.7,
@@ -104,6 +111,7 @@ FAMILY = {
     "logic_clock": "clock",
     "logic_clock_payload": "clock",
     "payload_splice": "payload",
+    "payload_mux": "payload",
     "duplicate_input": "hand_edit",
     "trojan_region": "region",
     "autonomous_timer": "timer",
@@ -116,6 +124,7 @@ PROMPT_MARK = {
     "never_toggling_cluster": "trig",
     "logic_clock_payload": "pay",
     "payload_splice": "pay",
+    "payload_mux": "pay",
     "duplicate_input": "dup",
     "autonomous_timer": "tmr",
     "trojan_timer": "tmr",
@@ -248,7 +257,39 @@ def static_evidence(circuit: Circuit, logic_clocks: dict[str, str] | None = None
     # registers' load logic the region adds. Its logic is closed (nothing
     # outside feeds it), so there is nothing further to grow into.
     _autonomous_timers(ev, circuit, order, fanout)
+    _payload_muxes(ev, circuit)
     return ev
+
+
+def _payload_muxes(ev: TriggerEvidence, circuit: Circuit) -> None:
+    """2:1 muxes (OR/NOR of AND(d0, NOT s), AND(d1, s)) selected by a strong suspect."""
+    strong = {g for g in ev.by_gate if ev.strength(g) >= 0.7}
+    if not strong:
+        return
+    # The parser models a logic-clocked register as the same mux with its
+    # clock as select (Q' = clk ? D : Q): state, not a payload.
+    clocks = set((getattr(circuit, "logic_clocks", None) or {}).values())
+    gates = circuit.gates
+    for out, gate in gates.items():
+        if gate.gtype not in ("OR", "NOR") or len(gate.inputs) != 2:
+            continue
+        legs = [gates.get(i) for i in gate.inputs]
+        if any(g is None or g.gtype != "AND" or len(g.inputs) != 2 for g in legs):
+            continue
+        for (t_n, t_nsel), (t_s, t_sel) in (
+            ((gate.inputs[0], legs[0]), (gate.inputs[1], legs[1])),
+            ((gate.inputs[1], legs[1]), (gate.inputs[0], legs[0])),
+        ):
+            nots = [i for i in t_nsel.inputs if i in gates and gates[i].gtype == "NOT"]
+            sel = next((s for s in t_sel.inputs
+                        for n in nots if gates[n].inputs == [s]), None)
+            if sel is None or sel not in strong or sel in ev.host or sel in clocks:
+                continue
+            nsel = next(n for n in nots if gates[n].inputs == [sel])
+            why = f"part of a 2:1 multiplexer selected by flagged Trojan logic {sel}"
+            for n in (nsel, t_n, t_s, out):
+                ev.add(n, "payload_mux", why)
+            break
 
 
 def _autonomous_timers(ev: TriggerEvidence, circuit: Circuit, order: list[str],

@@ -464,7 +464,21 @@ class AtpgAnalysisService:
             from .trigger_detector import TriggerEvidence
 
             trigger_ev = TriggerEvidence()
-        mark_profiles(profile.gate_profiles, trigger_ev)
+        from pyatpg.core import settings as _settings
+
+        try:
+            detector_in_targeting = bool(_settings.get("detector_in_targeting"))
+        except Exception:  # noqa: BLE001 - never fail a run over this setting
+            detector_in_targeting = True
+        if detector_in_targeting:
+            mark_profiles(profile.gate_profiles, trigger_ev)
+        forced_suspects = (
+            [(g, trigger_ev.by_gate[g][0][1]) for g in trigger_ev.gates()]
+            if detector_in_targeting else None
+        )
+        # XOR-shape matches go into the fault list only when the trigger
+        # detector found nothing strong (see FaultTargetSelector.select).
+        force_shape = not any(trigger_ev.strength(g) >= 0.7 for g in trigger_ev.gates())
 
         # One tracker across both model stages, so the response can say
         # exactly what the whole request cost.
@@ -482,8 +496,17 @@ class AtpgAnalysisService:
                 summary="",
                 graph=profile.graph,
                 source_text=parsed.source_text,
-                extra_suspects=[(g, trigger_ev.by_gate[g][0][1]) for g in trigger_ev.gates()],
+                extra_suspects=forced_suspects,
+                use_detector=detector_in_targeting,
+                force_shape=force_shape,
             )
+            if not detector_in_targeting:
+                selection.notes.append(
+                    "Detector left out of targeting (setting detector_in_targeting off): the "
+                    "fault list is the " + ("model's" if selection.used_llm else "heuristic's")
+                    + " picks alone, and the no-LLM baseline is the plain heuristic. The "
+                    "verdict still uses the detector."
+                )
             # The same selection without the model (structural heuristic plus
             # the detector), so every LLM run reports what the LLM added.
             baseline_gates = None
@@ -493,8 +516,9 @@ class AtpgAnalysisService:
                         profile.gate_profiles,
                         summary="",
                         graph=profile.graph,
-                        extra_suspects=[(g, trigger_ev.by_gate[g][0][1])
-                                        for g in trigger_ev.gates()],
+                        extra_suspects=forced_suspects,
+                        use_detector=detector_in_targeting,
+                        force_shape=force_shape,
                     ).gates
                 except Exception:  # noqa: BLE001 - a comparison must not fail the run
                     baseline_gates = None
