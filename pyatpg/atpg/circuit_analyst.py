@@ -9,6 +9,7 @@ signal name cannot put that name in front of the user.
 from __future__ import annotations
 
 import json
+import re
 import time
 from dataclasses import asdict, dataclass, field
 from typing import Any
@@ -45,12 +46,6 @@ TOKEN_STAGE = "analysis"
 #: How many gate profiles to include as evidence in the prompt. In the
 #: compact CSV encoding this is roughly 2k tokens.
 _PROFILE_BUDGET = 120
-
-#: How much of the raw netlist to show. The prompt tells the model to ground
-#: every point in the gate rows, so the source is there only to let it name
-#: the architecture; a few hundred lines are enough for that and the full
-#: 8000 characters used previously doubled the prompt on small circuits.
-_SOURCE_EXCERPT_CHARS = 3000
 
 #: How many gates each structural observation lists.
 _STRUCTURAL_TOP_N = 8
@@ -266,15 +261,20 @@ class CircuitAnalyst:
         circuit_name: str,
     ) -> CircuitAnalysis:
         ranked = sorted(profiles, key=rarity_key)
+        # Opaque ids, no source text and no circuit name: the same rule as
+        # gate selection (see FaultTargetSelector._compose_prompt). Trust-Hub
+        # netlists name their Trojans (TrojanTrigger__*, Trojan_Paylod,
+        # module HighActiveRegionDetection), and this stage used to send
+        # both the real ids and 3000 characters of Verilog -- on s38584-T300
+        # the model duly reported a "Trojan payload carry chain".
+        alias_to_gate = {f"g{i}": str(p["gate_id"]) for i, p in enumerate(ranked[:_PROFILE_BUDGET])}
         profile_block = compact_profile_block(
-            [(str(p["gate_id"]), p.get("features", {}) or {}) for p in ranked[:_PROFILE_BUDGET]]
+            [(f"g{i}", p.get("features", {}) or {}) for i, p in enumerate(ranked[:_PROFILE_BUDGET])]
         )
-        source_excerpt = circuit_source[:_SOURCE_EXCERPT_CHARS]
 
         prompt = f"""You are a design-for-test engineer reviewing a combinational circuit
-before automatic test pattern generation.
+before automatic test pattern generation. Gate ids are opaque labels.
 
-Circuit: {circuit_name}
 Structure: {stats.get('gates', 0)} gates, {stats.get('max_level', 0)} logic levels,
 {stats.get('primary_inputs', 0)} primary inputs, {stats.get('primary_outputs', 0)} primary outputs.
 Gate mix: {stats.get('gate_types', {})}
@@ -291,9 +291,6 @@ Rules:
 - Set confidence to "high", "medium", or "low" based on how strongly the data supports
   each point.
 
-Circuit source (may be truncated):
-{source_excerpt}
-
 Gate profiles, rarest-toggling first ({len(ranked[:_PROFILE_BUDGET])} of {len(ranked)}):
 {COMPACT_LEGEND}
 {profile_block}
@@ -305,7 +302,7 @@ Gate profiles, rarest-toggling first ({len(ranked[:_PROFILE_BUDGET])} of {len(ra
         cache = self.cache
         if cache is None and cache_enabled():
             cache = LLMResultCache()
-        cache_params = dict(model=self.provider.model_name, budget=_PROFILE_BUDGET)
+        cache_params = dict(model=self.provider.model_name, budget=_PROFILE_BUDGET, anon="v1")
         response_text: str | None = None
         cached = False
         if cache is not None:
@@ -345,7 +342,7 @@ Gate profiles, rarest-toggling first ({len(ranked[:_PROFILE_BUDGET])} of {len(ra
             # Only a response that parsed is worth remembering.
             cache.put(TOKEN_STAGE, circuit_source, {"response": response_text}, **cache_params)
         known = {str(p["gate_id"]) for p in profiles}
-        analysis = self._build_from_payload(payload, known)
+        analysis = self._build_from_payload(_unalias(payload, alias_to_gate), known)
         if cached:
             analysis.reasoning.append(
                 "This analysis was reused from the cache of an earlier run of this "
@@ -409,6 +406,20 @@ Gate profiles, rarest-toggling first ({len(ranked[:_PROFILE_BUDGET])} of {len(ra
                 "the parsed circuit and were removed."
             )
         return analysis
+
+
+_ALIAS = re.compile(r"\bg\d+\b")
+
+
+def _unalias(value: Any, alias_to_gate: dict[str, str]) -> Any:
+    """The model's answer with every alias it used replaced by the real gate id."""
+    if isinstance(value, str):
+        return _ALIAS.sub(lambda m: alias_to_gate.get(m.group(0), m.group(0)), value)
+    if isinstance(value, list):
+        return [_unalias(v, alias_to_gate) for v in value]
+    if isinstance(value, dict):
+        return {k: _unalias(v, alias_to_gate) for k, v in value.items()}
+    return value
 
 
 _JSON_CONTRACT = """Respond with JSON only, in exactly this shape:
