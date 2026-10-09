@@ -28,7 +28,8 @@ Or the individual pieces, if that's all you need:
 # ATPG only, everything in benchmarks/incoming/, deterministic-only.
 python scripts/run_suite.py atpg --circuits benchmarks/incoming --no-llm
 
-# ATPG only, with an LLM (any provider — see pyatpg/ranking/providers.py):
+# ATPG only, with an LLM (any provider — see pyatpg/ranking/providers.py;
+# Groq is the default when no provider is named, e.g. --api-key gsk_...):
 python scripts/run_suite.py atpg --circuits benchmarks/incoming \
     --mode compare --llm-provider gemini --api-key "$GEMINI_API_KEY"
 ```
@@ -117,7 +118,7 @@ user environment variable once, in a normal PowerShell window:
 [Environment]::SetEnvironmentVariable("GEMINI_API_KEY", "AIza...", "User")
 ```
 
-(or `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / `NVIDIA_API_KEY` / the generic
+(or `GROQ_API_KEY` / `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / `NVIDIA_API_KEY` / the generic
 `LLM_API_KEY`+`LLM_PROVIDER` — whichever provider you're using). Close and
 reopen any terminal afterward; the scheduled task picks it up automatically
 since it inherits your user environment.

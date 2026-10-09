@@ -34,18 +34,22 @@ server, not your laptop.
 ## 4. Get your own LLM key (optional but recommended)
 
 Free key from any of:
+- [console.groq.com](https://console.groq.com) — Groq, starts with `gsk_` (the
+  default provider; model `openai/gpt-oss-120b`)
 - [aistudio.google.com](https://aistudio.google.com) — Gemini, starts with `AIza`
 - [platform.openai.com](https://platform.openai.com) — starts with `sk-`
 - [console.anthropic.com](https://console.anthropic.com) — starts with `sk-ant-`
 - [build.nvidia.com](https://build.nvidia.com) — NVIDIA NIM, starts with `nvapi-`
 
-Skip this and it still runs, using structural heuristics instead of an LLM
-for ranking/targeting.
+Skip this and it still runs: the structural heuristic and the Trojan
+detector select the gates instead of an LLM (the detector's findings are
+always included either way).
 
 ## 5. Drop in your circuits
 
-Put your `.v`, `.verilog`, or `.bench` circuit files into the
-`benchmarks\incoming\` folder inside the repo.
+Put your `.v`, `.verilog`, or `.bench` circuit files into a
+`benchmarks\incoming\` folder inside the repo (create it if it isn't
+there — the benchmark circuits are not shipped with the repo).
 
 ## 6. Run it
 
@@ -99,3 +103,13 @@ run Atalanta on your own machine), see the main
 — heavier to set up (installs the full dependency list, uses the Atalanta
 binary already checked into the repo for Windows), but doesn't touch the
 shared backend at all.
+
+## Just want to try one circuit?
+
+You don't need any of the above: open the website, go to **ATPG**, upload
+the circuit, choose **Full scan** for a circuit with flip-flops (or leave it
+off for the sequential engine), pick **Compare Both**, and paste your key in
+**Settings** (Groq is preselected). The page shows each step as it runs —
+and one line of what the LLM is thinking while it works — and the results
+include the Trojan verdict and, for Trust-Hub designs, how many of the
+Trojan's gates were found with and without the LLM.
