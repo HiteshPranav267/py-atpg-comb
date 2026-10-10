@@ -8,6 +8,30 @@ Numbers marked *detector only* come from running the trigger detector on the
 full-scan model with no ATPG and no LLM (a few seconds per circuit). Numbers
 from full runs say so.
 
+## 2026-10-10: smaller report downloads
+
+Prompted by the s38584-T300 report download: 14.8 MB, too large to analyse.
+
+### Suspects reference vectors by index (`verdict.py`)
+
+- **Problem.** Every one of the 1998 verdict suspects carried the same 3
+  test patterns as full 1601-bit strings: 10.5 MB of the 14.8 MB file.
+- **Change.** `activating_vectors` now holds indices into the run's
+  `test_vectors.vectors`, where each pattern is stored once. Older reports
+  with strings still load (the run DB only counts them).
+- **Effect.** The same report, re-encoded: 14.8 MB → 5.2 MB.
+
+### Summary export (`Reports.tsx`)
+
+- **Problem.** Even at 5 MB the full report is too big to read or paste into
+  an LLM, and most of it is long gate lists repeated across sections.
+- **Change.** New *Download Summary* button next to the full export. Lists
+  longer than 25 keep their first 25 entries plus a total count (suspects are
+  sorted by confidence, so the head is the strongest); test-pattern bit
+  strings become `<N-bit pattern>`. The full export is unchanged, for the
+  aggregation scripts.
+- **Effect.** s38584-T300: ~140 KB summary.
+
 ## 2026-10-09: payload muxes, measuring the LLM alone, fewer junk targets
 
 Prompted by the s38584-T200 report (compare mode, full scan, LLM on): recall

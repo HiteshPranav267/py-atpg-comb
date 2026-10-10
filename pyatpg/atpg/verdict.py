@@ -40,7 +40,10 @@ class SuspectGate:
     evidence: str = "structural"
     reasons: list[str] = field(default_factory=list)
     atpg_status: str = "detected"
-    activating_vectors: list[str] = field(default_factory=list)
+    #: Indices into the run's test_vectors.vectors, not the bit strings
+    #: themselves: every suspect points at the same few patterns, and copying
+    #: a 1600-bit string per suspect blew reports up to 10+ MB.
+    activating_vectors: list[int] = field(default_factory=list)
     statement: str = ""
 
 
@@ -68,21 +71,21 @@ def _fault_index(runs: list[AtalantaRun]) -> dict[str, set[str]]:
     return index
 
 
-def _vectors_for(runs: list[AtalantaRun], limit: int = 3) -> list[str]:
+def _vectors_for(runs: list[AtalantaRun], limit: int = 3) -> list[int]:
     """A few generated patterns, as the concrete way to exercise a suspect.
 
     Atalanta's vector file is per-run, not per-fault, so these are the
     run's patterns rather than a pattern proven to activate one specific
     gate. Labelled as such in the statement rather than overclaimed.
+    Returned as vector indices; the patterns live once in test_vectors.
     """
     for run in runs:
         vectors = getattr(run.test_vectors, "vectors", None) or []
         if vectors:
             out = []
             for v in vectors[:limit]:
-                inputs = getattr(v, "inputs", None)
-                if inputs:
-                    out.append(str(inputs))
+                if getattr(v, "inputs", None):
+                    out.append(int(v.index))
             if out:
                 return out
     return []

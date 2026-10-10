@@ -695,7 +695,8 @@ export interface VerdictSuspect {
   evidence: string;
   reasons: string[];
   atpg_status: string;
-  activating_vectors: string[];
+  /** Indices into the run's test_vectors.vectors (older reports held the bit strings). */
+  activating_vectors: Array<number | string>;
   statement: string;
 }
 

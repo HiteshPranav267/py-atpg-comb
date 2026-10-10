@@ -5,49 +5,79 @@ import { useAppStore } from '@/store';
 /** File name without directory or extension, for comparing circuit names. */
 const stem = (name: string) => name.replace(/^.*[\\/]/, '').replace(/\.[^.]*$/, '');
 
+/** Longest list kept in full by the summary export; the rest becomes a count. */
+const SUMMARY_LIST_LIMIT = 25;
+
+/**
+ * Shrink a report for reading or pasting into an LLM: long lists keep their
+ * first entries plus a count, and test-pattern bit strings become their
+ * length. Lists are already sorted most-relevant first (suspects by
+ * confidence), so the head is the part worth reading. The full export keeps
+ * everything for the aggregation scripts.
+ */
+function summarize(value: unknown): unknown {
+  if (typeof value === 'string') {
+    return value.length > 200 && /^[01xX-]+$/.test(value) ? `<${value.length}-bit pattern>` : value;
+  }
+  if (Array.isArray(value)) {
+    const head = value.slice(0, SUMMARY_LIST_LIMIT).map(summarize);
+    return value.length > SUMMARY_LIST_LIMIT
+      ? [...head, `... ${value.length - SUMMARY_LIST_LIMIT} more (${value.length} total, see full report)`]
+      : head;
+  }
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, summarize(v)]));
+  }
+  return value;
+}
+
+function saveJson(data: unknown, filename: string) {
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 export default function Reports() {
   const { activeCircuit, activeFeatureSet, activeRanking, activeAtpgReport, benchmarkHistory } = useAppStore();
 
   const hasAnything = activeCircuit || activeFeatureSet || activeRanking || activeAtpgReport || benchmarkHistory.length > 0;
 
-  const handleDownload = () => {
-    const report = {
-      generated_at: new Date().toISOString(),
-      // Pulled to the top level, not just nested in atpg_report, so it's the
-      // first thing visible when comparing timing numbers across exports
-      // taken on different machines.
-      system_info: activeAtpgReport?.system_info ?? null,
-      circuit: activeCircuit,
-      feature_extraction: activeFeatureSet ? {
-        gate_count: activeFeatureSet.gate_features.length,
-        extraction_time_ms: activeFeatureSet.extraction_time_ms,
-        atpg_coverage: activeFeatureSet.atpg_coverage,
-      } : null,
-      // The last run of the separate Ranking page -- NOT the ranking the ATPG
-      // run above used (that lives in atpg_report.targeting). Named so the
-      // two are never confused, and dropped when it was for another circuit.
-      last_ranking_page_run:
-        activeRanking &&
-        (!activeRanking.circuit_name ||
-          stem(activeRanking.circuit_name) === stem(activeCircuit?.name ?? ''))
-          ? {
-              ranker_name: activeRanking.ranker_name,
-              circuit_name: activeRanking.circuit_name ?? activeCircuit?.name ?? null,
-              execution_time: activeRanking.execution_time,
-              top_10: activeRanking.ranked_gates.slice(0, 10),
-            }
-          : null,
-      atpg_report: activeAtpgReport,
-      benchmark_history: benchmarkHistory,
-    };
-    const blob = new Blob([JSON.stringify(report, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `pyatpg_report_${(activeCircuit?.name || 'session').replace(/\W+/g, '_')}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
-  };
+  const buildReport = () => ({
+    generated_at: new Date().toISOString(),
+    // Pulled to the top level, not just nested in atpg_report, so it's the
+    // first thing visible when comparing timing numbers across exports
+    // taken on different machines.
+    system_info: activeAtpgReport?.system_info ?? null,
+    circuit: activeCircuit,
+    feature_extraction: activeFeatureSet ? {
+      gate_count: activeFeatureSet.gate_features.length,
+      extraction_time_ms: activeFeatureSet.extraction_time_ms,
+      atpg_coverage: activeFeatureSet.atpg_coverage,
+    } : null,
+    // The last run of the separate Ranking page -- NOT the ranking the ATPG
+    // run above used (that lives in atpg_report.targeting). Named so the
+    // two are never confused, and dropped when it was for another circuit.
+    last_ranking_page_run:
+      activeRanking &&
+      (!activeRanking.circuit_name ||
+        stem(activeRanking.circuit_name) === stem(activeCircuit?.name ?? ''))
+        ? {
+            ranker_name: activeRanking.ranker_name,
+            circuit_name: activeRanking.circuit_name ?? activeCircuit?.name ?? null,
+            execution_time: activeRanking.execution_time,
+            top_10: activeRanking.ranked_gates.slice(0, 10),
+          }
+        : null,
+    atpg_report: activeAtpgReport,
+    benchmark_history: benchmarkHistory,
+  });
+  const fileStem = (activeCircuit?.name || 'session').replace(/\W+/g, '_');
+  const handleDownload = () => saveJson(buildReport(), `pyatpg_report_${fileStem}.json`);
+  const handleSummaryDownload = () => saveJson(summarize(buildReport()), `pyatpg_summary_${fileStem}.json`);
 
   return (
     <div className="p-8 max-w-4xl mx-auto w-full">
@@ -115,6 +145,12 @@ export default function Reports() {
             className="flex items-center justify-center gap-2 bg-primary hover:bg-primary/90 text-primary-foreground px-4 py-2.5 rounded-md text-sm font-medium transition-colors w-fit"
           >
             <Download className="w-4 h-4" /> Download Full Report (JSON)
+          </button>
+          <button
+            onClick={handleSummaryDownload}
+            className="flex items-center justify-center gap-2 border border-border hover:bg-muted px-4 py-2.5 rounded-md text-sm font-medium transition-colors w-fit"
+          >
+            <Download className="w-4 h-4" /> Download Summary (small, for analysis)
           </button>
         </div>
       )}
