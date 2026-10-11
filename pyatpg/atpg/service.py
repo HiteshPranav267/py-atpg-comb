@@ -484,10 +484,23 @@ class AtpgAnalysisService:
         # exactly what the whole request cost.
         tracker = TokenTracker()
 
+        # Before targeting, so the regions the model calls suspicious can
+        # join its fault list: on s38417-T200 it named Tj_OUT5678/7/8 here
+        # while the selection, which sees a different slice of the circuit,
+        # left them out.
+        report("Writing the circuit analysis" + (" with the LLM" if provider is not None else ""))
+        analyst = CircuitAnalyst(provider=provider, tracker=tracker)
+        analysis.circuit_analysis = analyst.analyze(
+            circuit_source=parsed.source_text,
+            profiles=profile.gate_profiles,
+            stats=profile.statistics,
+            circuit_name=parsed.name,
+        )
+
         selection = None
         baseline_gates = None
         if mode.runs_targeted:
-            from .targeting import FaultTargetSelector
+            from .targeting import FaultTargetSelector, analysis_region_gates
 
             selector = FaultTargetSelector(provider=provider, tracker=tracker)
             report("Selecting target gates" + (" with the LLM" if provider is not None else ""))
@@ -499,13 +512,15 @@ class AtpgAnalysisService:
                 extra_suspects=forced_suspects,
                 use_detector=detector_in_targeting,
                 force_shape=force_shape,
+                hints=(analysis_region_gates(analysis.circuit_analysis)
+                       if analysis.circuit_analysis.source == "llm" else None),
             )
             if not detector_in_targeting:
                 selection.notes.append(
-                    "Detector left out of targeting (setting detector_in_targeting off): the "
-                    "fault list is the " + ("model's" if selection.used_llm else "heuristic's")
-                    + " picks alone, and the no-LLM baseline is the plain heuristic. The "
-                    "verdict still uses the detector."
+                    "Detector left out of targeting (setting detector_in_targeting off): no "
+                    "detector gate was forced in, so both lists are the structural heuristic's"
+                    + (", with the model's picks in its share of the slots" if selection.used_llm
+                       else "") + ". The verdict still uses the detector."
                 )
             # The same selection without the model (structural heuristic plus
             # the detector), so every LLM run reports what the LLM added.
@@ -571,7 +586,7 @@ class AtpgAnalysisService:
         # fault list, so a targeted run's patterns can be read against the
         # circuit and not only against the handful of faults they were
         # written for.
-        truth = ground_truth_gates(parsed.circuit)
+        truth = ground_truth_gates(parsed.circuit, parsed.implicit_inputs)
         for run in analysis.runs.values():
             report("Fault-simulating the generated patterns")
             run.pattern_coverage = self._score_patterns(parsed, run)
@@ -596,14 +611,6 @@ class AtpgAnalysisService:
                 _targeted_scope_note(analysis.runs[self.TARGETED_KEY], selection.gates)
             )
 
-        report("Writing the circuit analysis" + (" with the LLM" if provider is not None else ""))
-        analyst = CircuitAnalyst(provider=provider, tracker=tracker)
-        analysis.circuit_analysis = analyst.analyze(
-            circuit_source=parsed.source_text,
-            profiles=profile.gate_profiles,
-            stats=profile.statistics,
-            circuit_name=parsed.name,
-        )
         analysis.correlation = correlate(
             analysis.circuit_analysis, list(analysis.runs.values())
         )
@@ -886,7 +893,8 @@ class AtpgAnalysisService:
             trigger_ev = None
         analysis.verdict = build_verdict(suspects, reasons, [], trigger_evidence=trigger_ev)
         analysis.trojan_ground_truth = _ground_truth_report(
-            ground_truth_gates(parsed.circuit), structural=suspects, verdict=analysis.verdict,
+            ground_truth_gates(parsed.circuit, parsed.implicit_inputs),
+            structural=suspects, verdict=analysis.verdict,
             trigger=trigger_ev.gates() if trigger_ev is not None else None,
         )
         analysis.cpu_time = {

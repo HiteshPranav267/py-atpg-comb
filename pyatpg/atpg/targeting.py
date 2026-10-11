@@ -4,6 +4,17 @@ This decides the contents of Atalanta's -f fault list. It is a *selection*
 step only: nothing here produces ATPG metrics, and nothing here is treated
 as evidence about a gate. Atalanta remains the sole source of truth for
 whether a fault is detectable.
+
+Both modes test the same number of gates. Without a model the list is the
+structural heuristic's top picks. With one, the heuristic's top picks stay
+(the floor) and the model fills the rest of the list with the gates it
+scores highest among those it was shown; slots it leaves empty go to the
+heuristic's next picks. An LLM run can therefore lose at most the
+heuristic's last few picks, and the Trojan gates only it found are exactly
+what the model added. Before this, the model's picks replaced the
+heuristic's outright: it reviews ~300 of a large circuit's gates, the
+heuristic ranks all of them, and on s38417-T200 recall fell from 0.71
+without the model to 0.36 with it.
 """
 from __future__ import annotations
 
@@ -24,17 +35,17 @@ from .llm_context import (
     compact_profile_block,
     context_gate_limit,
     estimate_prompt_tokens,
+    rarity_key,
     reply_budget,
     request_token_budget,
 )
 
-#: Reply cost of one "gate_id,confidence" line, the only thing this stage
-#: asks the model to return.
-_TOKENS_PER_TARGET_LINE = 12
+#: Reply cost of one "gate_id,score" line; the model scores every gate it
+#: is shown.
+_TOKENS_PER_SCORE_LINE = 8
 
-#: Never shrink the candidate pool below this, whatever the token budget
-#: says: past some point the pool stops containing the answer at all, and
-#: failing loudly beats a selection made from too little evidence.
+#: Never shrink a request below this many gates, whatever the token budget
+#: says: past some point a batch stops containing the answer at all.
 _MIN_CONTEXT_POOL = 40
 
 #: Stage name this selector's calls are logged under in the TokenTracker.
@@ -42,10 +53,10 @@ TOKEN_STAGE = "targeting"
 
 #: Cap on how many gates the targeted fault list may contain, used verbatim
 #: when a caller passes an explicit ``max_gates``. Automatic selection (the
-#: default) instead scales with circuit size -- see ``_scaled_max_gates`` --
-#: because a fixed cap becomes a shrinking fraction of the circuit's faults
-#: as the circuit grows, dragging the targeted run's own fault coverage down
-#: for reasons unrelated to how well the gates were chosen.
+#: default) instead scales with circuit size -- see ``_effective_max_gates``
+#: -- because a fixed cap becomes a shrinking fraction of the circuit's
+#: faults as the circuit grows, dragging the targeted run's own fault
+#: coverage down for reasons unrelated to how well the gates were chosen.
 MAX_TARGET_GATES = 30
 
 #: Share of profiled gates the automatic cap targets. A few points above the
@@ -67,18 +78,24 @@ _MAX_TOGGLE_RATE = 0.1
 _MIN_FAN_IN = 2
 _MIN_OBSERVABILITY = 5
 
-#: Minimum confidence for a gate to enter the targeted fault list. Gates the
-#: model scores below this are dropped rather than tested.
-_MIN_CONFIDENCE = 0.3
+#: Lowest score (0-100) at which a gate the model scored can take one of
+#: its slots; below it the slot goes to the heuristic's next pick.
+_MIN_SCORE = 30.0
+
+#: Share of the list the model may fill when the ``llm_share`` setting
+#: cannot be read.
+_DEFAULT_LLM_SHARE = 0.5
+
+#: A suspicious region from the circuit analysis is offered to the fault
+#: list only if it names at most this many gates: the analyst often returns
+#: one "region" spanning its whole 120-gate input, which says nothing.
+_MAX_ANALYSIS_REGION = 25
 
 #: Worked examples of what inserted logic looks like in feature terms, given
 #: to the model as support-set "shots". Deliberately written as feature
 #: patterns rather than named gates: the point is to teach the shape, so it
 #: transfers to a netlist whose signals are named arbitrarily. Values are
 #: illustrative of the general profile, not copied from any test circuit.
-#: Upper bound on prompt-shrinking passes; each rebuilds the candidate pool.
-_MAX_SHRINK_ROUNDS = 12
-
 _FEW_SHOT_EXEMPLARS = """### Worked examples
 
 Example A -- a trigger. A 3-input AND sitting among 2-input NANDs, toggle
@@ -103,8 +120,8 @@ every one with toggle_rate 0.0000, wired into each other and converging on
 one net that clocks a register (mark trig / clk), and the gates that register
 drives (mark pay). Unlike Example C this is a connected GROUP of
 never-toggling gates feeding a clock or select line: the trigger is built
-from many rare conditions precisely so it never fires in normal use. Always
-select every gate of such a group, and the payload gates it controls."""
+from many rare conditions precisely so it never fires in normal use. Score
+every gate of such a group high, and the payload gates it controls."""
 
 
 @dataclass
@@ -123,9 +140,45 @@ class TargetSelection:
     #: True when the model's answer came from the on-disk cache of an
     #: earlier identical run, so this selection cost no tokens.
     cached: bool = False
-    #: What the model was shown: how many gate profiles out of how many, and
-    #: the cap that decided it. Empty when no model was consulted.
+    #: What the model was shown and what it said: how many gates out of how
+    #: many, the pool itself and its score per gate, and how the list was
+    #: assembled from them. Empty when no model was consulted.
     context: dict[str, Any] = field(default_factory=dict)
+
+
+def analysis_region_gates(analysis: Any) -> list[str]:
+    """Gates of the model's own small suspicious regions (circuit analysis).
+
+    The two model stages see different slices of a large circuit (the
+    analyst the 120 rarest gates, the selector a mixed pool), so each can
+    name Trojan gates the other never saw: on s38417-T200 the analyst
+    flagged Tj_OUT5678/7/8 and the selection did not. They are passed to
+    :meth:`FaultTargetSelector.select` as ``hints`` and take the model's
+    slots first; the no-LLM baseline never gets them.
+    """
+    gates: list[str] = []
+    for region in getattr(analysis, "suspicious_regions", None) or []:
+        if region.gates and len(region.gates) <= _MAX_ANALYSIS_REGION:
+            gates.extend(region.gates)
+    return list(dict.fromkeys(gates))
+
+
+def _llm_share() -> float:
+    try:
+        from pyatpg.core import settings
+
+        return min(1.0, max(0.0, float(settings.get("llm_share"))))
+    except Exception:  # noqa: BLE001 - never fail a run over this setting
+        return _DEFAULT_LLM_SHARE
+
+
+def _target_gates_setting() -> int:
+    try:
+        from pyatpg.core import settings
+
+        return max(0, int(settings.get("target_gates")))
+    except Exception:  # noqa: BLE001 - never fail a run over this setting
+        return 0
 
 
 class FaultTargetSelector:
@@ -144,13 +197,13 @@ class FaultTargetSelector:
         context_gate_limit: int | None = None,
         cache: LLMResultCache | None = None,
     ):
-        #: None means "scale with circuit size" (the default); an explicit
-        #: value pins the cap regardless of how many gates are profiled.
+        #: None means "scale with circuit size" (the default, unless the
+        #: target_gates setting fixes it); an explicit value pins the cap.
         self.max_gates = max_gates
         #: Every model call is logged here; a fresh tracker is used when the
         #: caller does not share one.
         self.tracker = tracker or TokenTracker()
-        #: How many gate profiles the prompt may carry (see llm_context).
+        #: How many gate profiles one request may carry (see llm_context).
         self.context_gate_limit = context_gate_limit
         #: Cache of earlier answers for the same netlist; None means "use
         #: the default on-disk cache when a source_text is supplied".
@@ -165,9 +218,16 @@ class FaultTargetSelector:
             except (ImportError, ValueError):
                 self.provider = None
 
-    def _effective_max_gates(self, profiles: list[dict[str, Any]]) -> int:
+    def _fixed_budget(self) -> int | None:
+        """An exact list size (explicit or the target_gates setting), else None."""
         if self.max_gates is not None:
             return self.max_gates
+        return _target_gates_setting() or None
+
+    def _effective_max_gates(self, profiles: list[dict[str, Any]]) -> int:
+        fixed = self._fixed_budget()
+        if fixed is not None:
+            return fixed
         scaled = round(len(profiles) * _TARGET_GATE_FRACTION)
         return max(_MIN_TARGET_GATES, min(_MAX_TARGET_GATES_CEILING, scaled))
 
@@ -180,6 +240,7 @@ class FaultTargetSelector:
         extra_suspects: list[tuple[str, str]] | None = None,
         use_detector: bool = True,
         force_shape: bool = True,
+        hints: list[str] | None = None,
     ) -> TargetSelection:
         """Choose the gates for the targeted fault list.
 
@@ -189,26 +250,27 @@ class FaultTargetSelector:
         cannot silently drop inserted logic from the fault list.
 
         ``source_text`` is the netlist the profiles came from; when given,
-        the model's answer is cached against it so an identical re-run
+        the model's scores are cached against it so an identical re-run
         costs no tokens.
 
         ``use_detector=False`` leaves both detectors out entirely: nothing is
-        forced into the pool or the list, so the selection is the model's (or
-        the heuristic's) alone -- the setting for measuring what the LLM finds
-        by itself.
+        forced into the pool or the list -- the setting for measuring what
+        the LLM finds by itself.
 
         ``force_shape=False`` keeps the XOR-shape matches out of the fault
         list (they are still reported); the service passes it when the
         trigger detector found something strong.
+
+        ``hints`` are gates the model itself named elsewhere (its circuit
+        analysis); they take its slots before its scored picks.
         """
         max_gates = self._effective_max_gates(profiles)
         if not use_detector:
             graph, extra_suspects = None, None
         suspects, reasons = self._find_suspects(profiles, graph)
         # Trigger-detector findings (pyatpg.atpg.trigger_detector), merged the
-        # same way: force-sent to the model and force-included in the list.
-        # They go first: the prompt has room for only so many forced gates,
-        # and these outrank the XOR-shape matches.
+        # same way: force-included in the list. They go first: they outrank
+        # the XOR-shape matches.
         known = {str(p["gate_id"]) for p in profiles}
         trigger = list(dict.fromkeys(g for g, _ in extra_suspects or [] if g in known))
         why = {g: w for g, w in extra_suspects or []}
@@ -225,42 +287,12 @@ class FaultTargetSelector:
         # (16 of 18 Trojan gates; the trigger detector finds 1).
         forced = suspects if force_shape else trigger
 
+        base = self._structural_selection(profiles, max_gates, [])
         if self.provider is not None:
             try:
-                gates, context, cached = self._select_with_llm(
-                    profiles, summary, max_gates, graph, suspects, source_text
+                selection = self._select_with_llm(
+                    profiles, summary, base, graph, suspects, forced, source_text, hints or []
                 )
-                valid = self._keep_known_gates(gates, profiles)
-                selection = TargetSelection(
-                    gates=valid[:max_gates],
-                    strategy="llm (cached)" if cached else "llm",
-                    used_llm=True,
-                    cached=cached,
-                    context=context,
-                )
-                selection.notes.extend(context.get("notes", []))
-                if cached:
-                    selection.notes.append(
-                        "Gate selection was reused from the cache of an earlier run of "
-                        "this exact netlist through the same model, so this step cost "
-                        "no tokens. Set LLM_RESULT_CACHE=0 for a fresh model call."
-                    )
-                if len(valid) < len(gates):
-                    selection.notes.append(
-                        f"{len(gates) - len(valid)} gate id(s) returned by the model "
-                        "were not present in the circuit and were discarded."
-                    )
-                if not valid:
-                    selection.notes.append(
-                        "Model returned no usable gate ids; fell back to the "
-                        "structural heuristic."
-                    )
-                    return self._merge_suspects(
-                        self._structural_selection(profiles, max_gates, selection.notes),
-                        suspects,
-                        reasons,
-                        forced,
-                    )
                 return self._merge_suspects(selection, suspects, reasons, forced)
             except LLMUnavailableError:
                 # The model could not be consulted at all (no credits, rate
@@ -269,19 +301,9 @@ class FaultTargetSelector:
                 # would misrepresent what was done, so stop here and say why.
                 raise
             except Exception as exc:  # noqa: BLE001 - model ran but its answer was unusable
-                return self._merge_suspects(
-                    self._structural_selection(
-                        profiles,
-                        max_gates,
-                        [f"LLM targeting unavailable ({exc}); used the structural heuristic."],
-                    ),
-                    suspects,
-                    reasons,
-                    forced,
-                )
-        return self._merge_suspects(
-            self._structural_selection(profiles, max_gates, []), suspects, reasons, forced
-        )
+                base.notes.append(f"LLM targeting unavailable ({exc}); used the structural heuristic.")
+                return self._merge_suspects(base, suspects, reasons, forced)
+        return self._merge_suspects(base, suspects, reasons, forced)
 
     @staticmethod
     def _find_suspects(
@@ -332,47 +354,46 @@ class FaultTargetSelector:
             )
         return selection
 
+    @staticmethod
+    def _rank_key(p: dict[str, Any]) -> tuple[float, float]:
+        return (p["features"].get("toggle_rate", 1.0), -p["features"].get("co", 0))
+
+    def _heuristic_ranking(self, profiles: list[dict[str, Any]]) -> list[str]:
+        """Every gate in the heuristic's order: qualifying gates, then the rest.
+
+        Rarest-toggling and least-observable first within each part, so any
+        prefix of it is what the heuristic would pick at that budget.
+        """
+        qualified = sorted(
+            (p for p in profiles if self._is_structurally_interesting(p.get("features", {}))),
+            key=self._rank_key,
+        )
+        taken = {id(p) for p in qualified}
+        rest = sorted((p for p in profiles if id(p) not in taken), key=self._rank_key)
+        return [str(p["gate_id"]) for p in qualified + rest]
+
     def _structural_selection(
         self, profiles: list[dict[str, Any]], max_gates: int, notes: list[str]
     ) -> TargetSelection:
-        def rank_key(p):
-            return (
-                p["features"].get("toggle_rate", 1.0),
-                -p["features"].get("co", 0),
-            )
-
-        ranked = [
-            p
-            for p in profiles
-            if self._is_structurally_interesting(p.get("features", {}))
-        ]
-        # Rarest-toggling and least-observable first, so a truncated list
-        # keeps the most interesting candidates.
-        ranked.sort(key=rank_key)
-
+        ranking = self._heuristic_ranking(profiles)
+        qualified = sum(1 for p in profiles if self._is_structurally_interesting(p.get("features", {})))
         # All three thresholds must hold at once, so on a circuit whose logic
         # happens not to satisfy them the filter can return almost nothing --
         # a targeted run of one or two faults, which reports a meaningless
         # 100% coverage and tests essentially none of the circuit. Top up from
-        # the same ranking so the fault list is always a usable size.
-        floor = min(_MIN_TARGET_GATES, max_gates, len(profiles))
-        if len(ranked) < floor:
-            qualified = len(ranked)
-            chosen = {id(p) for p in ranked}
-            for p in sorted(profiles, key=rank_key):
-                if len(ranked) >= floor:
-                    break
-                if id(p) not in chosen:
-                    ranked.append(p)
-                    chosen.add(id(p))
+        # the same ranking so the fault list is always a usable size (the
+        # whole budget when one is fixed, to compare recall across budgets).
+        fixed = self._fixed_budget() is not None
+        floor = min(max_gates if fixed else _MIN_TARGET_GATES, max_gates, len(profiles))
+        size = min(max_gates, max(qualified, floor))
+        if qualified < floor:
             notes = notes + [
                 f"Only {qualified} gate(s) met all structural thresholds; topped up "
-                f"to {len(ranked)} from the same rarity ranking so the targeted run "
+                f"to {size} from the same rarity ranking so the targeted run "
                 f"covers a meaningful share of the circuit."
             ]
-
         return TargetSelection(
-            gates=[p["gate_id"] for p in ranked[:max_gates]],
+            gates=ranking[:size],
             strategy="structural-heuristic",
             used_llm=False,
             notes=notes,
@@ -389,130 +410,255 @@ class FaultTargetSelector:
         except (KeyError, TypeError):
             return False
 
-    @staticmethod
-    def _parse_scored_response(
-        text: str, alias_to_gate: dict[str, str]
-    ) -> list[str]:
-        """Read "alias,confidence" lines back into real gate names.
+    # ------------------------------------------------------------------
+    # LLM path: heuristic floor + model-scored slots
+    # ------------------------------------------------------------------
 
-        Tolerates the model answering in the older bare comma-separated form
-        (no scores) -- those gates are kept, since a missing score is not the
-        same as a low one. Aliases the model invents resolve to nothing and
-        are dropped here, before ``_keep_known_gates`` ever sees them.
-        """
-        scored: list[tuple[float, str]] = []
-        seen: set[str] = set()
-
-        for raw_line in text.replace(";", "\n").splitlines():
-            line = raw_line.strip()
-            if not line:
-                continue
-            parts = [p.strip() for p in line.split(",") if p.strip()]
-            if not parts:
-                continue
-
-            # "alias,confidence" -- the requested form.
-            if len(parts) == 2 and parts[0] in alias_to_gate:
-                try:
-                    confidence = float(parts[1])
-                except ValueError:
-                    confidence = 1.0
-                if parts[0] not in seen and confidence >= _MIN_CONFIDENCE:
-                    seen.add(parts[0])
-                    scored.append((confidence, parts[0]))
-                continue
-
-            # Fall back to bare aliases, possibly several per line.
-            for token in parts:
-                if token in alias_to_gate and token not in seen:
-                    seen.add(token)
-                    scored.append((1.0, token))
-
-        scored.sort(key=lambda pair: -pair[0])
-        return [alias_to_gate[alias] for _, alias in scored]
-
-    @staticmethod
-    def _keep_known_gates(gates: list[str], profiles: list[dict[str, Any]]) -> list[str]:
-        """Drop hallucinated ids: a gate must exist in the parsed circuit.
-
-        Without this an invented id reaches Atalanta's -f list and the run
-        fails or silently targets nothing.
-        """
-        known = {str(p["gate_id"]) for p in profiles}
-        seen: set[str] = set()
-        kept: list[str] = []
-        for gate in gates:
-            clean = str(gate).strip()
-            if clean in known and clean not in seen:
-                seen.add(clean)
-                kept.append(clean)
-        return kept
-
-    def _compose_prompt(
+    def _select_with_llm(
         self,
         profiles: list[dict[str, Any]],
         summary: str,
-        max_gates: int,
+        base: TargetSelection,
         graph: Any,
-        suspects: list[str] | None,
-        limit: int,
-        rows_pool: list[dict[str, Any]] | None = None,
-        carried: int = 0,
-    ) -> tuple[str, list[dict[str, Any]], list[str], dict[str, str]]:
-        """Build the pool and the prompt carrying it, for one pool ``limit``.
+        suspects: list[str],
+        forced: list[str],
+        source_text: str | None,
+        hints: list[str],
+    ) -> TargetSelection:
+        """The heuristic's list with its last ``llm_share`` replaced by the model's picks."""
+        ranking = self._heuristic_ranking(profiles)
+        size = len(base.gates)
+        share = _llm_share()
+        slots_total = min(size, max(1, round(size * share))) if share > 0 and size else 0
+        floor = ranking[:size - slots_total]
+        forced_set = set(forced)
+        # Forced gates enter the list anyway; the model's slots are the tail
+        # positions that are not, so both modes test exactly as many gates.
+        slots = sum(1 for g in ranking[size - slots_total:size] if g not in forced_set)
+        exclude = set(floor) | forced_set
+        candidates = [p for p in profiles if str(p["gate_id"]) not in exclude]
+        # XOR-shape matches not forced into the list are still worth showing.
+        shown = [g for g in suspects if g not in exclude]
 
-        Separate from :meth:`_select_with_llm` so the caller can rebuild at
-        a smaller limit when the result would not fit the request budget.
-        ``rows_pool`` sends exactly those profiles instead (one batch of a
-        batched selection), the first ``carried`` of them being the shortlist
-        kept from earlier batches. Returns (prompt, pool, pool notes, alias ->
-        real gate id).
+        scores, context, cached = self._score_with_llm(
+            candidates, summary, graph, shown, source_text, len(profiles), len(floor)
+        )
+        if not scores:
+            # The model ran but said nothing usable: not an LLM selection.
+            base.context = context
+            base.notes.append(
+                "Model returned no usable gate scores; fell back to the structural heuristic."
+            )
+            return base
+        candidate_ids = {str(p["gate_id"]) for p in candidates}
+        hinted = [g for g in hints if g in candidate_ids]
+        by_score = [g for g, s in sorted(scores.items(), key=lambda gs: (-gs[1], gs[0]))
+                    if s >= _MIN_SCORE and g in candidate_ids]
+        picks = list(dict.fromkeys(hinted + by_score))[:slots]
+        chosen = set(picks)
+        fill = [g for g in ranking[len(floor):] if g not in exclude and g not in chosen]
+        fill = fill[:slots - len(picks)]
+
+        context.update({
+            "budget": len(floor) + slots,
+            "floor": len(floor),
+            "llm_slots": slots,
+            "llm_picks": picks,
+            "analysis_hints": [g for g in picks if g in set(hinted)],
+            "heuristic_fill": fill,
+        })
+        selection = TargetSelection(
+            gates=floor + picks + fill,
+            strategy="llm (cached)" if cached else "llm",
+            used_llm=True,
+            cached=cached,
+            context=context,
+        )
+        selection.notes.extend(base.notes)
+        selection.notes.extend(context.get("notes", []))
+        selection.notes.append(
+            f"Fault list: the structural heuristic's top {len(floor)} gate(s), then "
+            f"{len(picks)} of {slots} slot(s) filled by the model's highest-scored gates "
+            f"among the {context.get('gates_sent', 0)} it scored"
+            + (f" ({len(context['analysis_hints'])} from suspicious regions in its circuit "
+               "analysis)" if context["analysis_hints"] else "")
+            + (f", and {len(fill)} by the heuristic's next picks where the model scored "
+               f"nothing at {_MIN_SCORE:g}+." if fill else ".")
+        )
+        if cached:
+            selection.notes.append(
+                "Gate scores were reused from the cache of an earlier run of this exact "
+                "netlist through the same model, so this step cost no tokens. Set "
+                "LLM_RESULT_CACHE=0 for a fresh model call (needed for repeat runs)."
+            )
+        return selection
+
+    def _batch_size(self, candidates: list[dict[str, Any]], summary: str, limit: int) -> int:
+        """Most gates one request can carry, prompt plus a score per gate."""
+        size = min(limit, len(candidates)) if limit else len(candidates)
+        budget = request_token_budget()
+        if budget <= 0:
+            return size
+        sample = sorted(candidates, key=rarity_key)
+        while size > _MIN_CONTEXT_POOL:
+            prompt, _ = self._compose_prompt(sample[:size], summary)
+            if estimate_prompt_tokens(prompt) + reply_budget(size * _TOKENS_PER_SCORE_LINE) <= budget:
+                break
+            size = max(_MIN_CONTEXT_POOL, int(size * 0.85))
+        return size
+
+    def _score_with_llm(
+        self,
+        candidates: list[dict[str, Any]],
+        summary: str,
+        graph: Any,
+        shown: list[str],
+        source_text: str | None,
+        total_gates: int,
+        floor: int,
+    ) -> tuple[dict[str, float], dict[str, Any], bool]:
+        """Ask the model to score every gate it is shown; returns (gate -> score, context, cached).
+
+        A circuit too big for one request is split into up to ``llm_batches``
+        independent batches, each scored in full. Nothing is trimmed between
+        batches: the old carry-forward kept 34 gates per batch, and a gate
+        dropped there was gone.
         """
-        if rows_pool is not None:
-            pool, pool_notes = rows_pool, []
-        else:
-            pool, pool_notes = build_candidate_pool(profiles, graph, limit, suspects)
+        from pyatpg.core.progress import report
 
-        # Anonymise gate names before they reach the model.
-        #
-        # The framework's premise is that gate-level structural features are
-        # obfuscation-invariant -- that detection survives an adversary
-        # renaming every signal, which is what defeats RTL/source-level
-        # detectors. Sending the real names breaks that premise in the worst
-        # possible way here, because inserted logic in the generated corpus is
-        # named ht_trigger_out_N / HT_PAYLOAD_XOR and the ground truth is
-        # literally "does the name contain HT_". A model could score perfectly
-        # by string-matching, and any measured result would be evidence about
-        # the naming convention rather than about structural reasoning.
-        #
-        # Substituting opaque ids makes the measurement mean what it claims to
-        # mean, and makes the run identical to one on a renamed netlist.
+        limit = context_gate_limit(self.context_gate_limit)
+        batch = self._batch_size(candidates, summary, limit)
+        batches = llm_batches()
+        total = len(candidates) if batch >= len(candidates) else min(len(candidates), batch * batches)
+        pool, pool_notes = build_candidate_pool(candidates, graph, total, shown)
+        slices = [pool[i:i + batch] for i in range(0, len(pool), batch)] if batch else []
+        budget = request_token_budget()
+        notes = list(pool_notes)
+        if len(slices) > 1:
+            notes.append(
+                f"Scored in {len(slices)} batches of up to {batch} gates to fit the "
+                f"{budget}-token request budget; every gate shown was scored. Set "
+                f"{REQUEST_TOKEN_BUDGET_ENV_VAR} or the llm_batches setting to change this."
+            )
+        context: dict[str, Any] = {
+            "gates_sent": len(pool),
+            "gates_total": total_gates,
+            "gate_limit": limit,
+            "batches": len(slices),
+            "notes": notes,
+            "pool": [str(p["gate_id"]) for p in pool],
+        }
+
+        # Keyed on everything the question depends on: a different pool,
+        # batch split, prompt or floor asks something else.
+        cache_params = dict(
+            model=self.provider.model_name, batch=batch, total=total, batches=len(slices),
+            names="v2", prompt="v5", forced=len(shown), floor=floor,
+        )
+        cache = self.cache
+        if cache is None and source_text is not None and cache_enabled():
+            cache = LLMResultCache()
+        if cache is not None and source_text is not None:
+            hit = cache.get(TOKEN_STAGE, source_text, **cache_params)
+            if isinstance(hit, dict) and isinstance(hit.get("scores"), dict):
+                self.tracker.record_cached(TOKEN_STAGE)
+                scores = {str(g): float(s) for g, s in hit["scores"].items()}
+                context["scores"] = scores
+                return scores, context, True
+
+        scores: dict[str, float] = {}
+        unscored = 0
+        for index, chunk in enumerate(slices, start=1):
+            report(f"Scoring gates with the LLM (batch {index} of {len(slices)})")
+            got = self._ask_scores(chunk, summary)
+            # A gate left out of the answer is a formatting slip, not a low
+            # score: ask once more for exactly those.
+            missing = [p for p in chunk if str(p["gate_id"]) not in got]
+            if missing:
+                got.update(self._ask_scores(missing, summary))
+                unscored += sum(1 for p in missing if str(p["gate_id"]) not in got)
+            scores.update(got)
+        if unscored:
+            notes.append(f"{unscored} gate(s) were still unscored after one re-ask.")
+        context["scores"] = scores
+        if cache is not None and source_text is not None and scores:
+            cache.put(TOKEN_STAGE, source_text, {"scores": scores}, **cache_params)
+        return scores, context, False
+
+    def _ask_scores(self, rows: list[dict[str, Any]], summary: str) -> dict[str, float]:
+        prompt, alias_to_gate = self._compose_prompt(rows, summary)
+        started = time.perf_counter()
+        response_text = self.provider.complete(
+            prompt, max_output_tokens=reply_budget(len(rows) * _TOKENS_PER_SCORE_LINE)
+        ) or ""
+        self.tracker.record(
+            TOKEN_STAGE, prompt, response_text,
+            usage=getattr(self.provider, "last_usage", None),
+            duration_s=time.perf_counter() - started,
+        )
+        return self._parse_scores(response_text, alias_to_gate)
+
+    @staticmethod
+    def _parse_scores(text: str, alias_to_gate: dict[str, str]) -> dict[str, float]:
+        """Read "alias,score" lines back into real gate names -> score (0-100).
+
+        Scores given on a 0-1 scale are read as fractions. Aliases listed
+        without a score count as top picks (100). Aliases the model invents
+        resolve to nothing and are dropped.
+        """
+        scores: dict[str, float] = {}
+        for raw_line in text.replace(";", "\n").splitlines():
+            parts = [p.strip() for p in raw_line.strip().split(",") if p.strip()]
+            if not parts:
+                continue
+            if len(parts) == 2 and parts[0] in alias_to_gate:
+                try:
+                    value = float(parts[1])
+                except ValueError:
+                    value = 100.0
+                if 0.0 <= value <= 1.0 and "." in parts[1]:
+                    value *= 100.0
+                scores.setdefault(alias_to_gate[parts[0]], max(0.0, min(100.0, value)))
+                continue
+            for token in parts:
+                if token in alias_to_gate:
+                    scores.setdefault(alias_to_gate[token], 100.0)
+        return scores
+
+    def _compose_prompt(
+        self, rows: list[dict[str, Any]], summary: str
+    ) -> tuple[str, dict[str, str]]:
+        """The scoring prompt for exactly ``rows``; returns (prompt, alias -> real gate id).
+
+        Gate names are anonymised before they reach the model. The
+        framework's premise is that gate-level structural features are
+        obfuscation-invariant -- that detection survives an adversary
+        renaming every signal, which is what defeats RTL/source-level
+        detectors. Sending the real names breaks that premise in the worst
+        possible way here, because inserted logic in the generated corpus is
+        named ht_trigger_out_N / HT_PAYLOAD_XOR and Trust-Hub's Tj_* / Trojan_*:
+        a model could score perfectly by string-matching, and any measured
+        result would be evidence about the naming convention rather than
+        about structural reasoning. Opaque ids make the run identical to one
+        on a renamed netlist.
+        """
         alias_to_gate: dict[str, str] = {}
-        rows: list[tuple[str, dict[str, Any]]] = []
-        for index, p in enumerate(pool):
+        table: list[tuple[str, dict[str, Any]]] = []
+        for index, p in enumerate(sorted(rows, key=rarity_key)):
             alias = f"g{index}"
             alias_to_gate[alias] = str(p["gate_id"])
-            rows.append((alias, p.get("features", {}) or {}))
-        profile_block = compact_profile_block(rows)
-
-        floor = min(_MIN_TARGET_GATES, len(pool))
-        order_note = "Rarest-toggling first."
-        if carried:
-            order_note = (
-                f"This is one batch of a larger circuit reviewed in parts. The first "
-                f"{carried} gates are the shortlist you kept from the earlier batches; "
-                "the rest are new, rarest-toggling first. Return the best gates among "
-                "ALL of them: keep shortlisted gates that still rank highest, replace "
-                "them with new gates that rank higher."
-            )
+            table.append((alias, p.get("features", {}) or {}))
         prompt = f"""{summary}
 
 You are assisting with test-pattern generation for a combinational circuit,
 with the specific goal of catching logic that may have been maliciously
 inserted (a hardware trojan) as well as ordinary hard-to-test faults.
 
-Select the gates whose stuck-at faults are most worth targeting explicitly.
-Weigh two different kinds of evidence:
+A structural ranking has already chosen the circuit's rarest, hardest-to-
+observe gates; they are not shown. Score each gate below for how much its
+stuck-at faults are worth targeting explicitly in addition to those. Your
+highest-scored gates take the remaining places in the fault list. Weigh two
+different kinds of evidence:
 
 1. Testability. Rarely-toggling, high fan-in, or hard to observe (high SCOAP
    CO). These faults are the ones random patterns are least likely to catch.
@@ -530,254 +676,20 @@ Weigh two different kinds of evidence:
 {_FEW_SHOT_EXEMPLARS}
 
 Gates with a mark were flagged by deterministic analysis of the full
-netlist; include them unless the profile clearly contradicts the mark. Do
-not stop at the most extreme gates either: inserted logic can also hide
-mid-distribution, so return a spread of at least {floor} gates unless the
-circuit is smaller than that, covering both kinds of evidence above.
+netlist; score them high unless the profile clearly contradicts the mark.
 
 ### Output format
-Return one line per gate, most suspicious first, as:
+Return exactly one line for EVERY gate in the table, as:
 
-    gate_id,confidence
+    gate_id,score
 
-where confidence is between 0.0 and 1.0. Output nothing else -- no prose, no
-headers. Return between {floor} and {max_gates} gates.
+where score is an integer from 0 (not worth targeting) to 100 (certainly
+worth it). Output nothing else -- no prose, no headers, no gate left out.
 
 ### Gate profiles
 {COMPACT_LEGEND}
-{order_note}
+Rarest-toggling first.
 
-{profile_block}
+{compact_profile_block(table)}
 """
-        return prompt, pool, pool_notes, alias_to_gate
-
-    def _select_in_batches(
-        self,
-        profiles: list[dict[str, Any]],
-        summary: str,
-        max_gates: int,
-        answer_gates: int,
-        graph: Any,
-        suspects: list[str] | None,
-        batch_size: int,
-        batches: int,
-        source_text: str | None,
-        context: dict[str, Any],
-    ) -> tuple[list[str], dict[str, Any], bool]:
-        """Review more of the circuit than one request can carry.
-
-        Each request holds ``batch_size`` gate profiles -- what fits the
-        provider's per-request token limit. The first batch is the rarest
-        gates; every later one carries the shortlist the model kept so far
-        plus the next slice of new candidates, so the model ends up having
-        compared ``batches`` times as many gates as one request allows. The
-        selection is the final shortlist followed by what earlier batches
-        picked, up to ``max_gates``.
-        """
-        from pyatpg.core.progress import report
-
-        carry = max(1, min(answer_gates, batch_size // 3))
-        fresh = batch_size - carry
-        total = min(len(profiles), batch_size + (batches - 1) * fresh)
-        big_pool, big_notes = build_candidate_pool(profiles, graph, total, suspects)
-        slices = [big_pool[:batch_size]] + [
-            big_pool[i:i + fresh] for i in range(batch_size, len(big_pool), fresh)
-        ]
-        slices = [chunk for chunk in slices if chunk][:batches]
-        by_id = {str(p["gate_id"]): p for p in profiles}
-
-        cache_params = dict(
-            model=self.provider.model_name, max_gates=max_gates, answer=answer_gates,
-            batch_size=batch_size, batches=len(slices), names="v2", prompt="v4",
-            forced=len(suspects or []),
-        )
-        cache = self.cache
-        if cache is None and source_text is not None and cache_enabled():
-            cache = LLMResultCache()
-        context = {
-            **context,
-            "gates_sent": len(big_pool),
-            "batches": len(slices),
-            "notes": [
-                *big_notes,
-                f"Reviewed in {len(slices)} batches of up to {batch_size} gates to fit the "
-                f"{request_token_budget()}-token request budget: {len(big_pool)} of "
-                f"{len(profiles)} gates were seen, each batch carrying the best {carry} "
-                "forward to the next. Set the llm_batches setting to 1 for a single request.",
-            ],
-        }
-        if cache is not None and source_text is not None:
-            hit = cache.get(TOKEN_STAGE, source_text, **cache_params)
-            if isinstance(hit, dict) and isinstance(hit.get("gates"), list):
-                self.tracker.record_cached(TOKEN_STAGE)
-                return [str(g) for g in hit["gates"]], context, True
-
-        shortlist: list[dict[str, Any]] = []
-        picks: list[list[str]] = []
-        for index, chunk in enumerate(slices, start=1):
-            report(f"Selecting target gates with the LLM (batch {index} of {len(slices)})")
-            listed = {str(p["gate_id"]) for p in shortlist}
-            rows = shortlist + [p for p in chunk if str(p["gate_id"]) not in listed]
-            prompt, _, _, alias_to_gate = self._compose_prompt(
-                profiles, summary, answer_gates, graph, suspects, 0,
-                rows_pool=rows, carried=len(shortlist),
-            )
-            started = time.perf_counter()
-            response_text = self.provider.complete(
-                prompt,
-                max_output_tokens=reply_budget(answer_gates * _TOKENS_PER_TARGET_LINE),
-            ) or ""
-            self.tracker.record(
-                TOKEN_STAGE, prompt, response_text,
-                usage=getattr(self.provider, "last_usage", None),
-                duration_s=time.perf_counter() - started,
-            )
-            chosen = [g for g in self._parse_scored_response(response_text, alias_to_gate)
-                      if g in by_id]
-            picks.append(chosen)
-            if chosen:
-                shortlist = [by_id[g] for g in chosen[:carry]]
-
-        # Final shortlist first (it has seen everything), then earlier picks.
-        gates = list(dict.fromkeys(g for batch in reversed(picks) for g in batch))[:max_gates]
-        if cache is not None and source_text is not None:
-            cache.put(TOKEN_STAGE, source_text, {"gates": gates}, **cache_params)
-        return gates, context, False
-
-    def _select_with_llm(
-        self,
-        profiles: list[dict[str, Any]],
-        summary: str,
-        max_gates: int,
-        graph: Any = None,
-        suspects: list[str] | None = None,
-        source_text: str | None = None,
-    ) -> tuple[list[str], dict[str, Any], bool]:
-        """Ask the model, returning (gates, context description, was_cached)."""
-        # Decide what the model sees. Everything, for a circuit within the
-        # cap; otherwise a pool built from several deterministic views so a
-        # gate ranked just below any single cutoff is not invisible (see
-        # llm_context for why a plain top-N truncation was not good enough).
-        limit = context_gate_limit(self.context_gate_limit)
-        # The model must be able to answer with max_gates distinct gates.
-        limit = max(limit, max_gates) if limit else 0
-        prompt, pool, pool_notes, alias_to_gate = self._compose_prompt(
-            profiles, summary, max_gates, graph, suspects, limit
-        )
-
-        # A gate *count* is only a rough proxy for what a request costs, and
-        # a provider that refuses an oversized one (Groq's free tier caps a
-        # single request at 8000 tokens) rejects it before the model runs.
-        # So measure what was actually built and, if it will not fit, ask
-        # for less -- of both kinds, because the two costs are independent:
-        # the pool is what the prompt carries, while max_gates sets how long
-        # the answer may be, and a reply bound is reserved against the same
-        # budget whether or not the model uses it. On a tight budget,
-        # shrinking only the pool cannot help once its floor is the number
-        # of gates the answer still has to be able to name.
-        budget = request_token_budget()
-        effective_max_gates = max_gates
-        if limit > 0 and budget > 0:
-            pool_limit = limit
-            rounds = 0
-            while (
-                estimate_prompt_tokens(prompt)
-                + reply_budget(effective_max_gates * _TOKENS_PER_TARGET_LINE)
-                > budget
-                and rounds < _MAX_SHRINK_ROUNDS
-            ):
-                rounds += 1
-                before = (len(pool), effective_max_gates)
-                at_gate_floor = effective_max_gates <= _MIN_TARGET_GATES
-                at_pool_floor = len(pool) <= max(effective_max_gates, _MIN_CONTEXT_POOL)
-                if at_gate_floor and at_pool_floor:
-                    break
-                effective_max_gates = max(
-                    _MIN_TARGET_GATES, int(effective_max_gates * 0.7)
-                )
-                pool_limit = max(
-                    effective_max_gates, _MIN_CONTEXT_POOL, int(pool_limit * 0.7)
-                )
-                prompt, pool, pool_notes, alias_to_gate = self._compose_prompt(
-                    profiles, summary, effective_max_gates, graph, suspects, pool_limit
-                )
-                if (len(pool), effective_max_gates) == before:
-                    break  # nothing left to shrink; send what fits best
-            if effective_max_gates != max_gates or len(pool) < limit:
-                pool_notes = [
-                    *pool_notes,
-                    f"Trimmed to {len(pool)} gates of context and at most "
-                    f"{effective_max_gates} targeted gates to fit a {budget}-token "
-                    f"request budget. Set {REQUEST_TOKEN_BUDGET_ENV_VAR}=0 to "
-                    "disable this, or raise it on a provider whose per-request "
-                    "limit is larger than Groq's free tier.",
-                ]
-
-        context = {
-            "gates_sent": len(pool),
-            "gates_total": len(profiles),
-            "gate_limit": limit,
-            "notes": pool_notes,
-        }
-        # The budget cut the pool short of what the model should see: review
-        # the rest in batches, each carrying the shortlist forward.
-        wanted = min(limit, len(profiles)) if limit else len(profiles)
-        batches = llm_batches()
-        if batches > 1 and len(pool) < wanted:
-            return self._select_in_batches(
-                profiles, summary, max_gates, effective_max_gates, graph, suspects,
-                len(pool), batches, source_text, context,
-            )
-        # An identical netlist through the same model with the same pool
-        # settings would get the same answer at full price.
-        # Keyed on what was actually sent: a budget-trimmed request asks a
-        # different question than the full one, and must not read back its
-        # answer from the cache (or leave its own answer where the full one
-        # would be found).
-        cache_params = dict(
-            model=self.provider.model_name,
-            max_gates=effective_max_gates,
-            limit=len(pool),
-            # Bumped when the parser's net naming changes (v2: hierarchy
-            # separator "/" -> "__"), so an old answer naming gates that no
-            # longer exist is not reused -- they would all be filtered out.
-            names="v2",
-            # Bumped when the prompt itself changes (v3: trigger marks and
-            # Example D; v4: tmr mark, fewer flagged gates in the pool), so
-            # an answer to the old prompt is not reused.
-            prompt="v4",
-            # Detector findings shown/forced (0 with detector_in_targeting
-            # off): a different question, so never the same cached answer.
-            forced=len(suspects or []),
-        )
-        cache = self.cache
-        if cache is None and source_text is not None and cache_enabled():
-            cache = LLMResultCache()
-        if cache is not None and source_text is not None:
-            hit = cache.get(TOKEN_STAGE, source_text, **cache_params)
-            if isinstance(hit, dict) and isinstance(hit.get("response"), str):
-                self.tracker.record_cached(TOKEN_STAGE)
-                # The alias map is rebuilt from the same deterministic pool,
-                # so the cached response resolves to the same gates.
-                return (
-                    self._parse_scored_response(hit["response"], alias_to_gate),
-                    context,
-                    True,
-                )
-
-        # Retries on transient failures live inside the provider.
-        started = time.perf_counter()
-        response_text = self.provider.complete(
-            prompt,
-            max_output_tokens=reply_budget(
-                effective_max_gates * _TOKENS_PER_TARGET_LINE
-            ),
-        ) or ""
-        elapsed = time.perf_counter() - started
-        self.tracker.record(
-            TOKEN_STAGE, prompt, response_text,
-            usage=getattr(self.provider, "last_usage", None), duration_s=elapsed,
-        )
-        if cache is not None and source_text is not None:
-            cache.put(TOKEN_STAGE, source_text, {"response": response_text}, **cache_params)
-        return self._parse_scored_response(response_text, alias_to_gate), context, False
+        return prompt, alias_to_gate

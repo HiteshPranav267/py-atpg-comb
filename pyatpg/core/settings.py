@@ -48,10 +48,19 @@ SETTINGS: dict[str, Setting] = {s.key: s for s in [
             minimum=1),
     Setting("detector_in_targeting", "PYATPG_DETECTOR_IN_TARGETING", bool, True,
             "Detector feeds the targeted list",
-            "Off = the targeted fault list is the LLM's picks alone (no detector gates "
-            "forced in, no marks shown to it), and the 'without LLM' baseline is the plain "
-            "heuristic -- for measuring what the LLM finds by itself. The verdict still "
-            "uses the detector."),
+            "Off = no detector gates are forced into the targeted list or shown to the "
+            "LLM; both modes are the plain heuristic, the LLM replacing its share of it -- "
+            "for measuring what the LLM finds by itself. The verdict still uses the "
+            "detector."),
+    Setting("llm_share", "PYATPG_LLM_SHARE", float, 0.5, "LLM share of the fault list",
+            "LLM runs keep the structural heuristic's top picks and let the model replace "
+            "this share of the list (0-1) with gates it scores higher; picks it does not "
+            "make fall back to the heuristic's next ones. Both modes test the same number "
+            "of gates, so 'with vs without LLM' compares like for like."),
+    Setting("target_gates", "PYATPG_TARGET_GATES", int, 0, "Targeted fault-list size",
+            "Gates in the targeted fault list, before detector findings are added. 0 = "
+            "scale with the circuit (30% of gates, 20-200). Set it to compare recall at "
+            "several budgets."),
     Setting("llm_timeout_s", "PYATPG_LLM_TIMEOUT", float, 90.0, "LLM request timeout (s)",
             "Per LLM request (retries and backup keys come on top).", minimum=1),
     Setting("seq_time_budget_s", "PYATPG_SEQ_TIME_BUDGET", float, 40.0,

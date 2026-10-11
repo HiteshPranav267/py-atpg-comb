@@ -42,10 +42,16 @@ _TROJAN_NAME = re.compile(
 )
 
 
-def ground_truth_gates(circuit: Circuit) -> list[str]:
-    """Nets whose names mark them as Trojan logic (trigger, payload, state)."""
+def ground_truth_gates(circuit: Circuit, undriven: Iterable[str] = ()) -> list[str]:
+    """Nets whose names mark them as Trojan logic (trigger, payload, state).
+
+    ``undriven`` nets (read but never driven, promoted to inputs) are left
+    out: no gate exists there to find. s38584-T300 ships its trigger output
+    ``Trigger_out`` undriven, and counting it made recall look short by one.
+    """
     names = set(circuit.gates) | {ff.q for ff in getattr(circuit, "flipflops", [])}
     names |= set(circuit.inputs)  # full scan turns trigger registers into inputs
+    names -= set(undriven)
     return sorted(n for n in names if _TROJAN_NAME.search(n))
 
 

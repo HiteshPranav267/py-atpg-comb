@@ -403,8 +403,16 @@ export interface TargetingInfo {
   context?: {
     gates_sent?: number;
     gates_total?: number;
+    // Most gates one request may carry.
     gate_limit?: number;
+    batches?: number;
     notes?: string[];
+    // The list both modes share: the heuristic's top `floor` gates, then
+    // `llm_slots` filled by the model's picks or the heuristic's next ones.
+    floor?: number;
+    llm_slots?: number;
+    llm_picks?: string[];
+    heuristic_fill?: string[];
   };
 }
 

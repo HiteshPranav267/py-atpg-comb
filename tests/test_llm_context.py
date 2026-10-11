@@ -29,8 +29,9 @@ class _Fake(LLMProvider):
     def complete(self, prompt, *, json_mode=False, max_output_tokens=None):
         self.prompts.append(prompt)
         self.last_usage = self._usage
+        # Scores every gate it is shown, as the prompt requires.
         aliases = re.findall(r"^(g\d+),", prompt, flags=re.MULTILINE)
-        return "\n".join(f"{a},0.9" for a in aliases[:5])
+        return "\n".join(f"{a},90" for a in aliases)
 
 
 def _profile(text=TROJAN, **kw):
@@ -119,7 +120,12 @@ def test_prompt_uses_compact_rows_and_reports_context():
     prompt = fake.prompts[0]
     assert C.COMPACT_HEADER in prompt
     assert "Gate:" not in prompt  # the old paragraph form is gone
-    assert sel.context["gates_sent"] == len(p.gate_profiles)
+    # The model is shown every gate outside the heuristic's floor and the
+    # forced detector findings, and scores each one.
+    pool = set(sel.context["pool"])
+    assert sel.context["gates_sent"] == len(pool) > 0
+    assert not pool & set(sel.gates[:sel.context["floor"]])
+    assert set(sel.context["scores"]) == pool
     assert tracker.total_calls == 1
     assert tracker.calls[0].stage == "targeting"
 

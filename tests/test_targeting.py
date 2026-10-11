@@ -1,5 +1,7 @@
 """Targeting: reproducible ranking, structural trojan detection, and the
 guarantee that a detected suspect always reaches the fault list."""
+import re
+
 import pytest
 
 from pyatpg.atpg.structural import parse_circuit, profile_circuit
@@ -181,12 +183,11 @@ class TestObfuscationInvariance:
     def test_invented_aliases_are_dropped(self):
         from pyatpg.atpg import targeting as T
 
-        p = _profile(TROJAN, toggle_patterns=200)
-
-        provider = _FakeProvider("g0, g99999, not_an_alias, ht_trig")
-        selection = T.FaultTargetSelector(provider=provider).select(p.gate_profiles)
+        scores = T.FaultTargetSelector._parse_scores(
+            "g0, g99999, not_an_alias, ht_trig", {"g0": "real_gate"}
+        )
         # Only the one real alias survives; a raw gate name is not an alias.
-        assert len(selection.gates) == 1
+        assert scores == {"real_gate": 100.0}
 
 
 class TestRequestTokenBudget:
@@ -282,36 +283,82 @@ class TestSuspectMerging:
             assert gate in sel.gates
 
 
-class TestConfidenceScoring:
-    """The prompt asks for 'alias,confidence'; low-confidence gates are dropped."""
+def _scoring_provider(score):
+    """Scores every gate it is shown with ``score(alias_index)``."""
+    import re
 
-    def _run(self, response_text):
+    def respond(prompt):
+        aliases = re.findall(r"^g(\d+),", prompt, flags=re.MULTILINE)
+        return "\n".join(f"g{a},{score(int(a))}" for a in aliases)
+
+    return _FakeProvider(respond)
+
+
+class TestHeuristicFloor:
+    """LLM runs keep the heuristic's top picks; the model fills the rest of
+    the same-size list with the gates it scores highest."""
+
+    @staticmethod
+    def _select(provider, monkeypatch, share="0.5"):
+        monkeypatch.setenv("LLM_REQUEST_TOKEN_BUDGET", "0")
+        monkeypatch.setenv("PYATPG_LLM_SHARE", share)
+        profiles = TestRequestTokenBudget._big_profiles()
+        llm = FaultTargetSelector(provider=provider).select(profiles)
+        base = FaultTargetSelector(provider=None).select(profiles)
+        return llm, base
+
+    def test_both_modes_test_the_same_number_of_gates(self, monkeypatch):
+        llm, base = self._select(_scoring_provider(lambda a: 90), monkeypatch)
+        assert len(llm.gates) == len(base.gates) == 120  # 30% of 400
+        floor = llm.context["floor"]
+        assert floor == 60 and llm.gates[:floor] == base.gates[:floor]
+
+    def test_low_scores_leave_their_slots_to_the_heuristic(self, monkeypatch):
+        llm, base = self._select(_scoring_provider(lambda a: 90 if a < 5 else 10), monkeypatch)
+        scores = llm.context["scores"]
+        high = {g for g, s in scores.items() if s >= 30}  # 5 per batch
+        assert 0 < len(high) < 60
+        assert set(llm.context["llm_picks"]) == high
+        assert len(llm.context["heuristic_fill"]) == 60 - len(high)
+        assert len(llm.gates) == len(base.gates)
+
+    def test_a_model_that_picks_nothing_gives_the_heuristic_list(self, monkeypatch):
+        llm, base = self._select(_scoring_provider(lambda a: 0), monkeypatch)
+        assert llm.used_llm and llm.gates == base.gates
+
+    def test_picks_are_highest_score_first(self, monkeypatch):
+        llm, _ = self._select(_scoring_provider(lambda a: a % 100), monkeypatch)
+        scores = llm.context["scores"]
+        picked = [scores[g] for g in llm.context["llm_picks"]]
+        assert picked == sorted(picked, reverse=True)
+
+    def test_zero_share_is_the_heuristic(self, monkeypatch):
+        llm, base = self._select(_scoring_provider(lambda a: 90), monkeypatch, share="0")
+        assert llm.gates == base.gates
+
+    def test_scores_on_a_zero_to_one_scale_are_read_as_fractions(self):
         from pyatpg.atpg import targeting as T
 
-        p = _profile(TROJAN, toggle_patterns=200)
+        scores = T.FaultTargetSelector._parse_scores("g0,0.9\ng1,45\ng2,1", {
+            "g0": "a", "g1": "b", "g2": "c"})
+        assert scores == {"a": 90.0, "b": 45.0, "c": 1.0}
+
+    def test_unscored_gates_are_asked_for_again(self, monkeypatch):
+        calls = []
 
         def respond(prompt):
             import re
 
-            # Aliases appear as the first column of the compact CSV rows.
             aliases = re.findall(r"^(g\d+),", prompt, flags=re.MULTILINE)
-            return response_text.format(*aliases[:4])
+            calls.append(len(aliases))
+            # First answer leaves half the table out; the re-ask scores the rest.
+            keep = aliases[: len(aliases) // 2] if len(calls) == 1 else aliases
+            return "\n".join(f"{a},50" for a in keep)
 
-        return T.FaultTargetSelector(provider=_FakeProvider(respond)).select(p.gate_profiles)
-
-    def test_low_confidence_gates_are_dropped(self):
-        sel = self._run("{0},0.9\n{1},0.1\n{2},0.8\n{3},0.05")
-        # Only the two gates at or above the 0.3 threshold survive.
-        assert len(sel.gates) == 2
-
-    def test_results_are_ordered_by_confidence(self):
-        sel = self._run("{0},0.4\n{1},0.95\n{2},0.6")
-        assert len(sel.gates) == 3
-
-    def test_bare_list_without_scores_still_works(self):
-        """Older/looser responses without confidences must not be discarded."""
-        sel = self._run("{0},{1},{2}")
-        assert len(sel.gates) >= 3
+        monkeypatch.setenv("PYATPG_LLM_BATCHES", "1")
+        llm, _ = self._select(_FakeProvider(respond), monkeypatch)
+        assert len(calls) == 2 and calls[1] == calls[0] - calls[0] // 2
+        assert set(llm.context["scores"]) == set(llm.context["pool"])
 
 
 class TestVerdict:
@@ -345,8 +392,22 @@ class TestVerdict:
         assert v.verdict == "trojan_suspected"
         by = {s.gate: s for s in v.suspects}
         assert by["tg_clk"].confidence >= 0.9
-        # Shape plus trigger evidence outranks shape alone.
-        assert by["ht_trig"].confidence > by["benign_xor"].confidence
+        # Shape adds to trigger evidence; shape alone is dropped once the
+        # trigger detector has found the Trojan (it only dilutes the list).
+        assert by["ht_trig"].confidence > 0.6
+        assert "benign_xor" not in by
+
+    def test_shape_only_leads_stay_when_nothing_strong_was_found(self):
+        from pyatpg.atpg.trigger_detector import TriggerEvidence
+        from pyatpg.atpg.verdict import build_verdict
+
+        ev = TriggerEvidence()
+        ev.add("lead", "never_toggling_cluster", "one of 6 never-toggling gates")
+        v = build_verdict(["benign_xor"], [], [], trigger_evidence=ev)
+        assert v.verdict == "inconclusive"
+        assert {s.gate for s in v.suspects} == {"lead", "benign_xor"}
+        assert "1 with a single trigger-like sign" in v.summary
+        assert "1 matching the XOR-splice shape" in v.summary
 
 
 class TestGateTypeCoverage:
@@ -448,30 +509,31 @@ class TestBatchedSelection:
 
         return Rec(), prompts
 
-    def test_overflowing_pool_is_split_and_the_shortlist_carried(self, monkeypatch):
+    def test_overflowing_pool_is_scored_in_independent_batches(self, monkeypatch):
         from pyatpg.atpg import targeting as T
 
         monkeypatch.setenv("LLM_REQUEST_TOKEN_BUDGET", "4000")
         monkeypatch.setenv("PYATPG_LLM_BATCHES", "3")
-        provider, prompts = self._recording()
+        provider = _scoring_provider(lambda a: 50)
         profiles = TestRequestTokenBudget._big_profiles()
         sel = T.FaultTargetSelector(provider=provider).select(profiles)
-        assert len(prompts) == 3
-        assert "shortlist you kept from the earlier batches" not in prompts[0]
-        assert "shortlist you kept from the earlier batches" in prompts[1]
-        assert sel.context["batches"] == 3
-        # More of the circuit was seen than one request could carry.
-        assert sel.context["gates_sent"] > len(prompts[0].split("\n")) // 4
-        assert sel.gates
+        assert len(provider.prompts) == 3 == sel.context["batches"]
+        assert "shortlist" not in provider.prompts[1]
+        # Every gate shown was scored, none twice, and more of the circuit
+        # was seen than one request could carry.
+        pool = sel.context["pool"]
+        assert len(pool) == len(set(pool)) and set(sel.context["scores"]) == set(pool)
+        rows = len(re.findall(r"^g\d+,", provider.prompts[0], flags=re.MULTILINE))
+        assert len(pool) > rows
 
     def test_one_batch_setting_sends_a_single_request(self, monkeypatch):
         from pyatpg.atpg import targeting as T
 
         monkeypatch.setenv("LLM_REQUEST_TOKEN_BUDGET", "4000")
         monkeypatch.setenv("PYATPG_LLM_BATCHES", "1")
-        provider, prompts = self._recording()
+        provider = _scoring_provider(lambda a: 50)
         T.FaultTargetSelector(provider=provider).select(TestRequestTokenBudget._big_profiles())
-        assert len(prompts) == 1
+        assert len(provider.prompts) == 1
 
 
 class TestDetectorSwitches:
@@ -490,3 +552,23 @@ class TestDetectorSwitches:
             extra_suspects=[(str(p.gate_profiles[0]["gate_id"]), "flagged")],
         )
         assert sel.structural_suspects == [] and len(sel.gates) == 1
+
+
+def test_analysis_regions_take_the_models_slots_first(monkeypatch):
+    from pyatpg.atpg.circuit_analyst import CircuitAnalysis, SuspiciousRegion
+    from pyatpg.atpg.targeting import analysis_region_gates
+
+    profiles = TestRequestTokenBudget._big_profiles()
+    narrow = [str(p["gate_id"]) for p in profiles[-3:]]  # the least rare: never in the floor
+    analysis = CircuitAnalysis(source="llm", suspicious_regions=[
+        SuspiciousRegion(name="narrow", gates=narrow),
+        SuspiciousRegion(name="whole pool", gates=[f"x{k}" for k in range(120)]),
+    ])
+    hints = analysis_region_gates(analysis)
+    assert hints == narrow  # the 120-gate "region" says nothing
+
+    monkeypatch.setenv("LLM_REQUEST_TOKEN_BUDGET", "0")
+    sel = FaultTargetSelector(provider=_scoring_provider(lambda a: 0)).select(
+        profiles, hints=hints)
+    assert sel.context["llm_picks"][:3] == narrow
+    assert sel.context["analysis_hints"] == narrow

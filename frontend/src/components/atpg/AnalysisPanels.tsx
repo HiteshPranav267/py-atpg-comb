@@ -401,10 +401,19 @@ export function LlmUsagePanel({
 
       {context && context.gates_total != null && (
         <p className="text-xs text-muted-foreground mt-4 leading-relaxed border-t border-border pt-4">
-          Context sent for gate selection: {context.gates_sent?.toLocaleString()} of{' '}
-          {context.gates_total.toLocaleString()} gate profiles
-          {context.gate_limit ? ` (cap ${context.gate_limit.toLocaleString()}; LLM_CONTEXT_GATES=0 sends all)` : ''}
+          Gates scored by the model: {context.gates_sent?.toLocaleString()} of{' '}
+          {context.gates_total.toLocaleString()}
+          {context.batches && context.batches > 1 ? ` in ${context.batches} requests` : ''}
+          {context.gate_limit ? ` (at most ${context.gate_limit.toLocaleString()} per request; LLM_CONTEXT_GATES=0 sends all)` : ''}
           , as one CSV row per gate.
+          {context.llm_slots != null && context.floor != null && (
+            <>
+              {' '}Fault list: the heuristic&apos;s top {context.floor.toLocaleString()}, then{' '}
+              {(context.llm_picks?.length ?? 0).toLocaleString()} model pick(s) and{' '}
+              {(context.heuristic_fill?.length ?? 0).toLocaleString()} heuristic fill in its{' '}
+              {context.llm_slots.toLocaleString()} slot(s).
+            </>
+          )}
         </p>
       )}
     </Section>

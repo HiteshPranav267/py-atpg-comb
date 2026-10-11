@@ -8,6 +8,133 @@ Numbers marked *detector only* come from running the trigger detector on the
 full-scan model with no ATPG and no LLM (a few seconds per circuit). Numbers
 from full runs say so.
 
+## 2026-10-11: combinational triggers, LLM selection on a heuristic floor
+
+Prompted by the first held-out runs (compare mode, full scan, LLM on):
+s35932-T100/T200/T300, s38417-T100/T200/T300, s38584-T100/T200/T300.
+s38584 and s35932-T100 were found whole; the rest showed four problems.
+Recall with / without the LLM:
+
+- s35932-T200: 0.20 / 0.20, verdict inconclusive.
+- s38417-T100: 0.91 / 0.91, Trojan suspected (0.78).
+- s38417-T200: 0.36 / 0.71, Trojan suspected (0.78).
+
+### Combinational trigger trees (`trigger_detector.py`)
+
+- **Problem.** s35932-T200 and s38417-T100/T200 have no trigger register:
+  Tj_OUT1..8 feed only Tj_OUT1234/5678, which feed only Tj_Trigger, which
+  drives the payload gates. Every strong rule needs a register or an output
+  splice. On s35932-T200 the leaves are 1 in ~40% of random full-scan
+  patterns, so no rarity sign sees the tree; on s38417-T200 Tj_OUT5 toggles 4
+  times in 16384 patterns and split the never-toggling cluster. The payload
+  gates (`n4263_Tj_Payload`, `n4122/4149/4160/4161_Tj_Payload`, probability
+  0.06 to 0.44) were in no list at all.
+- **Check before changing it.** A fanout-free tree of rare gates is not
+  evidence: clean ISCAS s38584 has a 19-gate one with a root that never
+  toggles, s838 several 11-gate ones. What the three trees share is the hand
+  edit inside them, `NOR(Tj_OUT1, Tj_OUT1, ...)`. Duplicate-input gates do
+  occur in clean ISCAS-85 (5 gates over c1908, c2670, c3540), so the edit
+  alone stays a lead.
+- **Change.** New evidence `trigger_tree` (0.70) and `trigger_payload` (0.70,
+  payload family). From a duplicate-input gate, follow the single consumer
+  while it is a conjunction over it (its rare value needs this gate's rare
+  value; an XOR or OR payload is not), to a root rare in under 5% of
+  patterns. The root and the fanout-free tree under it (at least 5 gates, at
+  most 3 levels) are the trigger; the gates the root drives are the payload,
+  and their other inputs are host signals the region never grows into.
+- **Effect (detector only, synthetic).** The Trust-Hub netlists for
+  s35932/s38417 are not in the repository, so the rule was checked on their
+  shape inserted into clean ISCAS s38417, s35932, s15850 and s38584 (rare
+  and common leaves, 1 or 4 payload gates): every Trojan gate flagged strong,
+  no host gate flagged strong. Without the duplicate input nothing is found,
+  which is the rule's limit. Unchanged: clean s15850, s38417, s35932,
+  s38584 (ISCAS and Trust-Hub TjFree), the clean ISCAS-85 circuits with
+  duplicate inputs (nothing strong), s38584-T300 TjIn/TjIn_fixed (identical
+  output), and all 120 generated Trojan netlists under `atpg testing/c*`.
+
+### LLM selection: heuristic floor, same budget, every gate scored (`targeting.py`)
+
+- **Problem.** On s38417-T200 recall *with* the LLM was 0.36 against 0.71
+  without, for three reasons visible in the report.
+- **Cause 1: the model's picks replaced the heuristic's.** The heuristic
+  ranks all 9386 gates; the model saw 306 (3.3%), and Tj_OUT5..8 were not
+  among what it kept.
+- **Cause 2: the two lists were not the same size.** 163 gates with the LLM,
+  204 without (T100: 131 vs 206), so part of the gap was budget, not choice.
+- **Cause 3: each batch kept only its best 34 gates for the next.** A gate
+  dropped there was gone, and the report did not record the pool, so which
+  of the two happened could not be told.
+- **Missed signal.** The circuit-analysis model, which sees the 120 rarest
+  gates, named Tj_OUT5678, Tj_OUT7 and Tj_OUT8 as a suspicious region in the
+  same run, but it ran after ATPG and fed nothing.
+- **Change: same budget, heuristic floor.** Both modes test the same number
+  of gates (the existing 30% / 20-200 budget, or the new `target_gates`
+  setting). LLM runs keep the heuristic's top picks and the model fills the
+  remaining `llm_share` of the list (new setting, default 0.5); slots it
+  leaves empty (no gate scored 30+) go to the heuristic's next picks. An LLM
+  run can lose at most the heuristic's last picks, and `llm_only_hits` is
+  exactly what the model added.
+- **Change: every gate scored.** The model scores every gate it is shown
+  (0-100), in independent batches with no trimming between them; scores are
+  ranked globally, and gates left out of an answer are asked for once more.
+  It is shown only gates outside the floor and the forced detector findings.
+- **Change: circuit analysis first.** It now runs before selection, and the
+  gates of its suspicious regions of at most 25 gates take the model's slots
+  first (it often returns one region spanning its whole 120-gate input,
+  which says nothing). The no-LLM list never gets them.
+- **Change: logged.** The report's `targeting.context` holds the pool, every
+  score, the floor, the model's picks and the heuristic fill; the ATPG page
+  shows how many gates the model scored and how its slots were filled.
+- **Effect (fake model, s38584-T300 TjIn).** 444 of 13,010 gates scored in 4
+  requests of 111 gates under the 7000-token budget (306 seen before); both
+  lists 200 gates with the same 100-gate floor. Not yet measured with a real
+  model.
+
+### Ground truth leaves out undriven nets (`trojan_metrics.py`)
+
+- s38584-T300 ships its trigger output `Trigger_out` undriven; it was promoted
+  to a free input and counted as a Trojan gate no rule could find. T300 TjIn
+  ground truth: 1937 → 1936 gates.
+- s35932-T300 had no ground truth at all: it reads undriven `TjTrigger` and
+  `Stage3`, and no net in the parsed netlist has a Trojan name. The Trojan's
+  own module was not in the upload (or drives no output and was removed as
+  dead logic); the run needs the whole Trust-Hub folder.
+
+### Verdict suspects (`verdict.py`)
+
+- XOR-shape-only matches are left out of the suspect list when the trigger
+  detector has a strong finding: on the s35932/s38417/s38584 runs they hit no
+  Trojan gate in 7 of 7 scored runs, and up to 232 of them diluted the list
+  (s38417-T100 verdict-suspect precision 0.04).
+- The "inconclusive" summary said every lead was an XOR-splice match even
+  when the leads were never-toggling groups or duplicate inputs; it now
+  counts each kind.
+
+### Not fixed
+
+- s38417 keeps 16 to 36 targeted faults aborted on host nets (`n2107`,
+  `n2005`, ...) even at `-b 10000 -L`, holding targeted coverage at 85-89%.
+  None are Trojan faults.
+- The s38584-T200 rerun selected 385 gates against 389 on 9 Oct (13 and 9
+  gates differ), precision 0.67 both times, so the "~115 fewer non-Trojan
+  gates" expected from the XOR-shape change on 9 Oct did not appear.
+  Whether the 9 Oct run was already on that code is not recorded in the
+  report (`runs.backend_commit` in the run database has it).
+
+### Next runs (none of today's changes is measured yet)
+
+- Rerun s35932-T200 and s38417-T100/T200 (compare mode, full scan, LLM on).
+  These now count as tuned circuits: report their numbers before and after
+  this entry, not as held-out results.
+- Re-upload s35932-T300 as the whole Trust-Hub folder.
+- Run the Trojan-free versions (s35932, s38417, s38584 TjFree) to confirm the
+  new rule raises no false alarm on the real netlists.
+- Recall at several budgets: the same circuits at `target_gates` 50, 100 and
+  200.
+- Repeat runs for run-to-run spread need `LLM_RESULT_CACHE=0` on the
+  backend; otherwise every repeat reuses the first run's cached scores.
+- Round 2 (`detector_in_targeting` off) after the runs above.
+
 ## 2026-10-10: smaller report downloads
 
 Prompted by the s38584-T300 report download: 14.8 MB, too large to analyse.

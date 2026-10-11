@@ -132,8 +132,15 @@ def build_verdict(
     targeted = set(targeted_gates or [])
     trigger_by_gate = getattr(trigger_evidence, "by_gate", {}) or {}
     shape = set(structural_suspects)
+    # Where the trigger detector found the Trojan, shape-only matches are
+    # noise: across the s35932/s38417/s38584 Trust-Hub runs they hit no
+    # Trojan gate, and up to 232 of them diluted the suspect list.
+    found = bool(trigger_by_gate) and any(
+        trigger_evidence.strength(g) >= _SUSPECTED_THRESHOLD for g in trigger_by_gate
+    )
+    candidates = set(trigger_by_gate) | (set() if found else shape)
 
-    for gate in sorted(shape | set(trigger_by_gate)):
+    for gate in sorted(candidates):
         gate_statuses = statuses.get(gate, set())
         blocked = bool(gate_statuses & _NO_PATTERN)
         status = ", ".join(sorted(gate_statuses)) if blocked else "detected"
@@ -195,10 +202,14 @@ def build_verdict(
     elif verdict.suspects:
         verdict.verdict = "inconclusive"
         verdict.confidence = verdict.suspects[0].confidence
+        n_shape = sum(1 for s in verdict.suspects if s.evidence.startswith("shape"))
+        n_leads = len(verdict.suspects) - n_shape
         verdict.summary = (
-            f"{len(verdict.suspects)} gate(s) match the XOR-splice shape, but nothing "
-            "trigger-like was found around them. The shape also appears in clean designs, so "
-            "this is not evidence of a Trojan on its own."
+            f"{len(verdict.suspects)} gate(s) carry weak evidence"
+            + (f": {n_leads} with a single trigger-like sign" if n_leads else "")
+            + (f"{', ' if n_leads else ': '}{n_shape} matching the XOR-splice shape" if n_shape else "")
+            + ". Each of these also occurs in clean designs, so none is evidence of a Trojan "
+            "on its own."
         )
     else:
         verdict.verdict = "no_trojan_indicated"

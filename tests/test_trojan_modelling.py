@@ -272,3 +272,47 @@ endmodule
     assert "y" in mux and len(mux) == 4  # NOT(sel), both AND legs, the OR
     # The register's own load mux (select = its clock) is state, not payload.
     assert not any(g.startswith("Tg1__") for g in mux)
+
+
+def _comb_trigger(dup: bool) -> list[str]:
+    """s38417-T200's shape: Tj_OUT1..8 -> Tj_OUT1234/5678 -> Tj_Trigger -> XOR payloads."""
+    lines = [f"INPUT(i{k})" for k in range(20)] + ["OUTPUT(y1)", "OUTPUT(y2)", "OUTPUT(z)"]
+    # Host logic: two signals the payload corrupts, and the nets the trigger taps.
+    lines += ["h1 = AND(i16, i17)", "h2 = OR(i18, i19)", "z = AND(h1, i0)"]
+    for k in range(8):
+        lines.append(f"Tj_OUT{k + 1} = AND(i{2 * k}, i{2 * k + 1})")
+    first = "Tj_OUT1, Tj_OUT1" if dup else "Tj_OUT1"
+    lines += [f"Tj_OUT1234 = AND({first}, Tj_OUT2, Tj_OUT3, Tj_OUT4)",
+              "Tj_OUT5678 = AND(Tj_OUT5, Tj_OUT6, Tj_OUT7, Tj_OUT8)",
+              "Tj_Trigger = AND(Tj_OUT1234, Tj_OUT5678)",
+              "Tj_n = NOT(Tj_Trigger)",
+              "y1 = XOR(h1, Tj_Trigger)", "y2 = AND(h2, Tj_n)"]
+    return lines
+
+
+def test_combinational_trigger_tree_around_a_hand_edit_is_flagged_with_its_payload():
+    from pyatpg.atpg.trigger_detector import static_evidence
+
+    ev = static_evidence(_bench(_comb_trigger(dup=True)))
+    trojan = [f"Tj_OUT{k}" for k in range(1, 9)] + ["Tj_OUT1234", "Tj_OUT5678", "Tj_Trigger"]
+    for gate in trojan + ["y1", "y2", "Tj_n"]:
+        assert ev.strength(gate) >= 0.7, gate
+    assert "trigger_payload" in [k for k, _ in ev.by_gate["y1"]]
+    # The host signals the payload corrupts stay out.
+    assert "h1" not in ev.by_gate and "h2" not in ev.by_gate and "z" not in ev.by_gate
+
+
+def test_conjunction_tree_without_a_hand_edit_is_not_evidence():
+    """Fanout-free trees are ordinary (clean ISCAS s38584 has a 19-gate one)."""
+    from pyatpg.atpg.trigger_detector import static_evidence
+
+    ev = static_evidence(_bench(_comb_trigger(dup=False)))
+    assert not any(k.startswith("trigger_") for e in ev.by_gate.values() for k, _ in e)
+
+
+def test_undriven_nets_are_not_ground_truth():
+    """s38584-T300 ships Trigger_out undriven: no gate there to find."""
+    circuit = _bench(["INPUT(a)", "OUTPUT(y)", "y = AND(a, Trigger_out)"])
+    assert "Trigger_out" in circuit.inputs  # promoted to a free input
+    assert ground_truth_gates(circuit) == ["Trigger_out"]
+    assert ground_truth_gates(circuit, ["Trigger_out"]) == []

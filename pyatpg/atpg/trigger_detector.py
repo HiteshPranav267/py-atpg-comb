@@ -44,6 +44,15 @@ trigger itself:
   no input from the design. Across the ~50 clean ISCAS'89 netlists in
   benchmarks/ (and clean s38584 / s15850) the largest such group is a single
   register; T300 has exactly its 32-bit window counter.
+* **Combinational trigger trees.** s35932-T200 and s38417-T100/T200 have no
+  trigger register: Tj_OUT1..8 feed only Tj_OUT1234 / Tj_OUT5678, which feed
+  only Tj_Trigger, and the payload gates read Tj_Trigger. Under full scan
+  s35932-T200's leaves are 1 in ~40% of random patterns, so no rarity sign
+  sees the tree, and a fanout-free tree alone is ordinary (clean ISCAS
+  s38584 has a 19-gate one). What marks it is the hand edit inside it
+  (NOR(Tj_OUT1, Tj_OUT1, ...)): from that gate the conjunction narrows
+  toward a root that is rarely 1, and the fanout-free tree under that root
+  is the trigger; the gates the root drives are the payload.
 
 Calibration on clean ISCAS s38584 (a 36-gate never-toggling group, and
 several 7-gate ones) showed never-toggling groups also occur in benign
@@ -86,6 +95,13 @@ MIN_SPLICE_RATIO = 5.0
 #: Registers in a self-contained group before it counts as a timer (a lone
 #: self-looped register is ordinary; clean s38584 has one).
 MIN_TIMER = 4
+#: A trigger tree's root is rare (s35932-T200's Tj_Trigger: 1 in 0.006 of
+#: random full-scan patterns; s38417-T200's: never) ...
+TREE_ROOT_RARE = RARE_THRESHOLD
+#: ... the tree has at least this many gates ...
+MIN_TRIGGER_TREE = 5
+#: ... and reaches at most this many levels below the root.
+TREE_DEPTH = 3
 
 #: Evidence kinds and how strongly each points at a Trojan on its own. Below
 #: the verdict's 0.7 a kind is a lead: it needs a second kind of evidence on
@@ -96,6 +112,8 @@ STRENGTH = {
     "payload_mux": 0.8,
     "trojan_timer": 0.8,
     "logic_clock_payload": 0.7,
+    "trigger_payload": 0.7,
+    "trigger_tree": 0.7,
     "trojan_region": 0.7,
     "unactivated_cluster": 0.65,
     "duplicate_input": 0.65,
@@ -112,7 +130,11 @@ FAMILY = {
     "logic_clock_payload": "clock",
     "payload_splice": "payload",
     "payload_mux": "payload",
+    "trigger_payload": "payload",
     "duplicate_input": "hand_edit",
+    # Grown from a hand edit, like the region from strong gates: the shape
+    # is not independent evidence, so it never corroborates its anchor.
+    "trigger_tree": "hand_edit",
     "trojan_region": "region",
     "autonomous_timer": "timer",
     "trojan_timer": "timer",
@@ -125,6 +147,8 @@ PROMPT_MARK = {
     "logic_clock_payload": "pay",
     "payload_splice": "pay",
     "payload_mux": "pay",
+    "trigger_tree": "trig",
+    "trigger_payload": "pay",
     "duplicate_input": "dup",
     "autonomous_timer": "tmr",
     "trojan_timer": "tmr",
@@ -252,6 +276,7 @@ def static_evidence(circuit: Circuit, logic_clocks: dict[str, str] | None = None
                    f"part of the {len(tree)}-gate side tree spliced into output {out}")
 
     _logic_clock_evidence(ev, circuit, logic_clocks, probs, never, fanout)
+    _trigger_trees(ev, circuit, probs, fanout)
     ev = complete_region(circuit, ev, logic_clocks)
     # After the region: a timer counts as a Trojan's when it feeds the
     # registers' load logic the region adds. Its logic is closed (nothing
@@ -259,6 +284,85 @@ def static_evidence(circuit: Circuit, logic_clocks: dict[str, str] | None = None
     _autonomous_timers(ev, circuit, order, fanout)
     _payload_muxes(ev, circuit)
     return ev
+
+
+def _trigger_trees(ev: TriggerEvidence, circuit: Circuit, probs: dict[str, float],
+                   fanout: dict[str, list[str]]) -> None:
+    """The combinational trigger around a hand-edited gate, and its payload.
+
+    From each duplicate-input gate, follow its single consumer while that
+    consumer is a conjunction over it: the consumer's rare value can only
+    occur when this gate takes its own rare value (an AND whose rare value
+    is 1 over an input rarely 1, a NOR over an input rarely 0, inverters and
+    buffers). A payload mixing the trigger into a host signal (XOR, or an OR
+    forcing a value) is not, whatever the probabilities say -- a host net
+    that never toggles makes an XOR payload look as rare as its trigger.
+    That root, if rarely at its rare value, with the fanout-free tree under
+    it is the trigger; the gates the root drives, through inverters and
+    buffers, are the payload. Their other inputs are the host signals it
+    corrupts.
+    """
+    gates = circuit.gates
+    rarity = {n: min(p, 1 - p) for n, p in probs.items()}
+
+    def rare_value(n: str) -> int:
+        return 1 if probs.get(n, 0.5) <= 0.5 else 0
+
+    def single_user(n: str) -> str | None:
+        users = fanout.get(n, [])
+        return users[0] if len(users) == 1 and n not in circuit.outputs else None
+
+    def narrows(n: str, user: str) -> bool:
+        gtype, v, out = gates[user].gtype, rare_value(n), rare_value(user)
+        if gtype in ("NOT", "BUF"):
+            return True
+        # Output value that needs every input at 1 (AND/NAND) or at 0 (OR/NOR).
+        needs = {"AND": (1, 1), "NAND": (0, 1), "OR": (0, 0), "NOR": (1, 0)}.get(gtype)
+        return needs is not None and (out, v) == needs
+
+    anchors = [g for g, e in ev.by_gate.items() if any(k == "duplicate_input" for k, _ in e)]
+    roots: set[str] = set()
+    for anchor in sorted(anchors):
+        root = anchor
+        while (user := single_user(root)) is not None and narrows(root, user):
+            root = user
+        if root in roots or rarity.get(root, 1.0) >= TREE_ROOT_RARE:
+            continue
+        tree, taps, frontier = [root], [], [root]
+        for _ in range(TREE_DEPTH):
+            nxt = []
+            for n in frontier:
+                for i in gates[n].inputs:
+                    if i in tree or i in nxt or i not in gates:
+                        continue
+                    if single_user(i) is None:
+                        taps.append(i)  # also read by host logic: tapped, not inserted
+                    else:
+                        nxt.append(i)
+            tree += nxt
+            frontier = nxt
+        if len(tree) < MIN_TRIGGER_TREE:
+            continue
+        roots.add(root)
+        ev.host.update(taps)
+        p1 = probs.get(root, 0.0)
+        for n in tree:
+            ev.add(n, "trigger_tree",
+                   f"part of a {len(tree)}-gate fanout-free conjunction tree around the "
+                   f"hand-edited gate {anchor}, ending in {root} (1 in {p1:.4f} of random "
+                   "patterns) -- the shape of a combinational trigger")
+        stack, seen = list(fanout.get(root, [])), set(tree)
+        while stack:
+            n = stack.pop()
+            if n in seen:
+                continue
+            seen.add(n)
+            ev.add(n, "trigger_payload",
+                   f"driven by the trigger tree's root {root} -- where its payload sits")
+            if gates[n].gtype in ("NOT", "BUF"):
+                stack.extend(fanout.get(n, []))
+            else:
+                ev.host.update(i for i in gates[n].inputs if i not in seen)
 
 
 def _payload_muxes(ev: TriggerEvidence, circuit: Circuit) -> None:
