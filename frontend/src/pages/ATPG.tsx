@@ -16,6 +16,7 @@ import {
   VerdictPanel,
 } from '@/components/atpg/AnalysisPanels';
 import { TrojanCheckPanel } from '@/components/atpg/TrojanCheckPanel';
+import { ThreeWayPanel } from '@/components/atpg/ThreeWayPanel';
 
 /** Fallback list if /atpg/modes is unreachable; labels match the backend. */
 const FALLBACK_MODES: AnalysisModeOption[] = [
@@ -280,6 +281,7 @@ function ReportView({ report }: { report: AtpgReport }) {
       <CircuitOverview report={report} />
 
       {report.comparison && <ComparisonPanel comparison={report.comparison} />}
+      <ThreeWayPanel report={report} />
 
       {runKeys.length > 1 && (
         <div className="flex gap-2 border-b border-border">

@@ -113,3 +113,13 @@ off for the sequential engine), pick **Compare Both**, and paste your key in
 and one line of what the LLM is thinking while it works — and the results
 include the Trojan verdict and, for Trust-Hub designs, how many of the
 Trojan's gates were found with and without the LLM.
+
+## Current test round
+
+The circuits for the standard-vs-LLM comparison are in
+[`experiments/llm-vs-standard/variants/`](../experiments/llm-vs-standard/variants/).
+Run each one on the website (ATPG → upload → **Full scan** on → **Compare
+Both**, your key in Settings), download the full report from **Reports**, and
+name it after the circuit. The *Standard vs targeted ATPG* panel on the result
+shows the comparison; [`experiments/llm-vs-standard/README.md`](../experiments/llm-vs-standard/README.md)
+explains what each circuit is for.

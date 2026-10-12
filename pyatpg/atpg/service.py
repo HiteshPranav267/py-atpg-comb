@@ -207,6 +207,11 @@ class AtpgAnalysis:
     #: to that same Atalanta figure, because it genuinely depends on both.
     #: See ``_cpu_time_breakdown``.
     cpu_time: dict[str, Any] = field(default_factory=dict)
+    #: Standard ATPG vs the targeted list chosen without the LLM vs the one
+    #: chosen with it: patterns, tester cycles, generation time, coverage and
+    #: Trojan-fault detection side by side (pyatpg.atpg.efficiency). Empty
+    #: unless a compare-mode run used the LLM.
+    three_way: dict[str, Any] = field(default_factory=dict)
     #: The host machine this analysis actually ran on, so a CPU-time figure
     #: can be read next to the hardware that produced it.
     system_info: dict[str, Any] = field(default_factory=dict)
@@ -230,6 +235,7 @@ class AtpgAnalysis:
             "sequential": self.sequential.to_dict() if self.sequential else None,
             "llm_usage": self.llm_usage,
             "cpu_time": self.cpu_time,
+            "three_way": self.three_way,
             "system_info": self.system_info,
         }
 
@@ -514,6 +520,7 @@ class AtpgAnalysisService:
                 force_shape=force_shape,
                 hints=(analysis_region_gates(analysis.circuit_analysis)
                        if analysis.circuit_analysis.source == "llm" else None),
+                circuit=parsed.circuit,
             )
             if not detector_in_targeting:
                 selection.notes.append(
@@ -534,6 +541,7 @@ class AtpgAnalysisService:
                         extra_suspects=forced_suspects,
                         use_detector=detector_in_targeting,
                         force_shape=force_shape,
+                        circuit=parsed.circuit,
                     ).gates
                 except Exception:  # noqa: BLE001 - a comparison must not fail the run
                     baseline_gates = None
@@ -582,12 +590,35 @@ class AtpgAnalysisService:
                 workspace, bench_text, selection.gates, backtrack_limit, analysis.notes
             )
 
+        # The same budget chosen without the model, through the same ATPG
+        # ladder, so "with vs without the LLM" is measured in patterns and
+        # coverage too, not only in which gates were picked. Kept out of
+        # `runs` (one tab per run on the page, one row per run kind in the run
+        # database) and summarised in `three_way`.
+        no_llm_run = None
+        if (selection is not None and selection.used_llm and baseline_gates
+                and self.NON_TARGETED_KEY in analysis.runs):
+            if list(baseline_gates) == list(selection.gates):
+                no_llm_run = analysis.runs[self.TARGETED_KEY]
+            else:
+                report("Running Atalanta on the targeted faults chosen without the LLM")
+                try:
+                    no_llm_run = self._run_targeted(
+                        workspace, bench_text, list(baseline_gates), backtrack_limit, [],
+                        tag="nollm",
+                    )
+                except Exception as exc:  # noqa: BLE001 - a comparison must not fail the run
+                    analysis.notes.append(f"The no-LLM targeted run failed ({exc}).")
+
         # Score every run's patterns over the whole circuit, on one shared
         # fault list, so a targeted run's patterns can be read against the
         # circuit and not only against the handful of faults they were
         # written for.
         truth = ground_truth_gates(parsed.circuit, parsed.implicit_inputs)
-        for run in analysis.runs.values():
+        scored = list(analysis.runs.values())
+        if no_llm_run is not None and no_llm_run not in scored:
+            no_llm_run.pattern_coverage = self._score_patterns(parsed, no_llm_run)
+        for run in scored:
             report("Fault-simulating the generated patterns")
             run.pattern_coverage = self._score_patterns(parsed, run)
             report("Checking which rare nets the patterns activate")
@@ -684,6 +715,24 @@ class AtpgAnalysisService:
             llm_s=tracker.total_duration_s,
             runs=analysis.runs,
         )
+        if no_llm_run is not None:
+            report("Comparing standard ATPG with the two targeted test sets")
+            try:
+                from .efficiency import three_way
+
+                analysis.three_way = three_way(
+                    parsed.circuit,
+                    standard=analysis.runs.get(self.NON_TARGETED_KEY),
+                    llm=analysis.runs.get(self.TARGETED_KEY),
+                    no_llm=no_llm_run,
+                    llm_gates=selection.gates,
+                    no_llm_gates=list(baseline_gates),
+                    extraction_s=profile.extraction_time_s,
+                    llm_s=tracker.total_duration_s,
+                    truth=truth,
+                )
+            except Exception as exc:  # noqa: BLE001 - a comparison must not fail the run
+                analysis.notes.append(f"Three-way comparison unavailable ({exc}).")
         return analysis
 
     def _run_targeted(
@@ -693,6 +742,7 @@ class AtpgAnalysisService:
         gates: list[str],
         backtrack_limit: int | None,
         notes: list[str],
+        tag: str | None = None,
     ) -> AtalantaRun:
         """Run the targeted fault list, raising the search budget while faults abort.
 
@@ -710,7 +760,9 @@ class AtpgAnalysisService:
             targeted_faults=build_fault_lines(gates),
             targeted_gates=gates,
         )
-        best = self.runner.run(workspace, bench_text, backtrack_limit=backtrack_limit, **kwargs)
+        # ``tag`` keeps a second targeted list's artifacts apart from the first's.
+        best = self.runner.run(workspace, bench_text, backtrack_limit=backtrack_limit,
+                               attempt_tag=tag, **kwargs)
         attempts = [_describe_attempt(best, backtrack_limit, None, False)]
         best_index = 0
         first_aborted = best.results.aborted_faults or 0
@@ -727,7 +779,7 @@ class AtpgAnalysisService:
                 backtrack_limit=phase1,
                 backtrack_limit_phase2=phase2,
                 static_learning=learning,
-                attempt_tag=f"b{phase1}",
+                attempt_tag=f"{tag}_b{phase1}" if tag else f"b{phase1}",
                 **kwargs,
             )
             attempts.append(_describe_attempt(attempt, phase1, phase2, learning))

@@ -16,6 +16,77 @@ What changed, why, and what it measurably did. Newest first. The LaTeX version (
 
 Numbers marked \emph{detector only} come from running the trigger detector on the full-scan model with no ATPG and no LLM (a few seconds per circuit). Numbers from full runs say so.
 
+\section*{2026-10-12: cones for the LLM, standard-vs-targeted comparison, a test set}
+Prompted by the question the paper has to answer: is LLM-targeted ATPG better than standard ATPG, and is the LLM the reason. The runs below this entry could answer neither: the LLM was never shown a Trojan gate, the no-LLM list was never run through ATPG, and the detector found every Trojan on its own.
+
+\subsection*{Standard vs targeted, measured three ways (\texttt{efficiency.py}, \texttt{service.py})}
+\begin{itemize}
+  \item \textbf{Problem.} A compare run produced standard ATPG and the LLM-targeted set. The no-LLM list was scored for recall but never run, so "what did the LLM change in patterns and coverage" had no answer. Nothing measured how many patterns each set needs to detect the Trojan's faults.
+  \item \textbf{Change.} On a compare run with the LLM, the no-LLM list also goes through ATALANTA (same budget, same search ladder, its own artifact names). A new report section \texttt{three\_way} (and page panel) lists the three sets: patterns, tester cycles (patterns $\times$ (scan cells + 1)), generation time (ATALANTA, plus feature extraction and LLM time where used), whole-circuit coverage, and for a design with known Trojan gates: Trojan stuck-at faults detected, patterns in order needed to detect them all, and an oracle minimum (greedy cover over the ground truth). New \texttt{faultsim.detection\_masks} gives, per fault, which patterns detect it.
+  \item \textbf{Effect (from the 10-11 reports' own patterns).} s38417-T200: standard ATPG needs its first 2,406 of 3,227 patterns to detect all 28 Trojan faults; the LLM-targeted set 107 of 118; oracle minimum 8. s35932-T200: 1,956 of 3,077 vs 194 of 194 (17 of 20 detectable); oracle minimum 5.
+\end{itemize}
+
+\subsection*{The LLM scores rare cones, not gate rows (\texttt{cones.py}, \texttt{targeting.py})}
+\begin{itemize}
+  \item \textbf{Problem.} The model was shown one row of numbers per gate, the same numbers the heuristic ranks by. It never saw which gate connects to which, so it could not judge structure, the one thing it might do better.
+  \item \textbf{Change.} New setting \texttt{llm\_view} (default \texttt{cones}). Every rare net (rarer value in under 5\% of 4096 random patterns) with the fanout-free logic under it (4 levels, 40 gates) is a cone, summarised in one anonymised row: size, depth, gate mix, tapped nets and how common, shared and spread across the circuit's depth they are, root rarity, and what the root drives. The model scores each cone; its slots take whole cones (plus up to 4 gates the root drives), highest first. Without the model the same slots take whole cones in root-rarity order, so the two lists differ only in the cones chosen.
+  \item \textbf{Effect (detector only, no model).} s38417: \textasciitilde{}198 cones, all scored in 3 requests of 70. Trust-Hub's s38417-T100/T200 trigger cones rank 3rd by rarity; s35932-T200's is the circuit's only rare cone.
+\end{itemize}
+
+\subsection*{A test set where the detector and rarity order fail (\texttt{experiments/llm-vs-standard/})}
+\begin{itemize}
+  \item \textbf{Problem.} On every Trust-Hub circuit run so far the detector found the whole Trojan, so the LLM had nothing left to find.
+  \item \textbf{Change.} New script \texttt{scripts/make\_trojan\_variants.py} and 15 netlists: Trust-Hub s35932-T200 and s38417-T100/T200 with the \texttt{Tj\_OUT1}/\texttt{Tj\_OUT2} typo repaired, and clean-written combinational Trojans (16 tapped nets, AND tree, XOR payloads, no duplicate input) in the Trust-Hub Trojan-free s38417 and s38584, two seeds each of three trigger classes fixed by rule: never fires, 0.1-1\%, 1-4\% (two files landed at 0.098\% and 4.03\%).
+  \item \textbf{Effect (no model).} The detector flags nothing strong on any of the 15, and none of the generated Trojans' gates at all. The no-LLM cone list finds every Trojan gate in the 7 typo-fixed and never-firing files and none in the 8 rare and uncommon ones, whose cones rank 27th-224th by rarity. With a stand-in model that favours widely spread taps (not an LLM), s38584\_gen\_uncommon\_s1 gave recall 1.00 vs 0.33 and 30/30 vs 24/30 Trojan faults detected: the measurement can show a win; whether the LLM produces one is what the next runs decide.
+\end{itemize}
+
+\subsection*{Admin page}
+\begin{itemize}
+  \item Settings rendered every value in a number box, so an on/off setting showed empty (\texttt{true} is not a number) and a text setting could not be entered. On/off settings now get a selector and text settings a text box.
+\end{itemize}
+
+\section*{2026-10-12: first runs on the 10-11 code}
+Seven full runs (compare mode, full scan, LLM on, Groq gpt-oss-120b), all on commit \texttt{3519624} (their reports carry the new \texttt{targeting.context} fields).
+
+\subsection*{Combinational triggers: found whole}
+\begin{itemize}
+  \item s35932-T200: recall 0.20 $\rightarrow$ 1.00, verdict inconclusive $\rightarrow$ Trojan suspected (0.73). 14 gates flagged strong: the 10 named Trojan gates and the 4 payload gates \texttt{WX6484/6999/7783/8266}, each \texttt{NOR3(..., Tj\_Trigger)}. The netlist does not name them as Trojan, so the report's precision of 0.71 is really 14/14.
+  \item s38417-T100: recall 0.91 $\rightarrow$ 1.00, flagged 11/11 (precision 1.00), including \texttt{n4263\_Tj\_Payload}.
+  \item s38417-T200: recall 0.36 / 0.71 (with / without LLM) $\rightarrow$ 1.00 / 1.00, flagged 14/14 (precision 1.00), including the 4 \texttt{*\_Tj\_Payload} gates.
+\end{itemize}
+
+\subsection*{No false alarms on the Trojan-free netlists}
+\begin{itemize}
+  \item s38417 (Trust-Hub TjFree): inconclusive (7 never-toggling leads, 232 XOR-shape leads), nothing strong.
+  \item s38584 (Trust-Hub TjFree): inconclusive (20 never-toggling leads, 111 XOR-shape leads), nothing strong.
+  \item s35932: no Trojan indicated, but the upload was the ISCAS non-scan netlist (16,065 gates, 89.8\% coverage), not the Trust-Hub TjFree scan version of the T-variants' host (\textasciitilde{}6,800 gates). It needs rerunning with that file.
+\end{itemize}
+
+\subsection*{The hand edit the rule relies on is a typo in Trust-Hub's netlists}
+\begin{itemize}
+  \item In s35932-T200/T300 and s38417-T100/T200 the duplicate input is \texttt{AND4X1 Trojan1234\_NOT (.IN1(Tj\_OUT1), .IN2(Tj\_OUT1), .IN3(Tj\_OUT3), .IN4(Tj\_OUT4))}: \texttt{Tj\_OUT1} twice and \texttt{Tj\_OUT2} never read. \texttt{Tj\_OUT2} is then pruned as dead logic under full scan, which is also why it is never in the ground truth.
+  \item So the \texttt{trigger\_tree} rule anchors on a benchmark artifact. A Trojan written without that slip has no duplicate input and is not found (the synthetic check of 10-11 showed the same). The paper has to say so; the combinational-trigger result is not evidence the rule generalises.
+\end{itemize}
+
+\subsection*{s35932-T300: the Trojan is pruned before analysis}
+\begin{itemize}
+  \item The netlist does contain it: the same \texttt{Tj\_OUT1..8} trigger tree and a ring-oscillator payload (\texttt{TjPayload1..24}, inverter chains \texttt{Stage1..4} joined by muxes). Two more Trust-Hub typos break it: the mux selects read \texttt{TjTrigger} while the trigger net is \texttt{Tj\_Trigger}, and the third chain ends at \texttt{Stage3\_16} while the next mux reads \texttt{Stage3}. Both undriven nets become free inputs.
+  \item Nothing in the Trojan reaches an output or a register (its trigger cone is 20 gates, all dead ends), so the full-scan conversion prunes all 44 of its gates (\texttt{pruned\_gates: 44}), silently, and the report has no ground truth.
+  \item A payload that drives nothing observable is outside what stuck-at ATPG can test by definition. Dead logic is a structural sign, though: pruned gates per netlist are 0 (s35932 ISCAS, s38417 TjFree), 12 (s38584 TjFree), 10 (ISCAS s1238\_scan), against 44 for s35932-T300 and 251 for s38584-T300 TjIn. Not yet acted on.
+\end{itemize}
+
+\subsection*{LLM: no measurable contribution, and none possible with the detector on}
+\begin{itemize}
+  \item \texttt{llm\_only\_hits} and \texttt{baseline\_only\_hits} are empty on every run, and recall with and without the LLM is identical (1.00 on all three Trojan runs).
+  \item No Trojan gate was ever in the pool the model scored: every one was already a forced detector finding, and those are excluded from the pool. With the detector in targeting, the LLM cannot affect Trojan recall. Round 2 (\texttt{detector\_in\_targeting} off) is the only run that measures it.
+  \item The scores are selective (on s38417-T200, 317 of 444 gates scored 0-9; 95 scored 30+), every pool gate was scored, and 6-10 gates per run came from the circuit analysis's regions. About 25k tokens and 130 s of model time per run (5 requests).
+\end{itemize}
+
+\subsection*{Unchanged}
+\begin{itemize}
+  \item s38417 still aborts 16-54 faults on host nets; targeted coverage 92-96\%.
+\end{itemize}
+
 \section*{2026-10-11: combinational triggers, LLM selection on a heuristic floor}
 Prompted by the first held-out runs (compare mode, full scan, LLM on): s35932-T100/T200/T300, s38417-T100/T200/T300, s38584-T100/T200/T300. s38584 and s35932-T100 were found whole; the rest showed four problems. Recall with / without the LLM:
 

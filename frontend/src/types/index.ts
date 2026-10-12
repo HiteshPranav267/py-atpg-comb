@@ -632,8 +632,8 @@ export interface AdminSetting {
   key: string;
   label: string;
   help: string;
-  type: 'int' | 'float' | 'bool';
-  value: number | boolean;
+  type: 'int' | 'float' | 'bool' | 'str';
+  value: number | boolean | string;
   source: 'admin override' | 'environment' | 'default';
   env: string;
 }
@@ -695,6 +695,36 @@ export interface AtpgReport {
   cpu_time?: CpuTimeBreakdown;
   // The machine that actually produced every timing number in this report.
   system_info?: SystemInfo;
+  // Standard ATPG vs targeted without / with the LLM (compare mode with an LLM).
+  three_way?: ThreeWay | Record<string, never>;
+}
+
+export interface TrojanDetection {
+  trojan_faults?: number;
+  detected?: number;
+  patterns?: number;
+  patterns_to_detect_all?: number;
+  min_patterns_oracle?: number | null;
+  unavailable_reason?: string;
+}
+
+export interface ThreeWayRow {
+  gates_targeted: number | null;
+  faults: number | null;
+  fault_coverage: number | null;
+  patterns: number;
+  pattern_reduction_pct?: number;
+  tester_cycles: number;
+  atpg_s: number;
+  generation_s: number;
+  simulated_coverage: number | null;
+  trojan?: TrojanDetection;
+}
+
+export interface ThreeWay {
+  scan_cells: number;
+  runs: Partial<Record<'standard' | 'targeted_no_llm' | 'targeted_llm', ThreeWayRow>>;
+  notes: string[];
 }
 
 export interface VerdictSuspect {

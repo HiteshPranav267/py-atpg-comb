@@ -42,9 +42,9 @@ SETTINGS: dict[str, Setting] = {s.key: s for s in [
             "Fixed so repeated runs give identical patterns; 0 = seed from the clock "
             "(Atalanta's own default).", minimum=0),
     Setting("llm_batches", "PYATPG_LLM_BATCHES", int, 4, "LLM selection batches",
-            "When a circuit's gates do not fit one LLM request, review them in this many "
-            "requests, each carrying the previous shortlist forward (1 = one trimmed "
-            "request). More batches see more gates but take longer on a rate-limited key.",
+            "When what the LLM scores does not fit one request, split it into at most this "
+            "many requests, each scored in full (1 = one trimmed request). More requests "
+            "see more of the circuit but take longer on a rate-limited key.",
             minimum=1),
     Setting("detector_in_targeting", "PYATPG_DETECTOR_IN_TARGETING", bool, True,
             "Detector feeds the targeted list",
@@ -57,6 +57,11 @@ SETTINGS: dict[str, Setting] = {s.key: s for s in [
             "this share of the list (0-1) with gates it scores higher; picks it does not "
             "make fall back to the heuristic's next ones. Both modes test the same number "
             "of gates, so 'with vs without LLM' compares like for like."),
+    Setting("llm_view", "PYATPG_LLM_VIEW", str, "cones", "What the LLM scores",
+            "cones = whole rare cones (a rare net and the logic beneath it, summarised); the "
+            "slots are filled with the chosen cones, and without an LLM with the rarest "
+            "cones, so both modes get the same expansion. gates = one row per gate, as "
+            "before."),
     Setting("target_gates", "PYATPG_TARGET_GATES", int, 0, "Targeted fault-list size",
             "Gates in the targeted fault list, before detector findings are added. 0 = "
             "scale with the circuit (30% of gates, 20-200). Set it to compare recall at "
@@ -79,6 +84,8 @@ def _coerce(setting: Setting, value: Any) -> Any:
             return value.strip().lower() in ("1", "true", "yes", "on")
         return bool(value)
     value = setting.kind(value)
+    if setting.kind is str:
+        return value.strip().lower()
     if value < setting.minimum and not (setting.hosted_only and value == 0):
         raise ValueError(f"{setting.label} must be at least {setting.minimum:g}.")
     return value

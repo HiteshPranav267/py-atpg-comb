@@ -258,7 +258,7 @@ export const api = {
   adminUpdateSetting: async (
     token: string,
     key: string,
-    value: number | boolean | null
+    value: number | boolean | string | null
   ): Promise<AdminSetting[]> => {
     const res = await apiClient.put('/admin/settings', { key, value }, adminHeaders(token));
     return res.data.settings;

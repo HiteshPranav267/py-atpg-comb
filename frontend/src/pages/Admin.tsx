@@ -380,7 +380,7 @@ function SettingsCard({ token }: { token: string }) {
     retry: false,
   });
   const update = useMutation({
-    mutationFn: ({ key, value }: { key: string; value: number | boolean | null }) =>
+    mutationFn: ({ key, value }: { key: string; value: number | boolean | string | null }) =>
       api.adminUpdateSetting(token, key, value),
     onSuccess: (settings) => {
       queryClient.setQueryData(['admin-settings', token], settings);
@@ -419,10 +419,15 @@ function SettingRow({
 }: {
   setting: AdminSetting;
   busy: boolean;
-  onSave: (value: number | boolean | null) => void;
+  onSave: (value: number | boolean | string | null) => void;
 }) {
   const [draft, setDraft] = useState(String(setting.value));
   const dirty = draft !== String(setting.value);
+  // A number box cannot show `true`, so on/off and text settings get their own input.
+  const parsed: number | boolean | string =
+    setting.type === 'bool' ? draft === 'true' : setting.type === 'str' ? draft.trim() : Number(draft);
+  const invalid =
+    draft.trim() === '' || (setting.type !== 'bool' && setting.type !== 'str' && Number.isNaN(Number(draft)));
   return (
     <div className="py-2.5 flex flex-col md:flex-row md:items-center gap-2">
       <div className="flex-1 min-w-0">
@@ -432,15 +437,26 @@ function SettingRow({
         </div>
       </div>
       <div className="flex items-center gap-2 shrink-0">
-        <input
-          type="number"
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          className="w-28 bg-background border border-border rounded-md px-2 py-1 text-sm font-mono"
-        />
+        {setting.type === 'bool' ? (
+          <select
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            className="w-28 bg-background border border-border rounded-md px-2 py-1 text-sm font-mono"
+          >
+            <option value="true">on</option>
+            <option value="false">off</option>
+          </select>
+        ) : (
+          <input
+            type={setting.type === 'str' ? 'text' : 'number'}
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            className="w-28 bg-background border border-border rounded-md px-2 py-1 text-sm font-mono"
+          />
+        )}
         <button
-          onClick={() => onSave(Number(draft))}
-          disabled={busy || !dirty || draft.trim() === '' || Number.isNaN(Number(draft))}
+          onClick={() => onSave(parsed)}
+          disabled={busy || !dirty || invalid}
           className="bg-primary text-primary-foreground px-3 py-1 rounded-md text-xs font-medium disabled:opacity-40"
         >
           Apply

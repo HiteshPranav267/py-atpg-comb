@@ -163,6 +163,20 @@ def analysis_region_gates(analysis: Any) -> list[str]:
     return list(dict.fromkeys(gates))
 
 
+#: Gate views the model can be shown (live setting ``llm_view``).
+_VIEWS = ("cones", "gates")
+
+
+def _llm_view() -> str:
+    try:
+        from pyatpg.core import settings
+
+        view = str(settings.get("llm_view")).strip().lower()
+        return view if view in _VIEWS else "cones"
+    except Exception:  # noqa: BLE001 - never fail a run over this setting
+        return "cones"
+
+
 def _llm_share() -> float:
     try:
         from pyatpg.core import settings
@@ -241,6 +255,7 @@ class FaultTargetSelector:
         use_detector: bool = True,
         force_shape: bool = True,
         hints: list[str] | None = None,
+        circuit: Any = None,
     ) -> TargetSelection:
         """Choose the gates for the targeted fault list.
 
@@ -263,6 +278,11 @@ class FaultTargetSelector:
 
         ``hints`` are gates the model itself named elsewhere (its circuit
         analysis); they take its slots before its scored picks.
+
+        ``circuit`` (the netlist the profiles came from) enables the cone view
+        (setting ``llm_view``, default): the slots are filled by whole rare
+        cones (pyatpg.atpg.cones) instead of single gates -- by the model's
+        scores with an LLM, by root rarity without one.
         """
         max_gates = self._effective_max_gates(profiles)
         if not use_detector:
@@ -288,11 +308,21 @@ class FaultTargetSelector:
         forced = suspects if force_shape else trigger
 
         base = self._structural_selection(profiles, max_gates, [])
+        # The budget both modes share: what the plain heuristic would test.
+        size = len(base.gates)
+        cones = self._cones(circuit, set(forced)) if _llm_view() == "cones" else None
+        if cones:
+            base = self._cone_baseline(profiles, base, cones, forced, size)
         if self.provider is not None:
             try:
-                selection = self._select_with_llm(
-                    profiles, summary, base, graph, suspects, forced, source_text, hints or []
-                )
+                if cones:
+                    selection = self._select_cones_with_llm(
+                        profiles, summary, base, cones, forced, source_text, hints or [], size
+                    )
+                else:
+                    selection = self._select_with_llm(
+                        profiles, summary, base, graph, suspects, forced, source_text, hints or []
+                    )
                 return self._merge_suspects(selection, suspects, reasons, forced)
             except LLMUnavailableError:
                 # The model could not be consulted at all (no credits, rate
@@ -411,6 +441,295 @@ class FaultTargetSelector:
             return False
 
     # ------------------------------------------------------------------
+    # The list both modes share: heuristic floor + slots
+    # ------------------------------------------------------------------
+
+    def _split(self, profiles: list[dict[str, Any]], size: int,
+               forced: list[str]) -> tuple[list[str], list[str], int, set[str]]:
+        """(heuristic ranking, floor, free slots, gates already in the list).
+
+        Forced gates enter the list anyway; the slots are the tail positions
+        that are not, so both modes test exactly as many gates.
+        """
+        ranking = self._heuristic_ranking(profiles)
+        share = _llm_share()
+        slots_total = min(size, max(1, round(size * share))) if share > 0 and size else 0
+        floor = ranking[:size - slots_total]
+        forced_set = set(forced)
+        slots = sum(1 for g in ranking[size - slots_total:size] if g not in forced_set)
+        return ranking, floor, slots, set(floor) | forced_set
+
+    @staticmethod
+    def _fill_slots(groups: list[list[str]], slots: int, exclude: set[str],
+                    ranking: list[str], floor_len: int) -> tuple[list[str], list[str], int]:
+        """Take gates group by group until the slots are full; the heuristic fills the rest.
+
+        Returns (picked gates, heuristic fill, groups used). A group that does
+        not fit whole is cut at the slot limit, root first.
+        """
+        picks: list[str] = []
+        chosen: set[str] = set()
+        used = 0
+        for group in groups:
+            if len(picks) >= slots:
+                break
+            new = [g for g in group if g not in exclude and g not in chosen]
+            if not new:
+                continue
+            used += 1
+            for g in new[:slots - len(picks)]:
+                chosen.add(g)
+                picks.append(g)
+        fill = [g for g in ranking[floor_len:] if g not in exclude and g not in chosen]
+        return picks, fill[:slots - len(picks)], used
+
+    # ------------------------------------------------------------------
+    # Cone view
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _cones(circuit: Any, flagged: set[str]) -> list[Any] | None:
+        if circuit is None or not getattr(circuit, "gates", None):
+            return None
+        try:
+            from .cones import find_cones
+            from .faultsim import _levelize
+            from .trojan_metrics import _random_probabilities
+
+            probs = _random_probabilities(circuit, _levelize(circuit), 4096, 2024)
+            return find_cones(circuit, probs, flagged=flagged)
+        except Exception:  # noqa: BLE001 - fall back to the gate view
+            return None
+
+    def _cone_baseline(self, profiles: list[dict[str, Any]], base: TargetSelection,
+                       cones: list[Any], forced: list[str], size: int) -> TargetSelection:
+        """Without a model: the floor, then whole cones in root-rarity order.
+
+        The same expansion the model's picks get, so the two lists differ only
+        in which cones were chosen -- an LLM gain is a better choice of cones,
+        not the expansion itself.
+        """
+        from .cones import expansion
+
+        ranking, floor, slots, exclude = self._split(profiles, size, forced)
+        picks, fill, used = self._fill_slots([expansion(c) for c in cones], slots, exclude,
+                                             ranking, len(floor))
+        base.gates = floor + picks + fill
+        base.context = {
+            "view": "cones", "budget": len(floor) + slots, "floor": len(floor),
+            "llm_slots": slots, "cones_total": len(cones), "cones_expanded": used,
+            "expanded_gates": picks, "heuristic_fill": fill,
+        }
+        base.notes.append(
+            f"Fault list: the structural heuristic's top {len(floor)} gate(s), then {used} "
+            f"of {len(cones)} rare cones expanded whole in root-rarity order ({len(picks)} "
+            f"gates)" + (f", and {len(fill)} by the heuristic's next picks." if fill else ".")
+        )
+        return base
+
+    def _select_cones_with_llm(
+        self,
+        profiles: list[dict[str, Any]],
+        summary: str,
+        base: TargetSelection,
+        cones: list[Any],
+        forced: list[str],
+        source_text: str | None,
+        hints: list[str],
+        size: int,
+    ) -> TargetSelection:
+        """The floor, then the cones the model scores highest, expanded whole."""
+        from .cones import expansion
+
+        ranking, floor, slots, exclude = self._split(profiles, size, forced)
+        candidates = [c for c in cones if any(g not in exclude for g in c.gates)]
+        scores, context, cached = self._score_cones_with_llm(
+            candidates, summary, source_text, len(profiles), len(floor))
+        if not scores:
+            base.context = {**base.context, **context}
+            base.notes.append(
+                "Model returned no usable cone scores; fell back to the structural heuristic."
+            )
+            return base
+        by_root = {c.root: c for c in candidates}
+        ranked = [by_root[r] for r, sc in sorted(scores.items(), key=lambda rs: (-rs[1], rs[0]))
+                  if sc >= _MIN_SCORE and r in by_root]
+        known = {str(p["gate_id"]) for p in profiles}
+        hinted = [g for g in hints if g in known and g not in exclude]
+        groups = [[g] for g in hinted] + [expansion(c) for c in ranked]
+        picks, fill, used = self._fill_slots(groups, slots, exclude, ranking, len(floor))
+        context.update({
+            "view": "cones", "budget": len(floor) + slots, "floor": len(floor),
+            "llm_slots": slots, "llm_picks": picks,
+            "analysis_hints": [g for g in picks if g in set(hinted)],
+            "cones_picked": [c.root for c in ranked][:max(0, used - len(hinted))],
+            "heuristic_fill": fill,
+        })
+        selection = TargetSelection(
+            gates=floor + picks + fill,
+            strategy="llm (cached)" if cached else "llm",
+            used_llm=True, cached=cached, context=context,
+        )
+        selection.notes.extend(context.get("notes", []))
+        selection.notes.append(
+            f"Fault list: the structural heuristic's top {len(floor)} gate(s), then "
+            f"{len(picks)} of {slots} slot(s) filled from the cones the model scored highest "
+            f"among the {len(scores)} it scored"
+            + (f" ({len(context['analysis_hints'])} gate(s) from suspicious regions in its "
+               "circuit analysis)" if context["analysis_hints"] else "")
+            + (f", and {len(fill)} by the heuristic's next picks." if fill else ".")
+        )
+        if cached:
+            selection.notes.append(
+                "Cone scores were reused from the cache of an earlier run of this exact "
+                "netlist through the same model, so this step cost no tokens. Set "
+                "LLM_RESULT_CACHE=0 for a fresh model call (needed for repeat runs)."
+            )
+        return selection
+
+    def _score_cones_with_llm(
+        self, cones: list[Any], summary: str, source_text: str | None,
+        total_gates: int, floor: int,
+    ) -> tuple[dict[str, float], dict[str, Any], bool]:
+        """Score every cone shown, in independent batches; returns (root -> score, context, cached)."""
+        from pyatpg.core.progress import report
+
+        budget = request_token_budget()
+        batch = len(cones)
+        if budget > 0:
+            while batch > 10:
+                prompt, _ = self._compose_cone_prompt(cones[:batch], summary)
+                if estimate_prompt_tokens(prompt) + reply_budget(batch * _TOKENS_PER_SCORE_LINE) <= budget:
+                    break
+                batch = max(10, int(batch * 0.85))
+        batches = llm_batches()
+        if len(cones) > batch * batches:
+            # More cones than the requests can carry: half the rarest, half
+            # the largest, so the model is not shown rarity order alone.
+            rarest = cones[:batch * batches // 2]
+            taken = {c.root for c in rarest}
+            largest = sorted((c for c in cones if c.root not in taken),
+                             key=lambda c: (-len(c.gates), c.root))
+            pool = rarest + largest[:batch * batches - len(rarest)]
+        else:
+            pool = list(cones)
+        slices = [pool[i:i + batch] for i in range(0, len(pool), batch)] if batch else []
+        notes = [f"The model scored {len(pool)} of the circuit's {len(cones)} rare cones "
+                 f"(covering {sum(len(c.gates) for c in pool)} gates) in {len(slices)} "
+                 f"request(s) of up to {batch}."]
+        context: dict[str, Any] = {
+            "gates_sent": sum(len(c.gates) for c in pool),
+            "gates_total": total_gates,
+            "cones_sent": len(pool),
+            "cones_total": len(cones),
+            "batches": len(slices),
+            "notes": notes,
+            "pool": [c.root for c in pool],
+        }
+        cache_params = dict(
+            model=self.provider.model_name, view="cones", batch=batch, total=len(pool),
+            batches=len(slices), prompt="c1", floor=floor,
+        )
+        cache = self.cache
+        if cache is None and source_text is not None and cache_enabled():
+            cache = LLMResultCache()
+        if cache is not None and source_text is not None:
+            hit = cache.get(TOKEN_STAGE, source_text, **cache_params)
+            if isinstance(hit, dict) and isinstance(hit.get("scores"), dict):
+                self.tracker.record_cached(TOKEN_STAGE)
+                scores = {str(g): float(v) for g, v in hit["scores"].items()}
+                context["scores"] = scores
+                return scores, context, True
+
+        scores: dict[str, float] = {}
+        unscored = 0
+        for index, chunk in enumerate(slices, start=1):
+            report(f"Scoring rare cones with the LLM (batch {index} of {len(slices)})")
+            got = self._ask_cone_scores(chunk, summary)
+            missing = [c for c in chunk if c.root not in got]
+            if missing:
+                got.update(self._ask_cone_scores(missing, summary))
+                unscored += sum(1 for c in missing if c.root not in got)
+            scores.update(got)
+        if unscored:
+            notes.append(f"{unscored} cone(s) were still unscored after one re-ask.")
+        context["scores"] = scores
+        if cache is not None and source_text is not None and scores:
+            cache.put(TOKEN_STAGE, source_text, {"scores": scores}, **cache_params)
+        return scores, context, False
+
+    def _ask_cone_scores(self, cones: list[Any], summary: str) -> dict[str, float]:
+        prompt, alias_to_root = self._compose_cone_prompt(cones, summary)
+        started = time.perf_counter()
+        response_text = self.provider.complete(
+            prompt, max_output_tokens=reply_budget(len(cones) * _TOKENS_PER_SCORE_LINE)
+        ) or ""
+        self.tracker.record(
+            TOKEN_STAGE, prompt, response_text,
+            usage=getattr(self.provider, "last_usage", None),
+            duration_s=time.perf_counter() - started,
+        )
+        return self._parse_scores(response_text, alias_to_root)
+
+    def _compose_cone_prompt(self, cones: list[Any], summary: str) -> tuple[str, dict[str, str]]:
+        """The cone-scoring prompt; ids are opaque (c0, c1, ...), never net names."""
+        from .cones import CONE_HEADER, CONE_LEGEND, cone_line
+
+        alias_to_root = {f"c{i}": c.root for i, c in enumerate(cones)}
+        rows = "\n".join(cone_line(f"c{i}", c) for i, c in enumerate(cones))
+        prompt = f"""{summary}
+
+You are reviewing a gate-level netlist for a hardware Trojan: logic inserted
+into an otherwise normal design, made of a trigger (a condition built to be
+true almost never) and a payload (gates where the trigger corrupts a normal
+signal). Below is every rare condition in the circuit, as cones: a rare net
+and the logic beneath it that feeds nothing else. Most are ordinary design
+logic. Score each for how likely it is an inserted trigger.
+
+What separates an inserted trigger from ordinary rare logic:
+- Its inputs are tapped from unrelated parts of the design: leaves shared
+  with other logic (leaf_fo above 1) and spread across the circuit's depth
+  (leaf_lvl high), not a tidy group of neighbouring signals.
+- It is a conjunction tree (AND/NOR of many inputs) with a very rare root,
+  and that root drives a few gates that combine it with otherwise ordinary
+  signals (drives: gates whose other inputs are common, sp near 0.5), often
+  right in front of an output or register input (po).
+- Hand-made oddities, such as a gate reading the same net twice (dup=y).
+
+What ordinary rare logic looks like:
+- A counter's high bits or an address/state decode: leaves from one
+  neighbourhood (leaf_lvl low), private leaves (leaf_fo near 1) or a regular
+  gate mix, a root that drives many gates (high root_fo) as part of the
+  normal datapath.
+- Deep arithmetic or comparator logic: XOR-heavy, large, regular.
+
+Worked examples (feature patterns, not from this circuit):
+- Trigger: gates 11, depth 2, types AND2 AND4x2 NOR2x8, leaves 16, leaf_p
+  0.4, leaf_fo 3, leaf_lvl 0.6, root_rare 0.005, root_fo 4, drives NOR3+po
+  ... (other inputs common). Score high: a wide tree over scattered shared
+  signals, nearly never true, steering outputs.
+- Benign: gates 9, depth 3, types NAND3x3 NOR4x2 OR2x3, leaves 12, leaf_p
+  0.5, leaf_fo 1, leaf_lvl 0.05, root_rare 0.01, root_fo 9. Score low: a
+  local decode feeding many ordinary gates.
+
+### Output format
+Return exactly one line for EVERY cone in the table, as:
+
+    cone_id,score
+
+where score is an integer from 0 (ordinary logic) to 100 (certainly an
+inserted trigger). Output nothing else -- no prose, no headers, no cone
+left out.
+
+### Cones
+{CONE_LEGEND}
+
+{CONE_HEADER}
+{rows}
+"""
+        return prompt, alias_to_root
+
+    # ------------------------------------------------------------------
     # LLM path: heuristic floor + model-scored slots
     # ------------------------------------------------------------------
 
@@ -426,16 +745,7 @@ class FaultTargetSelector:
         hints: list[str],
     ) -> TargetSelection:
         """The heuristic's list with its last ``llm_share`` replaced by the model's picks."""
-        ranking = self._heuristic_ranking(profiles)
-        size = len(base.gates)
-        share = _llm_share()
-        slots_total = min(size, max(1, round(size * share))) if share > 0 and size else 0
-        floor = ranking[:size - slots_total]
-        forced_set = set(forced)
-        # Forced gates enter the list anyway; the model's slots are the tail
-        # positions that are not, so both modes test exactly as many gates.
-        slots = sum(1 for g in ranking[size - slots_total:size] if g not in forced_set)
-        exclude = set(floor) | forced_set
+        ranking, floor, slots, exclude = self._split(profiles, len(base.gates), forced)
         candidates = [p for p in profiles if str(p["gate_id"]) not in exclude]
         # XOR-shape matches not forced into the list are still worth showing.
         shown = [g for g in suspects if g not in exclude]
@@ -454,12 +764,11 @@ class FaultTargetSelector:
         hinted = [g for g in hints if g in candidate_ids]
         by_score = [g for g, s in sorted(scores.items(), key=lambda gs: (-gs[1], gs[0]))
                     if s >= _MIN_SCORE and g in candidate_ids]
-        picks = list(dict.fromkeys(hinted + by_score))[:slots]
-        chosen = set(picks)
-        fill = [g for g in ranking[len(floor):] if g not in exclude and g not in chosen]
-        fill = fill[:slots - len(picks)]
+        picks, fill, _ = self._fill_slots([[g] for g in hinted + by_score], slots, exclude,
+                                          ranking, len(floor))
 
         context.update({
+            "view": "gates",
             "budget": len(floor) + slots,
             "floor": len(floor),
             "llm_slots": slots,

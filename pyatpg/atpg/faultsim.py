@@ -273,6 +273,87 @@ def simulate_pattern_coverage(
     )
 
 
+def detection_masks(
+    circuit: Circuit, vectors: TestVectorSet, sites: list[str]
+) -> dict[tuple[str, int], int]:
+    """Which patterns detect each stuck-at fault on ``sites``.
+
+    Returns (site, stuck value) -> an int whose bit i is set when pattern i
+    (in file order) carries that fault's effect to a primary output. Unlike
+    :func:`simulate_pattern_coverage` it follows every fault to every
+    output, so it costs more per fault: meant for a few thousand faults (a
+    Trojan's), not the whole circuit. Raises ValueError when the patterns
+    cannot be simulated on this circuit.
+    """
+    n = vectors.count
+    if n == 0:
+        raise ValueError("no patterns")
+    pis = list(vectors.primary_inputs)
+    if any(p not in circuit.inputs for p in pis):
+        raise ValueError("pattern file names inputs not in the circuit")
+    order = _levelize(circuit)
+    mask = (1 << n) - 1
+    good: dict[str, int] = {name: _pack([v.inputs[i] for v in vectors.vectors])
+                            for i, name in enumerate(pis)}
+    for name in circuit.inputs:
+        good.setdefault(name, 0)
+    gates = circuit.gates
+    for out in order:
+        gate = gates[out]
+        good[out] = _eval(gate.gtype, [good[i] for i in gate.inputs], mask)
+    fanout: dict[str, list[str]] = {}
+    for out, gate in gates.items():
+        for inp in gate.inputs:
+            fanout.setdefault(inp, []).append(out)
+    level = {name: i for i, name in enumerate(order)}
+    outputs = set(circuit.outputs)
+    result: dict[tuple[str, int], int] = {}
+    for site in sites:
+        if site not in good:
+            continue
+        for value, stuck in ((0, 0), (1, mask)):
+            result[(site, value)] = _detection_mask(
+                site, stuck, good, gates, fanout, level, outputs, mask)
+    return result
+
+
+def _detection_mask(
+    site: str,
+    stuck: int,
+    good: dict[str, int],
+    gates: dict[str, Any],
+    fanout: dict[str, list[str]],
+    level: dict[str, int],
+    outputs: set[str],
+    mask: int,
+) -> int:
+    """Patterns that show the fault at ``site`` on some primary output."""
+    if good[site] == stuck:
+        return 0
+    detected = (good[site] ^ stuck) if site in outputs else 0
+    faulty: dict[str, int] = {site: stuck}
+    pending: list[tuple[int, str]] = []
+    queued: set[str] = set()
+    for nxt in fanout.get(site, ()):
+        if nxt not in queued:
+            queued.add(nxt)
+            heapq.heappush(pending, (level[nxt], nxt))
+    while pending:
+        _, out = heapq.heappop(pending)
+        gate = gates[out]
+        value = _eval(gate.gtype, [faulty.get(i, good[i]) for i in gate.inputs], mask)
+        if value == good[out]:
+            continue
+        faulty[out] = value
+        if out in outputs:
+            detected |= value ^ good[out]
+        for nxt in fanout.get(out, ()):
+            if nxt not in queued:
+                queued.add(nxt)
+                heapq.heappush(pending, (level[nxt], nxt))
+    return detected & mask
+
+
 def _propagates(
     site: str,
     stuck: int,
