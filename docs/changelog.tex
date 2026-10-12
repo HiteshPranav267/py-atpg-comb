@@ -16,6 +16,33 @@ What changed, why, and what it measurably did. Newest first. The LaTeX version (
 
 Numbers marked \emph{detector only} come from running the trigger detector on the full-scan model with no ATPG and no LLM (a few seconds per circuit). Numbers from full runs say so.
 
+\section*{2026-10-12: first test-set run; LLM and rarity cones in turn; a held-out set}
+Prompted by the first run of the 15-file test set (\texttt{experiments/llm-vs-standard}, now \texttt{dev/}): compare mode, full scan, Groq gpt-oss-120b, cone view.
+
+\subsection*{What the 15 runs showed}
+\begin{itemize}
+  \item \textbf{Standard vs targeted.} 92.8-96.1\% fewer patterns and tester cycles (5.0-5.5M $\rightarrow$ 0.21-0.38M); standard ATPG needed 1,164-4,085 of its patterns, in order, to detect every Trojan fault, the LLM-targeted set 67-199. Generation time 4-6 s for standard ATPG, 13-219 s with the LLM.
+  \item \textbf{With vs without the LLM: no net gain.} 121 of 200 Trojan gates with the LLM's cones in its slots, 120 with rarity-ordered cones. The LLM won 5 of the 8 \texttt{rare}/\texttt{uncommon} files (1.00 vs 0.17-0.33 recall) and tied 3; it lost 6 of the 7 typo-fixed/\texttt{never} files (0.13-0.92 vs 1.00). It ranked triggers that fire in 0.1-4\% of patterns 1st-7th where rarity ranked them 27th-224th, and never-firing triggers 8th-40th where rarity ranked them 1st-3rd.
+  \item \textbf{The circuit-analysis hints were noise.} They took the model's slots first: 83 gates over 15 runs, none a Trojan gate.
+  \item \textbf{Two dead Trojans.} In \texttt{s38584\_gen\_never\_s1/s2} Atalanta proves \texttt{Tj\_Trigger} stuck-at-0 redundant: a tap is tied to a constant in that host, so the trigger can never fire (standard ATPG detected 11/30 and 5/24 of their Trojan faults).
+\end{itemize}
+
+\subsection*{Changes (all chosen on those 15 files)}
+\begin{itemize}
+  \item \textbf{Cones in turn} (\texttt{targeting.py}). With the LLM, the slots take whole cones from its ranking and from root-rarity order alternately; without it, from rarity order only. Replaying the 15 runs' recorded LLM scores: 126 of 200 at \texttt{llm\_share} 0.5.
+  \item **\texttt{llm\_share} default 0.5 $\rightarrow$ 0.8.\textbf{ At 0.5 the cones had \textasciitilde{}95 slots and the two rarest s38417 cones are 44-gate host blocks, so neither ordering got far. Replayed at 0.8: }169 of 200** with the LLM vs 120 with rarity order, below rarity on no file except one gate of \texttt{s38417-T100\_fixed}.
+  \item **\texttt{root\_reg} in the cone row**, and a line in the prompt: a cone whose root is itself a register input is usually next-state logic. In 2 of the 15 runs the cones ranked above the Trojan were all such cones (rank 8 $\rightarrow$ 1 and 24 $\rightarrow$ 7 without them). Not replayable: it changes what the model sees.
+  \item \textbf{Circuit-analysis hints removed} from targeting (both views).
+  \item \textbf{Generator} (\texttt{make\_trojan\_variants.py}): the trigger class is checked on the built netlist's simulation, not the tap-independence estimate, and Atalanta must detect \texttt{Tj\_Trigger} stuck-at-0 (60 s limit) or the candidate is drawn again.
+\end{itemize}
+
+\subsection*{Held-out set (\texttt{experiments/llm-vs-standard/heldout/})}
+\begin{itemize}
+  \item 12 circuits from seeds 3 and 4 (s38417 and s38584 hosts $\times$ never / rare / uncommon), generated after the changes above and not run before. Because every change here was chosen on \texttt{dev/}, the 169-vs-120 above is not a result; the held-out runs are.
+  \item All 12 triggers in band and able to fire; generating them rejected 9 dead candidates (all on s38584 \texttt{never}) and 2 out of band.
+  \item Checked with no model: the detector flags none of the Trojans' gates. The trigger's cone ranks 2nd-3rd by rarity in 3 \texttt{never} files and 41st-233rd in the other 9 (including \texttt{s38584\_gen\_never\_s4} at 116th: many s38584 host cones never toggle either). The no-LLM list finds the whole Trojan in those 3 and at most 1 gate in the 9.
+\end{itemize}
+
 \section*{2026-10-12: cones for the LLM, standard-vs-targeted comparison, a test set}
 Prompted by the question the paper has to answer: is LLM-targeted ATPG better than standard ATPG, and is the LLM the reason. The runs below this entry could answer neither: the LLM was never shown a Trojan gate, the no-LLM list was never run through ATPG, and the detector found every Trojan on its own.
 

@@ -8,6 +8,64 @@ Numbers marked *detector only* come from running the trigger detector on the
 full-scan model with no ATPG and no LLM (a few seconds per circuit). Numbers
 from full runs say so.
 
+## 2026-10-12: first test-set run; LLM and rarity cones in turn; a held-out set
+
+Prompted by the first run of the 15-file test set (`experiments/llm-vs-standard`,
+now `dev/`): compare mode, full scan, Groq gpt-oss-120b, cone view.
+
+### What the 15 runs showed
+
+- **Standard vs targeted.** 92.8-96.1% fewer patterns and tester cycles
+  (5.0-5.5M → 0.21-0.38M); standard ATPG needed 1,164-4,085 of its patterns,
+  in order, to detect every Trojan fault, the LLM-targeted set 67-199.
+  Generation time 4-6 s for standard ATPG, 13-219 s with the LLM.
+- **With vs without the LLM: no net gain.** 121 of 200 Trojan gates with the
+  LLM's cones in its slots, 120 with rarity-ordered cones. The LLM won 5 of the
+  8 `rare`/`uncommon` files (1.00 vs 0.17-0.33 recall) and tied 3; it lost 6 of
+  the 7 typo-fixed/`never` files (0.13-0.92 vs 1.00). It ranked triggers that
+  fire in 0.1-4% of patterns 1st-7th where rarity ranked them 27th-224th, and
+  never-firing triggers 8th-40th where rarity ranked them 1st-3rd.
+- **The circuit-analysis hints were noise.** They took the model's slots first:
+  83 gates over 15 runs, none a Trojan gate.
+- **Two dead Trojans.** In `s38584_gen_never_s1/s2` Atalanta proves
+  `Tj_Trigger` stuck-at-0 redundant: a tap is tied to a constant in that host,
+  so the trigger can never fire (standard ATPG detected 11/30 and 5/24 of their
+  Trojan faults).
+
+### Changes (all chosen on those 15 files)
+
+- **Cones in turn** (`targeting.py`). With the LLM, the slots take whole cones
+  from its ranking and from root-rarity order alternately; without it, from
+  rarity order only. Replaying the 15 runs' recorded LLM scores: 126 of 200 at
+  `llm_share` 0.5.
+- **`llm_share` default 0.5 → 0.8.** At 0.5 the cones had ~95 slots and the two
+  rarest s38417 cones are 44-gate host blocks, so neither ordering got far.
+  Replayed at 0.8: **169 of 200** with the LLM vs 120 with rarity order, below
+  rarity on no file except one gate of `s38417-T100_fixed`.
+- **`root_reg` in the cone row**, and a line in the prompt: a cone whose root
+  is itself a register input is usually next-state logic. In 2 of the 15 runs
+  the cones ranked above the Trojan were all such cones (rank 8 → 1 and 24 → 7
+  without them). Not replayable: it changes what the model sees.
+- **Circuit-analysis hints removed** from targeting (both views).
+- **Generator** (`make_trojan_variants.py`): the trigger class is checked on
+  the built netlist's simulation, not the tap-independence estimate, and
+  Atalanta must detect `Tj_Trigger` stuck-at-0 (60 s limit) or the candidate is
+  drawn again.
+
+### Held-out set (`experiments/llm-vs-standard/heldout/`)
+
+- 12 circuits from seeds 3 and 4 (s38417 and s38584 hosts × never / rare /
+  uncommon), generated after the changes above and not run before. Because
+  every change here was chosen on `dev/`, the 169-vs-120 above is not a
+  result; the held-out runs are.
+- All 12 triggers in band and able to fire; generating them rejected 9 dead
+  candidates (all on s38584 `never`) and 2 out of band.
+- Checked with no model: the detector flags none of the Trojans' gates. The
+  trigger's cone ranks 2nd-3rd by rarity in 3 `never` files and 41st-233rd in
+  the other 9 (including `s38584_gen_never_s4` at 116th: many s38584 host cones
+  never toggle either). The no-LLM list finds the whole Trojan in those 3 and
+  at most 1 gate in the 9.
+
 ## 2026-10-12: cones for the LLM, standard-vs-targeted comparison, a test set
 
 Prompted by the question the paper has to answer: is LLM-targeted ATPG better

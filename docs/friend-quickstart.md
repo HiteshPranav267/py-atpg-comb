@@ -117,7 +117,7 @@ Trojan's gates were found with and without the LLM.
 ## Current test round
 
 The circuits for the standard-vs-LLM comparison are in
-[`experiments/llm-vs-standard/variants/`](../experiments/llm-vs-standard/variants/).
+[`experiments/llm-vs-standard/heldout/`](../experiments/llm-vs-standard/heldout/).
 Run each one on the website (ATPG → upload → **Full scan** on → **Compare
 Both**, your key in Settings), download the full report from **Reports**, and
 name it after the circuit. The *Standard vs targeted ATPG* panel on the result

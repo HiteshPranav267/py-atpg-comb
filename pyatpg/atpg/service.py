@@ -490,10 +490,8 @@ class AtpgAnalysisService:
         # exactly what the whole request cost.
         tracker = TokenTracker()
 
-        # Before targeting, so the regions the model calls suspicious can
-        # join its fault list: on s38417-T200 it named Tj_OUT5678/7/8 here
-        # while the selection, which sees a different slice of the circuit,
-        # left them out.
+        # Its suspicious regions no longer feed the fault list: on the first
+        # 15-file test set they took 83 slots and held no Trojan gate.
         report("Writing the circuit analysis" + (" with the LLM" if provider is not None else ""))
         analyst = CircuitAnalyst(provider=provider, tracker=tracker)
         analysis.circuit_analysis = analyst.analyze(
@@ -506,7 +504,7 @@ class AtpgAnalysisService:
         selection = None
         baseline_gates = None
         if mode.runs_targeted:
-            from .targeting import FaultTargetSelector, analysis_region_gates
+            from .targeting import FaultTargetSelector
 
             selector = FaultTargetSelector(provider=provider, tracker=tracker)
             report("Selecting target gates" + (" with the LLM" if provider is not None else ""))
@@ -518,8 +516,6 @@ class AtpgAnalysisService:
                 extra_suspects=forced_suspects,
                 use_detector=detector_in_targeting,
                 force_shape=force_shape,
-                hints=(analysis_region_gates(analysis.circuit_analysis)
-                       if analysis.circuit_analysis.source == "llm" else None),
                 circuit=parsed.circuit,
             )
             if not detector_in_targeting:

@@ -96,10 +96,25 @@ def test_cone_view_lists_match_in_size_and_differ_only_in_the_cones_chosen(monke
     assert len(llm.gates) == len(base.gates) == 12
     floor = llm.context["floor"]
     assert llm.gates[:floor] == base.gates[:floor]
-    # The model's top cone (the 11-gate trigger) fills its slots; gates of it
-    # already in the floor (its rare root) are not counted twice.
-    assert llm.context["llm_picks"] and all(g.startswith("Tj_") for g in llm.context["llm_picks"])
-    assert "Tj_Trigger" in llm.gates
+    # The model's top cone (the 11-gate trigger) goes first, then the rarest
+    # cone, in turn.
+    used = llm.context["cones_used"]
+    assert used[0] == {"root": "Tj_Trigger", "from": "llm"}
+    assert all(u["from"] == ("llm" if i % 2 == 0 else "rarity") for i, u in enumerate(used))
+    assert {f"Tj_OUT{k}" for k in range(1, 9)} <= set(llm.gates)
+
+
+def test_the_rarest_cone_keeps_its_place_when_the_model_prefers_another(monkeypatch):
+    from pyatpg.atpg.targeting import _alternate
+
+    class C:
+        def __init__(self, root):
+            self.root = root
+
+    rarest = [C("r1"), C("r2"), C("x")]
+    model = [C("x"), C("m2")]
+    assert [(c.root, s) for c, s in _alternate(model, rarest)] == [
+        ("x", "llm"), ("r1", "rarity"), ("m2", "llm"), ("r2", "rarity")]
 
 
 def test_gate_view_setting_turns_cones_off(monkeypatch):

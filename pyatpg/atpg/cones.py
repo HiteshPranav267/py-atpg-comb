@@ -56,7 +56,7 @@ class Cone:
 #: Columns of a cone summary row.
 CONE_COLUMNS = (
     "id", "gates", "depth", "types", "leaves", "leaf_p", "leaf_fo", "leaf_lvl",
-    "root_rare", "root_fo", "drives", "dup", "level", "flag",
+    "root_rare", "root_fo", "root_reg", "drives", "dup", "level", "flag",
 )
 CONE_HEADER = ",".join(CONE_COLUMNS)
 CONE_LEGEND = (
@@ -69,7 +69,8 @@ CONE_LEGEND = (
     "logic levels spanned by the leaves, as a share of the circuit's depth (near "
     "0 = all from one place, near 1 = drawn from all over the design). "
     "root_rare: how rarely the root takes its rarer value (0 = never in 4096 "
-    "random patterns). root_fo: gates the root drives. drives: those gates' "
+    "random patterns). root_fo: gates the root drives. root_reg: y when the root "
+    "itself is an output or a register's next-state input. drives: those gates' "
     "types, with po when the gate is an output or register input, and sp=x where "
     "x is the median probability of the gate's other inputs. dup = some gate in "
     "the cone reads the same net twice. level: the root's depth in the circuit, "
@@ -175,6 +176,7 @@ def _summarise(cone: Cone, circuit: Circuit, probs: dict[str, float], rarity: di
         "leaf_lvl": round((max(leaf_lv) - min(leaf_lv)) / top, 2),
         "root_rare": round(rarity.get(cone.root, 0.0), 4),
         "root_fo": len(cone.consumers),
+        "root_reg": "y" if cone.root in outputs else "n",
         "drives": " ".join(drives) or "-",
         "dup": "y" if any(len(set(gates[g].inputs)) < len(gates[g].inputs) for g in cone.gates) else "n",
         "level": round(level.get(cone.root, 0) / top, 2),
@@ -186,7 +188,8 @@ def cone_line(alias: str, cone: Cone) -> str:
     f = cone.features
     return ",".join(str(x) for x in (
         alias, f["gates"], f["depth"], f["types"], f["leaves"], f["leaf_p"], f["leaf_fo"],
-        f["leaf_lvl"], f["root_rare"], f["root_fo"], f["drives"], f["dup"], f["level"], f["flag"],
+        f["leaf_lvl"], f["root_rare"], f["root_fo"], f["root_reg"], f["drives"], f["dup"], f["level"],
+        f["flag"],
     ))
 
 

@@ -12,7 +12,10 @@ Two kinds of circuit:
   and XOR payloads spliced in front of host nets. The trigger's strength is
   fixed by a rule, not tuned to any result: taps are drawn at random until the
   root's random-pattern probability falls in the band of its class --
-  ``never`` (no hit in 4096 patterns), ``rare`` (0.1-1%), ``uncommon`` (1-4%).
+  ``never`` (no hit in 4096 patterns), ``rare`` (0.1-1%), ``uncommon`` (1-4%),
+  measured on the built netlist; and Atalanta must detect ``Tj_Trigger``
+  stuck-at-0 (the trigger can fire and its effect reaches an output), or the
+  candidate is drawn again.
 
 Every Trojan net is named ``Tj_*`` so the report scores it by name; the LLM
 never sees names. A manifest records host, class, seed, root probability and
@@ -116,28 +119,35 @@ def _trigger_probability(p: dict[str, float], taps: list[str], rng_patterns: int
     return half1 * half2
 
 
-def insert_trojan(text: str, cls: str, payloads: int, seed: int) -> tuple[str, dict]:
-    circuit = _scan_view(text)
-    probs = _probabilities(text, circuit)
-    drives, reads, ports = _connections(text)
-    rng = random.Random(seed)
-    lo, hi = BANDS[cls]
-    wired = [n for n in probs if drives.get(n) == 1 and reads.get(n, 0) >= 1 and n not in ports
-             and not n.startswith("Tj_")]
-    tlo, thi = TAP_RANGE[cls]
-    taps_pool = [n for n in wired if tlo <= probs[n] <= thi]
-    for attempt in range(20000):
-        taps = rng.sample(taps_pool, 16)
-        est = _trigger_probability(probs, taps)
-        if cls == "never" and est < 1e-6 or cls != "never" and lo <= est <= hi:
-            break
-    else:
-        raise RuntimeError(f"no tap set lands in band {cls}")
-    # A payload in front of a net the trigger itself depends on would close a
-    # combinational loop through the trigger.
-    upstream = _fanin(circuit, taps)
-    hosts = rng.sample([n for n in wired if n not in upstream and n in circuit.gates], payloads)
+def trigger_fires(text: str) -> bool:
+    """Whether ATPG can drive Tj_Trigger to 1 and see it at an output.
 
+    That is Atalanta detecting ``Tj_Trigger`` stuck-at-0 on the full-scan
+    model: the trigger can fire, and a payload carries it somewhere
+    observable. A Trojan that fails this is dead (on s38584 a tap tied to a
+    constant made two early variants unable to fire) and tests nothing.
+    """
+    from pyatpg.atpg.runner import AtalantaRunner
+    from pyatpg.atpg.workspace import JobWorkspace
+
+    parsed = parse_circuit(text, "variant.v")
+    if parsed.circuit.flipflops:
+        parsed.circuit, _ = to_full_scan(parsed.circuit)
+        parsed.derived = True
+    from pyatpg.atpg.runner import AtalantaExecutionError
+
+    try:
+        # Usually 0.1 s; a candidate Atalanta cannot settle quickly is not
+        # proven live and is drawn again.
+        run = AtalantaRunner(timeout=60).run(
+            JobWorkspace.create("trigger_check"), parsed.to_bench(), label="trigger check",
+            targeted_faults=["Tj_Trigger /0"], backtrack_limit=1000)
+    except AtalantaExecutionError:
+        return False
+    return not any(f.fault_name == "Tj_Trigger /0" for f in run.faults)
+
+
+def _build(text: str, taps: list[str], hosts: list[str]) -> tuple[str, list[str]]:
     lines = []
     for k in range(8):
         lines.append(f"  AND2X1 Trojan{k + 1} ( .IN1({taps[2 * k]}), .IN2({taps[2 * k + 1]}), "
@@ -157,14 +167,51 @@ def insert_trojan(text: str, cls: str, payloads: int, seed: int) -> tuple[str, d
     wires += [f"{h}_Tj_Payload" for h in hosts]
     decl = "  wire " + ", ".join(wires) + ";\n"
     end = body.rindex("endmodule")
-    out = body[:end] + decl + "\n".join(lines) + "\n" + body[end:]
+    return body[:end] + decl + "\n".join(lines) + "\n" + body[end:], wires
 
-    root = _probabilities(out).get("Tj_Trigger")
-    return out, {
-        "class": cls, "seed": seed, "payloads": payloads, "taps": taps, "payload_hosts": hosts,
-        "root_probability_estimate": est, "root_probability": root,
-        "trojan_nets": wires,
-    }
+
+def insert_trojan(text: str, cls: str, payloads: int, seed: int,
+                  max_builds: int = 200) -> tuple[str, dict]:
+    """A Trojan of class ``cls`` whose measured trigger probability is in band and which can fire."""
+    circuit = _scan_view(text)
+    probs = _probabilities(text, circuit)
+    drives, reads, ports = _connections(text)
+    rng = random.Random(seed)
+    lo, hi = BANDS[cls]
+    wired = [n for n in probs if drives.get(n) == 1 and reads.get(n, 0) >= 1 and n not in ports
+             and not n.startswith("Tj_")]
+    tlo, thi = TAP_RANGE[cls]
+    taps_pool = [n for n in wired if tlo <= probs[n] <= thi]
+    rejected = {"band": 0, "dead": 0}
+    for _ in range(max_builds):
+        for _ in range(20000):
+            taps = rng.sample(taps_pool, 16)
+            est = _trigger_probability(probs, taps)
+            if cls == "never" and est < 1e-6 or cls != "never" and lo <= est <= hi:
+                break
+        else:
+            raise RuntimeError(f"no tap set lands in band {cls}")
+        # A payload in front of a net the trigger itself depends on would close
+        # a combinational loop through the trigger.
+        upstream = _fanin(circuit, taps)
+        hosts = rng.sample([n for n in wired if n not in upstream and n in circuit.gates], payloads)
+        out, wires = _build(text, taps, hosts)
+        # The estimate treats taps as independent; the class is decided by
+        # the built netlist's own simulation.
+        root = _probabilities(out).get("Tj_Trigger", 0.0)
+        if not (root == 0.0 if cls == "never" else lo <= root <= hi):
+            rejected["band"] += 1
+            continue
+        if not trigger_fires(out):
+            rejected["dead"] += 1
+            continue
+        return out, {
+            "class": cls, "seed": seed, "payloads": payloads, "taps": taps,
+            "payload_hosts": hosts, "root_probability_estimate": est,
+            "root_probability": root, "trigger_fires": True, "rejected": rejected,
+            "trojan_nets": wires,
+        }
+    raise RuntimeError(f"no {cls} Trojan passed in {max_builds} builds ({rejected})")
 
 
 def main() -> None:
@@ -194,7 +241,9 @@ def main() -> None:
                 name = f"{host}_gen_{cls}_s{seed}"
                 (out / f"{name}.v").write_text(body, encoding="utf-8", newline="\n")
                 manifest.append({"file": f"{name}.v", "kind": "generated", "host": host, **meta})
-                print("wrote", name, "root p", meta["root_probability"])
+                (out / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+                print("wrote", name, "root p", meta["root_probability"], "rejected", meta["rejected"],
+                      flush=True)
     (out / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
 
 

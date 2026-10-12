@@ -52,11 +52,12 @@ SETTINGS: dict[str, Setting] = {s.key: s for s in [
             "LLM; both modes are the plain heuristic, the LLM replacing its share of it -- "
             "for measuring what the LLM finds by itself. The verdict still uses the "
             "detector."),
-    Setting("llm_share", "PYATPG_LLM_SHARE", float, 0.5, "LLM share of the fault list",
-            "LLM runs keep the structural heuristic's top picks and let the model replace "
-            "this share of the list (0-1) with gates it scores higher; picks it does not "
-            "make fall back to the heuristic's next ones. Both modes test the same number "
-            "of gates, so 'with vs without LLM' compares like for like."),
+    Setting("llm_share", "PYATPG_LLM_SHARE", float, 0.8, "LLM share of the fault list",
+            "The structural heuristic's top picks keep the rest of the list; this share "
+            "(0-1) is filled by whole cones -- with an LLM its top-scored cones and the "
+            "rarest in turn, without one the rarest. Both modes test the same number of "
+            "gates, so 'with vs without LLM' compares like for like. 0.8 was chosen on "
+            "the first 15-file test set (0.5 left room for too few cones)."),
     Setting("llm_view", "PYATPG_LLM_VIEW", str, "cones", "What the LLM scores",
             "cones = whole rare cones (a rare net and the logic beneath it, summarised); the "
             "slots are filled with the chosen cones, and without an LLM with the rarest "

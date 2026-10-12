@@ -84,12 +84,7 @@ _MIN_SCORE = 30.0
 
 #: Share of the list the model may fill when the ``llm_share`` setting
 #: cannot be read.
-_DEFAULT_LLM_SHARE = 0.5
-
-#: A suspicious region from the circuit analysis is offered to the fault
-#: list only if it names at most this many gates: the analyst often returns
-#: one "region" spanning its whole 120-gate input, which says nothing.
-_MAX_ANALYSIS_REGION = 25
+_DEFAULT_LLM_SHARE = 0.8
 
 #: Worked examples of what inserted logic looks like in feature terms, given
 #: to the model as support-set "shots". Deliberately written as feature
@@ -146,25 +141,22 @@ class TargetSelection:
     context: dict[str, Any] = field(default_factory=dict)
 
 
-def analysis_region_gates(analysis: Any) -> list[str]:
-    """Gates of the model's own small suspicious regions (circuit analysis).
-
-    The two model stages see different slices of a large circuit (the
-    analyst the 120 rarest gates, the selector a mixed pool), so each can
-    name Trojan gates the other never saw: on s38417-T200 the analyst
-    flagged Tj_OUT5678/7/8 and the selection did not. They are passed to
-    :meth:`FaultTargetSelector.select` as ``hints`` and take the model's
-    slots first; the no-LLM baseline never gets them.
-    """
-    gates: list[str] = []
-    for region in getattr(analysis, "suspicious_regions", None) or []:
-        if region.gates and len(region.gates) <= _MAX_ANALYSIS_REGION:
-            gates.extend(region.gates)
-    return list(dict.fromkeys(gates))
-
-
 #: Gate views the model can be shown (live setting ``llm_view``).
 _VIEWS = ("cones", "gates")
+
+
+def _alternate(ranked: list[Any], rarest: list[Any]) -> list[tuple[Any, str]]:
+    """The model's cones and the rarest cones in turn, each cone once: (cone, source)."""
+    from itertools import zip_longest
+
+    out: list[tuple[Any, str]] = []
+    seen: set[str] = set()
+    for a, b in zip_longest(ranked, rarest):
+        for cone, src in ((a, "llm"), (b, "rarity")):
+            if cone is not None and cone.root not in seen:
+                seen.add(cone.root)
+                out.append((cone, src))
+    return out
 
 
 def _llm_view() -> str:
@@ -254,7 +246,6 @@ class FaultTargetSelector:
         extra_suspects: list[tuple[str, str]] | None = None,
         use_detector: bool = True,
         force_shape: bool = True,
-        hints: list[str] | None = None,
         circuit: Any = None,
     ) -> TargetSelection:
         """Choose the gates for the targeted fault list.
@@ -276,13 +267,10 @@ class FaultTargetSelector:
         list (they are still reported); the service passes it when the
         trigger detector found something strong.
 
-        ``hints`` are gates the model itself named elsewhere (its circuit
-        analysis); they take its slots before its scored picks.
-
         ``circuit`` (the netlist the profiles came from) enables the cone view
         (setting ``llm_view``, default): the slots are filled by whole rare
-        cones (pyatpg.atpg.cones) instead of single gates -- by the model's
-        scores with an LLM, by root rarity without one.
+        cones (pyatpg.atpg.cones) instead of single gates -- with an LLM, its
+        top-scored cones and the rarest cones in turn; without one, the rarest.
         """
         max_gates = self._effective_max_gates(profiles)
         if not use_detector:
@@ -317,11 +305,11 @@ class FaultTargetSelector:
             try:
                 if cones:
                     selection = self._select_cones_with_llm(
-                        profiles, summary, base, cones, forced, source_text, hints or [], size
+                        profiles, summary, base, cones, forced, source_text, size
                     )
                 else:
                     selection = self._select_with_llm(
-                        profiles, summary, base, graph, suspects, forced, source_text, hints or []
+                        profiles, summary, base, graph, suspects, forced, source_text
                     )
                 return self._merge_suspects(selection, suspects, reasons, forced)
             except LLMUnavailableError:
@@ -535,10 +523,17 @@ class FaultTargetSelector:
         cones: list[Any],
         forced: list[str],
         source_text: str | None,
-        hints: list[str],
         size: int,
     ) -> TargetSelection:
-        """The floor, then the cones the model scores highest, expanded whole."""
+        """The floor, then the model's top cones and the rarest cones in turn.
+
+        The model and root rarity find different Trojans. On the first 15-file
+        run the model ranked a trigger that fires in 1-4% of patterns 1st-7th
+        where rarity ranked it 27th-224th, but ranked never-firing triggers
+        8th-40th where rarity ranked them 1st-3rd: with its slots to itself it
+        found 121 of 200 Trojan gates, rarity alone 120. Taking the two
+        orderings in turn keeps the rarity order's finds and adds the model's.
+        """
         from .cones import expansion
 
         ranking, floor, slots, exclude = self._split(profiles, size, forced)
@@ -554,15 +549,14 @@ class FaultTargetSelector:
         by_root = {c.root: c for c in candidates}
         ranked = [by_root[r] for r, sc in sorted(scores.items(), key=lambda rs: (-rs[1], rs[0]))
                   if sc >= _MIN_SCORE and r in by_root]
-        known = {str(p["gate_id"]) for p in profiles}
-        hinted = [g for g in hints if g in known and g not in exclude]
-        groups = [[g] for g in hinted] + [expansion(c) for c in ranked]
-        picks, fill, used = self._fill_slots(groups, slots, exclude, ranking, len(floor))
+        order = _alternate(ranked, candidates)
+        picks, fill, used = self._fill_slots([expansion(c) for c, _ in order], slots, exclude,
+                                             ranking, len(floor))
+        taken = [(c, src) for c, src in order if any(g in set(picks) for g in c.gates)][:used]
         context.update({
             "view": "cones", "budget": len(floor) + slots, "floor": len(floor),
             "llm_slots": slots, "llm_picks": picks,
-            "analysis_hints": [g for g in picks if g in set(hinted)],
-            "cones_picked": [c.root for c in ranked][:max(0, used - len(hinted))],
+            "cones_used": [{"root": c.root, "from": src} for c, src in taken],
             "heuristic_fill": fill,
         })
         selection = TargetSelection(
@@ -573,10 +567,10 @@ class FaultTargetSelector:
         selection.notes.extend(context.get("notes", []))
         selection.notes.append(
             f"Fault list: the structural heuristic's top {len(floor)} gate(s), then "
-            f"{len(picks)} of {slots} slot(s) filled from the cones the model scored highest "
-            f"among the {len(scores)} it scored"
-            + (f" ({len(context['analysis_hints'])} gate(s) from suspicious regions in its "
-               "circuit analysis)" if context["analysis_hints"] else "")
+            f"{len(picks)} of {slots} slot(s) filled by whole cones, the model's top-scored "
+            f"(of the {len(scores)} it scored) and the rarest in turn: "
+            f"{sum(1 for _, src in taken if src == 'llm')} from the model, "
+            f"{sum(1 for _, src in taken if src == 'rarity')} by rarity"
             + (f", and {len(fill)} by the heuristic's next picks." if fill else ".")
         )
         if cached:
@@ -628,7 +622,7 @@ class FaultTargetSelector:
         }
         cache_params = dict(
             model=self.provider.model_name, view="cones", batch=batch, total=len(pool),
-            batches=len(slices), prompt="c1", floor=floor,
+            batches=len(slices), prompt="c2", floor=floor,
         )
         cache = self.cache
         if cache is None and source_text is not None and cache_enabled():
@@ -702,10 +696,14 @@ What ordinary rare logic looks like:
   gate mix, a root that drives many gates (high root_fo) as part of the
   normal datapath.
 - Deep arithmetic or comparator logic: XOR-heavy, large, regular.
+- A register's next-state logic: the root is itself a register input
+  (root_reg=y) and drives few or no other gates (root_fo 0-1). A trigger acts
+  through payload gates on ordinary signals; logic whose only job is to
+  compute a register's next value usually is the design's own state.
 
 Worked examples (feature patterns, not from this circuit):
 - Trigger: gates 11, depth 2, types AND2 AND4x2 NOR2x8, leaves 16, leaf_p
-  0.4, leaf_fo 3, leaf_lvl 0.6, root_rare 0.005, root_fo 4, drives NOR3+po
+  0.4, leaf_fo 3, leaf_lvl 0.6, root_rare 0.005, root_fo 4, root_reg n, drives NOR3+po
   ... (other inputs common). Score high: a wide tree over scattered shared
   signals, nearly never true, steering outputs.
 - Benign: gates 9, depth 3, types NAND3x3 NOR4x2 OR2x3, leaves 12, leaf_p
@@ -742,7 +740,6 @@ left out.
         suspects: list[str],
         forced: list[str],
         source_text: str | None,
-        hints: list[str],
     ) -> TargetSelection:
         """The heuristic's list with its last ``llm_share`` replaced by the model's picks."""
         ranking, floor, slots, exclude = self._split(profiles, len(base.gates), forced)
@@ -761,10 +758,9 @@ left out.
             )
             return base
         candidate_ids = {str(p["gate_id"]) for p in candidates}
-        hinted = [g for g in hints if g in candidate_ids]
         by_score = [g for g, s in sorted(scores.items(), key=lambda gs: (-gs[1], gs[0]))
                     if s >= _MIN_SCORE and g in candidate_ids]
-        picks, fill, _ = self._fill_slots([[g] for g in hinted + by_score], slots, exclude,
+        picks, fill, _ = self._fill_slots([[g] for g in by_score], slots, exclude,
                                           ranking, len(floor))
 
         context.update({
@@ -773,7 +769,6 @@ left out.
             "floor": len(floor),
             "llm_slots": slots,
             "llm_picks": picks,
-            "analysis_hints": [g for g in picks if g in set(hinted)],
             "heuristic_fill": fill,
         })
         selection = TargetSelection(
@@ -789,8 +784,6 @@ left out.
             f"Fault list: the structural heuristic's top {len(floor)} gate(s), then "
             f"{len(picks)} of {slots} slot(s) filled by the model's highest-scored gates "
             f"among the {context.get('gates_sent', 0)} it scored"
-            + (f" ({len(context['analysis_hints'])} from suspicious regions in its circuit "
-               "analysis)" if context["analysis_hints"] else "")
             + (f", and {len(fill)} by the heuristic's next picks where the model scored "
                f"nothing at {_MIN_SCORE:g}+." if fill else ".")
         )

@@ -552,23 +552,3 @@ class TestDetectorSwitches:
             extra_suspects=[(str(p.gate_profiles[0]["gate_id"]), "flagged")],
         )
         assert sel.structural_suspects == [] and len(sel.gates) == 1
-
-
-def test_analysis_regions_take_the_models_slots_first(monkeypatch):
-    from pyatpg.atpg.circuit_analyst import CircuitAnalysis, SuspiciousRegion
-    from pyatpg.atpg.targeting import analysis_region_gates
-
-    profiles = TestRequestTokenBudget._big_profiles()
-    narrow = [str(p["gate_id"]) for p in profiles[-3:]]  # the least rare: never in the floor
-    analysis = CircuitAnalysis(source="llm", suspicious_regions=[
-        SuspiciousRegion(name="narrow", gates=narrow),
-        SuspiciousRegion(name="whole pool", gates=[f"x{k}" for k in range(120)]),
-    ])
-    hints = analysis_region_gates(analysis)
-    assert hints == narrow  # the 120-gate "region" says nothing
-
-    monkeypatch.setenv("LLM_REQUEST_TOKEN_BUDGET", "0")
-    sel = FaultTargetSelector(provider=_scoring_provider(lambda a: 0)).select(
-        profiles, hints=hints)
-    assert sel.context["llm_picks"][:3] == narrow
-    assert sel.context["analysis_hints"] == narrow
