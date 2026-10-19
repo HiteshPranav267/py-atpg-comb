@@ -8,6 +8,32 @@ Numbers marked *detector only* come from running the trigger detector on the
 full-scan model with no ATPG and no LLM (a few seconds per circuit). Numbers
 from full runs say so.
 
+## 2026-10-18: rarity blind spot as the claim; random and structural controls
+
+The project's claim is now the rarity blind spot (C1) and whether a
+structural ranking fixes it (C2) and the LLM beyond its own rules (C3); see
+`experiments/llm-vs-standard/README.md`. Changes for measuring that, made
+before any held-out run:
+
+- **Leaky worked example removed** (`targeting.py`, prompt `c3`). The cone
+  prompt's worked trigger was `AND2 AND4x2 NOR2x8, leaves 16`, the shape of
+  the generated test Trojans (`AND2x9 AND4x2`, 16 leaves). The dev LLM figures
+  of 2026-10-12 (5 of 8 `rare`/`uncommon` wins; 169 alternating) were made with
+  it and overstate the model. The new example has another size and gate mix;
+  a test guards it.
+- **Control orderings** (`targeting.py`, `cones.py`). Every cone-view
+  selection also builds rarity-only (R), rarity + random order (R+Rand, seeds
+  1-3) and rarity + `structural_score` (R+S, the prompt's rules as a hand-set
+  formula) at the same budget and floor. Scored in the report under
+  `trojan_ground_truth.orderings`, shown in the *Trojan check* panel.
+- **`scripts/summarize_orderings.py`** applies the decision rule to a folder of
+  downloaded reports.
+- **Dev check, no model** (`dev/`, selection only): on the 8 `rare`/`uncommon`
+  files R+S found more Trojan gates than R on 3 (15 vs 5, 12 vs 2, 15 vs 5) and
+  the same on 5; R+Rand's median never beat R; no ordering lost anything on the
+  `never` files. That most files tie is why the rule became a sign test
+  (p ≤ 0.05, ties dropped) instead of "more on 6 of 8".
+
 ## 2026-10-12: first test-set run; LLM and rarity cones in turn; a held-out set
 
 Prompted by the first run of the 15-file test set (`experiments/llm-vs-standard`,

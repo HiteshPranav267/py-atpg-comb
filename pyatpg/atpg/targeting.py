@@ -139,20 +139,37 @@ class TargetSelection:
     #: many, the pool itself and its score per gate, and how the list was
     #: assembled from them. Empty when no model was consulted.
     context: dict[str, Any] = field(default_factory=dict)
+    #: Cone view with a model: the gates of each cone in the order its slots
+    #: took them (the model's and rarity's in turn).
+    cone_order: list[list[str]] = field(default_factory=list, repr=False)
+    #: The cone orderings compared at this budget (``ORDERINGS``), name ->
+    #: (fault list, cone gates in order). The service scores them against
+    #: the ground truth; they are not reported as lists.
+    orderings: dict[str, tuple[list[str], list[list[str]]]] = field(
+        default_factory=dict, repr=False)
+
+
+#: The cone orderings every cone-view selection is compared under, all at the
+#: same budget and floor and differing only in the second ranking the slots
+#: alternate with: none (rarity order alone), a random order per seed, the
+#: hand-written structural score (pyatpg.atpg.cones.structural_score), and
+#: the model's scores when it was consulted.
+CONTROL_SEEDS = (1, 2, 3)
+ORDERINGS = ("R", *(f"R+Rand{s}" for s in CONTROL_SEEDS), "R+S", "R+L")
 
 
 #: Gate views the model can be shown (live setting ``llm_view``).
 _VIEWS = ("cones", "gates")
 
 
-def _alternate(ranked: list[Any], rarest: list[Any]) -> list[tuple[Any, str]]:
-    """The model's cones and the rarest cones in turn, each cone once: (cone, source)."""
+def _alternate(ranked: list[Any], rarest: list[Any], source: str = "llm") -> list[tuple[Any, str]]:
+    """The second ranking's cones and the rarest cones in turn, each cone once: (cone, source)."""
     from itertools import zip_longest
 
     out: list[tuple[Any, str]] = []
     seen: set[str] = set()
     for a, b in zip_longest(ranked, rarest):
-        for cone, src in ((a, "llm"), (b, "rarity")):
+        for cone, src in ((a, source), (b, "rarity")):
             if cone is not None and cone.root not in seen:
                 seen.add(cone.root)
                 out.append((cone, src))
@@ -299,8 +316,10 @@ class FaultTargetSelector:
         # The budget both modes share: what the plain heuristic would test.
         size = len(base.gates)
         cones = self._cones(circuit, set(forced)) if _llm_view() == "cones" else None
+        controls: dict[str, tuple[list[str], list[list[str]]]] = {}
         if cones:
             base = self._cone_baseline(profiles, base, cones, forced, size)
+            controls = self._control_orderings(profiles, cones, forced, size)
         if self.provider is not None:
             try:
                 if cones:
@@ -311,7 +330,8 @@ class FaultTargetSelector:
                     selection = self._select_with_llm(
                         profiles, summary, base, graph, suspects, forced, source_text
                     )
-                return self._merge_suspects(selection, suspects, reasons, forced)
+                return self._with_orderings(
+                    self._merge_suspects(selection, suspects, reasons, forced), controls)
             except LLMUnavailableError:
                 # The model could not be consulted at all (no credits, rate
                 # limited, provider 5xx). The user asked for an LLM-assisted
@@ -320,8 +340,18 @@ class FaultTargetSelector:
                 raise
             except Exception as exc:  # noqa: BLE001 - model ran but its answer was unusable
                 base.notes.append(f"LLM targeting unavailable ({exc}); used the structural heuristic.")
-                return self._merge_suspects(base, suspects, reasons, forced)
-        return self._merge_suspects(base, suspects, reasons, forced)
+                return self._with_orderings(
+                    self._merge_suspects(base, suspects, reasons, forced), controls)
+        return self._with_orderings(self._merge_suspects(base, suspects, reasons, forced), controls)
+
+    @staticmethod
+    def _with_orderings(selection: TargetSelection,
+                        controls: dict[str, tuple[list[str], list[list[str]]]]) -> TargetSelection:
+        """Attach the control orderings, and the model's own when it chose the cones."""
+        selection.orderings = dict(controls)
+        if controls and selection.used_llm and selection.cone_order:
+            selection.orderings["R+L"] = (list(selection.gates), selection.cone_order)
+        return selection
 
     @staticmethod
     def _find_suspects(
@@ -515,6 +545,43 @@ class FaultTargetSelector:
         )
         return base
 
+    def _control_orderings(self, profiles: list[dict[str, Any]], cones: list[Any],
+                           forced: list[str], size: int) -> dict[str, tuple[list[str], list[list[str]]]]:
+        """The lists rarity order alone, a random order and the structural score would give.
+
+        Built exactly as the model's list is -- same floor, same slots, the
+        second ranking and the rarest cones in turn, then the forced gates --
+        so a list differs from the model's only in its second ranking. R+Rand
+        tells a gain from alternating with *any* order apart from a gain from
+        ranking; R+S tells the model's judgement apart from the rules its
+        prompt states. No model call; never fails the run.
+        """
+        import random
+
+        from .cones import expansion, structural_score
+
+        try:
+            ranking, floor, slots, exclude = self._split(profiles, size, forced)
+            candidates = [c for c in cones if any(g not in exclude for g in c.gates)]
+
+            def build(order: list[Any]) -> tuple[list[str], list[list[str]]]:
+                picks, fill, _ = self._fill_slots([expansion(c) for c in order], slots, exclude,
+                                                  ranking, len(floor))
+                gates = floor + picks + fill
+                gates += [g for g in dict.fromkeys(forced) if g not in set(gates)]
+                return gates, [list(c.gates) for c in order]
+
+            out = {"R": build(list(cones))}
+            for seed in CONTROL_SEEDS:
+                shuffled = list(candidates)
+                random.Random(seed).shuffle(shuffled)
+                out[f"R+Rand{seed}"] = build([c for c, _ in _alternate(shuffled, candidates, "random")])
+            scored = sorted(candidates, key=lambda c: (-structural_score(c.features), c.root))
+            out["R+S"] = build([c for c, _ in _alternate(scored, candidates, "structure")])
+            return out
+        except Exception:  # noqa: BLE001 - a comparison must not fail the run
+            return {}
+
     def _select_cones_with_llm(
         self,
         profiles: list[dict[str, Any]],
@@ -563,6 +630,7 @@ class FaultTargetSelector:
             gates=floor + picks + fill,
             strategy="llm (cached)" if cached else "llm",
             used_llm=True, cached=cached, context=context,
+            cone_order=[list(c.gates) for c, _ in order],
         )
         selection.notes.extend(context.get("notes", []))
         selection.notes.append(
@@ -622,7 +690,7 @@ class FaultTargetSelector:
         }
         cache_params = dict(
             model=self.provider.model_name, view="cones", batch=batch, total=len(pool),
-            batches=len(slices), prompt="c2", floor=floor,
+            batches=len(slices), prompt="c3", floor=floor,
         )
         cache = self.cache
         if cache is None and source_text is not None and cache_enabled():
@@ -702,10 +770,11 @@ What ordinary rare logic looks like:
   compute a register's next value usually is the design's own state.
 
 Worked examples (feature patterns, not from this circuit):
-- Trigger: gates 11, depth 2, types AND2 AND4x2 NOR2x8, leaves 16, leaf_p
-  0.4, leaf_fo 3, leaf_lvl 0.6, root_rare 0.005, root_fo 4, root_reg n, drives NOR3+po
-  ... (other inputs common). Score high: a wide tree over scattered shared
-  signals, nearly never true, steering outputs.
+- Trigger: gates 6, depth 2, types AND3x2 NAND2x3 NOR2, leaves 10, leaf_p
+  0.6, leaf_fo 5, leaf_lvl 0.45, root_rare 0.02, root_fo 2, root_reg n,
+  drives XOR2+sp=0.48 OR3+po+sp=0.50. Score high: a tree over shared signals
+  from different depths, rarely true, combined with ordinary signals in
+  front of an output.
 - Benign: gates 9, depth 3, types NAND3x3 NOR4x2 OR2x3, leaves 12, leaf_p
   0.5, leaf_fo 1, leaf_lvl 0.05, root_rare 0.01, root_fo 9. Score low: a
   local decode feeding many ordinary gates.

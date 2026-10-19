@@ -89,6 +89,7 @@ export function TrojanCheckPanel({ report }: { report: AtpgReport }) {
             <span className="text-xs text-muted-foreground"> ({truth.source})</span>
           </div>
           <RecallSummary truth={truth} />
+          {truth.orderings && <OrderingsTable orderings={truth.orderings} />}
           <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3">
             <ScoreCard title="Targeted gate selection" score={truth.targeted_selection} />
             <ScoreCard title="Trigger detector" score={truth.trigger_detector} />
@@ -177,6 +178,54 @@ function RecallSummary({ truth }: { truth: TrojanGroundTruth }) {
           </div>
         </>
       )}
+    </div>
+  );
+}
+
+const ORDERING_LABEL: Record<string, string> = {
+  R: 'Rarity order only',
+  'R+Rand1': 'Rarity + random (seed 1)',
+  'R+Rand2': 'Rarity + random (seed 2)',
+  'R+Rand3': 'Rarity + random (seed 3)',
+  'R+S': 'Rarity + structural score',
+  'R+L': 'Rarity + LLM',
+};
+
+/** The experiment's four cone orderings, all at this run's budget. */
+function OrderingsTable({ orderings }: { orderings: NonNullable<TrojanGroundTruth['orderings']> }) {
+  const order = Object.keys(ORDERING_LABEL).filter((k) => orderings.lists[k]);
+  return (
+    <div className="overflow-x-auto">
+      <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">
+        Cone orderings at the same budget
+      </div>
+      <table className="w-full text-xs min-w-[420px]">
+        <thead>
+          <tr className="text-left text-muted-foreground border-b border-border">
+            <th className="py-1.5 pr-3 font-medium">Ordering</th>
+            <th className="py-1.5 pr-3 font-medium text-right">Trojan gates found</th>
+            <th className="py-1.5 pr-3 font-medium text-right">List size</th>
+            <th className="py-1.5 font-medium text-right">First cone with a Trojan gate</th>
+          </tr>
+        </thead>
+        <tbody>
+          {order.map((k) => {
+            const o = orderings.lists[k];
+            return (
+              <tr key={k} className="border-b border-border/50 last:border-0">
+                <td className="py-1.5 pr-3">{ORDERING_LABEL[k]}</td>
+                <td className="py-1.5 pr-3 font-mono text-right">
+                  {o.trojan_hits} / {orderings.trojan_gates}
+                </td>
+                <td className="py-1.5 pr-3 font-mono text-right">{o.gates}</td>
+                <td className="py-1.5 font-mono text-right">
+                  {o.first_trojan_cone ?? '—'} of {o.cones}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
     </div>
   );
 }

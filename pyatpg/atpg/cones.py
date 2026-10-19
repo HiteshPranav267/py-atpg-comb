@@ -23,6 +23,7 @@ once, at their top. Names never appear in a summary.
 """
 from __future__ import annotations
 
+import re
 from collections import Counter
 from dataclasses import dataclass, field
 from statistics import median
@@ -191,6 +192,37 @@ def cone_line(alias: str, cone: Cone) -> str:
         f["leaf_lvl"], f["root_rare"], f["root_fo"], f["root_reg"], f["drives"], f["dup"], f["level"],
         f["flag"],
     ))
+
+
+def structural_score(f: dict[str, Any]) -> float:
+    """The cone prompt's description of an inserted trigger, as a fixed formula.
+
+    The R+S control: the model is told what separates a trigger from ordinary
+    rare logic (pyatpg.atpg.targeting, the cone prompt), and this scores the
+    same row by those same rules, so an LLM gain over it is the model's own
+    judgement, not the rules it was handed. Root rarity is left out: the
+    list alternates with rarity order anyway. The weights were set by hand,
+    not fitted, and fixed before the held-out runs.
+    """
+    tokens = str(f.get("types", "")).split()
+    counts = {t: int(t.rsplit("x", 1)[1]) if "x" in t else 1 for t in tokens}
+    total = sum(counts.values()) or 1
+    xor = sum(n for t, n in counts.items() if t.startswith(("XOR", "XNOR"))) / total
+    drives = str(f.get("drives", ""))
+    sides = [float(s) for s in re.findall(r"sp=([0-9.]+)", drives)]
+    root_fo = int(f.get("root_fo", 0) or 0)
+    score = (
+        min(max(float(f.get("leaf_fo", 1)) - 1, 0.0), 3.0) / 3.0   # taps shared signals
+        + float(f.get("leaf_lvl", 0.0))                             # ...from all over the design
+        + 0.5 * min(int(f.get("leaves", 0)), 12) / 12               # a wide conjunction
+        + 0.5 * (1.0 - xor)                                         # not arithmetic
+        + 0.5 * (1 <= root_fo <= 4)                                 # drives a few gates
+        + 0.5 * (sum(1 - 2 * abs(s - 0.5) for s in sides) / len(sides) if sides else 0.0)
+        + 0.5 * ("+po" in drives)                                   # in front of an output
+        + 1.0 * (f.get("dup") == "y")                               # a hand-made oddity
+        - 2.0 * (f.get("root_reg") == "y" and root_fo <= 1)         # a register's next state
+    )
+    return round(score, 4)
 
 
 def expansion(cone: Cone, max_consumers: int = 4) -> list[str]:

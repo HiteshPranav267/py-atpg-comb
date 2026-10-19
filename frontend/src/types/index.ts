@@ -289,6 +289,14 @@ export interface TrojanGroundTruth {
   llm_only_hits?: string[];
   baseline_only_hits?: string[];
   verdict_suspects?: SelectionScore;
+  /** Cone orderings at the same budget: R, R+Rand1-3, R+S, R+L (pyatpg.atpg.targeting.ORDERINGS). */
+  orderings?: {
+    trojan_gates: number;
+    lists: Record<
+      string,
+      { gates: number; trojan_hits: number; recall: number | null; first_trojan_cone: number | null; cones: number }
+    >;
+  };
   redundant_trojan_faults?: Record<
     string,
     { count: number; faults: string[]; trigger_never_fires: boolean; trigger_faults: string[] }

@@ -668,6 +668,7 @@ class AtpgAnalysisService:
             baseline=baseline_gates if mode.runs_targeted and selection else None,
             strong=[s.gate for s in analysis.verdict.suspects if s.confidence >= 0.7],
             clock_nets=set((getattr(parsed.circuit, "logic_clocks", {}) or {}).values()),
+            orderings=(selection.orderings if selection else None),
         )
         dead = _dead_logic_clocks(analysis.runs, getattr(parsed.circuit, "logic_clocks", {}))
         if dead:
@@ -1034,7 +1035,7 @@ def _write_sequential_artifacts(workspace: "JobWorkspace", name: str, runs: dict
 
 def _ground_truth_report(truth, *, selected=None, llm_selected=None, structural=None,
                          verdict=None, runs=None, trigger=None, baseline=None,
-                         strong=None, clock_nets=None) -> dict[str, Any] | None:
+                         strong=None, clock_nets=None, orderings=None) -> dict[str, Any] | None:
     """Score each gate list against the Trojan gates found by name, if any."""
     if not truth:
         return None
@@ -1058,6 +1059,8 @@ def _ground_truth_report(truth, *, selected=None, llm_selected=None, structural=
         report_["without_llm_selection"] = score_selection(baseline, truth)
         report_["llm_only_hits"] = sorted(with_llm - without)
         report_["baseline_only_hits"] = sorted(without - with_llm)
+    if orderings:
+        report_["orderings"] = _score_orderings(orderings, truth)
     if verdict is not None and getattr(verdict, "suspects", None):
         report_["verdict_suspects"] = score_selection([s.gate for s in verdict.suspects], truth)
     # Faults on the Trojan's own logic that Atalanta proved untestable. A
@@ -1078,6 +1081,30 @@ def _ground_truth_report(truth, *, selected=None, llm_selected=None, structural=
             "trigger_faults": triggers,
         }
     return report_
+
+
+def _score_orderings(orderings: dict[str, tuple[list[str], list[list[str]]]],
+                     truth) -> dict[str, Any]:
+    """Each cone ordering's Trojan gates at the shared budget, as numbers only.
+
+    ``first_trojan_cone`` is the 1-based place, in that ordering's sequence
+    of cones, of the first cone holding a Trojan gate (None: no cone does).
+    Numbers only, so the summary export keeps them whole; read by
+    scripts/summarize_orderings.py.
+    """
+    truth_set = set(truth)
+    lists = {}
+    for name, (gates, order) in orderings.items():
+        hits = len(set(gates) & truth_set)
+        lists[name] = {
+            "gates": len(gates),
+            "trojan_hits": hits,
+            "recall": round(hits / len(truth_set), 4) if truth_set else None,
+            "first_trojan_cone": next(
+                (i for i, cone in enumerate(order, 1) if truth_set.intersection(cone)), None),
+            "cones": len(order),
+        }
+    return {"trojan_gates": len(truth_set), "lists": lists}
 
 
 def _is_trigger_output_fault(fault: str, clock_nets: set[str] | None = None) -> bool:
