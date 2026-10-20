@@ -11,7 +11,7 @@ PyATPG takes a netlist — ISCAS `.bench`, structural Verilog, or RTL that it sy
 1. **Where is the Trojan?** Every gate is profiled (SCOAP testability, toggle rates, structure); a deterministic detector looks for the shapes Trojans are built from (rare trigger trees, logic-clocked registers, payloads spliced in front of outputs, hand-edited gates); and an LLM scores the gates beyond a structural heuristic's top picks and fills part of the fault list with the ones it rates highest (both modes test the same number of gates). The goal is to flag **every** Trojan gate, and to show what the LLM adds over the run without it.
 2. **How well do test patterns exercise it?** ATALANTA generates patterns for the whole circuit (non-targeted) and for the selected gates only (targeted); the patterns are then fault-simulated over the whole circuit and checked against the circuit's rare nets, where a trigger hides.
 
-The repo is one application on the `pyatpg` core: a FastAPI backend (Render) and a React/Vite frontend (Vercel), plus `python -m pyatpg` for the terminal and unattended batch scripts under `scripts/`.
+The repo is one application on the `pyatpg` core: a FastAPI backend (Render) and a React/Vite frontend (Vercel), plus `python -m pyatpg` for the terminal. The batch and analysis scripts, the test suite and the experiment netlists are kept by the team outside this repository.
 
 ## Research question
 
@@ -19,11 +19,11 @@ Rare-event Trojan test generation assumes the trigger is among the circuit's rar
 
 | # | Claim | Status |
 |---|---|---|
-| C1 | **Rarity order has a blind spot.** A trigger that fires in 0.1–4% of random patterns ranks 41st–233rd by rarity among the rare cones of s38417/s38584 (one that never fires: 2nd–3rd). At the default budget, rarity-ordered targeting includes at most one gate of such a Trojan, and the trigger detector flags none. | Measured on the held-out set |
-| C2 | **Structure recovers them.** At the same fault-list size, alternating rarity order with a structural ranking of cones (the LLM's or a hand-written score's) finds more Trojan gates than rarity alone and than alternating with a random order. | Not yet measured |
-| C3 | **The LLM adds beyond the rules it is given.** The LLM's cone ranking beats a hand-written score that applies the rules its prompt states. | Not yet measured |
+| C1 | **Rarity order has a blind spot.** A trigger that fires in 0.1–4% of random patterns ranks 41st–314th by rarity among the rare cones of s38417, s38584, s15850 and s13207 (one that never fires: 1st–3rd). Within the budget the rarity-ordered list expands only the first 13–22 cones, so it never reaches the trigger tree; the trigger detector flags none of it, and the XOR-shape detector flags only the trigger's root and payload XORs, among 132–247 benign matches. | Holds on 4 of 5 hosts; on s35932 the trigger is the only rare cone and rarity finds it |
+| C2 | **Structure recovers them.** At the same fault-list size, alternating rarity order with a structural ranking of cones (the LLM's or a hand-written score's) finds more Trojan gates than rarity alone and than alternating with a random order. | Set 1 (8 files): **holds** via the LLM (5-0, p = 0.031). Set 2 (20 files, 5 hosts, the pre-stated replication): **does not hold**: R+L beats R 5-0 but not random 4-0 (p = 0.062). Pooled 28 files: holds for LLM and score (LLM 10-0 vs rarity, 9-0 vs random; p <= 0.002). Gain mostly on s38417/s38584 |
+| C3 | **The LLM adds beyond the rules it is given.** The LLM's cone ranking beats a hand-written score that applies the rules its prompt states. | **Does not hold**: set 1 3-1 (p = 0.31), set 2 4-4, pooled 7-5 (p = 0.39) |
 
-The detector, the sequential engine and the RTL front end are the platform the experiment runs on, not claims; their figures below were measured on the circuits used to tune them. The orderings compared, the decision rule (fixed before the held-out runs) and the circuits are in [`experiments/llm-vs-standard/`](experiments/llm-vs-standard/).
+The detector, the sequential engine and the RTL front end are the platform the experiment runs on, not claims; their figures below were measured on the circuits used to tune them. The orderings compared, the decision rule (fixed before the held-out runs) and the circuits are kept with the experiment outside this repository; the rule as first written is in commit `dbf127d` (`experiments/llm-vs-standard/README.md`).
 
 ---
 
@@ -209,9 +209,7 @@ py-atpg-comb/
 ├── frontend/       # React + Vite + TailwindCSS UI
 ├── db/schema.sql   # run database schema
 ├── docs/           # run database, automation, friend quick start
-├── scripts/        # batch runners
-├── tests/          # unit tests and fixtures
-└── Atalanta/       # ATALANTA 2.0 source (compiled by build.sh)
+└── Atalanta/       # ATALANTA 2.0 source (compiled by build.sh) + prebuilt Windows binary
 ```
 
 ---
@@ -269,7 +267,7 @@ python scripts/run_via_api.py --circuits benchmarks/incoming --api-key YOUR_KEY 
 python scripts/run_suite.py research --circuits benchmarks/incoming                 # fully local
 ```
 
-See [docs/automation.md](docs/automation.md) and, for collaborators, [docs/friend-quickstart.md](docs/friend-quickstart.md).
+The scripts are not in this repository; ask the team for a copy. See [docs/automation.md](docs/automation.md) and, for collaborators, [docs/friend-quickstart.md](docs/friend-quickstart.md).
 
 What changed and why, with measured effects, is in the development log: [docs/changelog.md](docs/changelog.md) (LaTeX: `docs/changelog.tex`, regenerated with `python docs/changelog_to_tex.py`).
 

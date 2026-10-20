@@ -1,5 +1,9 @@
 # Unattended batch runs
 
+> The `scripts/` folder this page describes is kept by the team outside the
+> repository; ask for a copy. The pipeline it drives (`pyatpg.automation`) is
+> in the repository.
+
 `scripts/run_suite.py` runs the ATPG pipeline, a ranking benchmark, or the
 full trojan-generation-through-ranking pipeline over a batch of circuits
 without you babysitting it: it retries transient failures (an LLM 503/429,

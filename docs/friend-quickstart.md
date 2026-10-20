@@ -99,8 +99,8 @@ back whenever you're asked for them.
 
 If you'd rather not depend on the shared website at all (e.g. you want to
 run Atalanta on your own machine), see the main
-[docs/automation.md](automation.md) and `scripts/friend_setup.ps1` instead
-— heavier to set up (installs the full dependency list, uses the Atalanta
+[docs/automation.md](automation.md) and `scripts/friend_setup.ps1` (not in
+the repository; ask the team for the scripts folder) instead — heavier to set up (installs the full dependency list, uses the Atalanta
 binary already checked into the repo for Windows), but doesn't touch the
 shared backend at all.
 
@@ -116,10 +116,9 @@ Trojan's gates were found with and without the LLM.
 
 ## Current test round
 
-The circuits for the standard-vs-LLM comparison are in
-[`experiments/llm-vs-standard/heldout/`](../experiments/llm-vs-standard/heldout/).
-Run each one on the website (ATPG → upload → **Full scan** on → **Compare
+The circuits for the standard-vs-LLM comparison (`experiments/llm-vs-standard/`)
+are kept outside the repository; ask the team for them. Run each one on the website (ATPG → upload → **Full scan** on → **Compare
 Both**, your key in Settings), download the full report from **Reports**, and
 name it after the circuit. The *Standard vs targeted ATPG* panel on the result
-shows the comparison; [`experiments/llm-vs-standard/README.md`](../experiments/llm-vs-standard/README.md)
-explains what each circuit is for.
+shows the comparison; the experiment's README (in the same folder) explains
+what each circuit is for.

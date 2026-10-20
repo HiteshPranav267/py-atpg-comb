@@ -73,3 +73,20 @@ tests/
 .orphic/
 .yowasp-cache/
 benchmarks/
+
+# Kept local, out of the repository: experiment netlists and results, the
+# test suite and the batch/analysis scripts (scripts/ and tests/ above).
+experiments/
+CLAUDE.md
+
+# Atalanta: only the sources, makefile and the prebuilt Windows binary are
+# tracked. Pattern/fault outputs, vendor tutorials and benchmark copies, and
+# old IDE project files stay local.
+Atalanta/*.test
+Atalanta/*.vec
+Atalanta/*.ufaults
+Atalanta/atalanta_tutorials/
+Atalanta/data/*
+!Atalanta/data/Atalanta.exe
+Atalanta/Atalanta.*
+Atalanta/Atlanta.*
