@@ -181,7 +181,7 @@ Analysis modes (combinational/full scan):
 | **LLM gate selection** | Anonymised compact gate table, detector marks, batched review within a per-request token budget, cached answers, live reasoning line |
 | **ATPG** | ATALANTA (combinational/full scan) with search-effort escalation and fixed seed; native sequential engine (time-frame expansion, PODEM, deterministic fault simulation) |
 | **Trojan checks** | Whole-circuit pattern coverage, rare-net activation, verdict, ground-truth recall/precision with vs without the LLM, untriggerable-Trojan detection |
-| **Run database** | Every run recorded in PostgreSQL (Neon) with classification, results and LLM usage (`docs/run-database.md`) |
+| **Run database** | Every run recorded in PostgreSQL (Neon) with classification, results and LLM usage (`db/README.md`) |
 | **Admin page** | Queue, cancel runs, live settings, maintenance mode, run history, storage, run database browser with CSV export |
 | **Trojan dataset** | Automated Trojan insertion (`pyatpg/trojan`) with pluggable strategies |
 | **Rankers** | Pluggable `GateRanker` interface (random, SCOAP, rare node, LLM) |
@@ -207,8 +207,8 @@ py-atpg-comb/
 │   ├── api/        # FastAPI app, routes, services, concurrency (analysis slots, cancellation)
 │   └── cli.py      # `python -m pyatpg`
 ├── frontend/       # React + Vite + TailwindCSS UI
-├── db/schema.sql   # run database schema
-├── docs/           # run database, automation, friend quick start
+├── db/             # run database: schema.sql and what it records (README.md)
+├── docs/           # architecture, automation, friend quick start, changelog/ (development log)
 ├── patches/        # our changes to ATALANTA 2.0, applied by build.sh
 └── build.sh        # Render build: fetches ATALANTA at a pinned commit, patches and compiles it
 ```
@@ -270,7 +270,7 @@ python scripts/run_suite.py research --circuits benchmarks/incoming             
 
 The scripts are not in this repository; ask the team for a copy. See [docs/automation.md](docs/automation.md) and, for collaborators, [docs/friend-quickstart.md](docs/friend-quickstart.md).
 
-What changed and why, with measured effects, is in the development log: [docs/changelog.md](docs/changelog.md) (LaTeX: `docs/changelog.tex`, regenerated with `python docs/changelog_to_tex.py`).
+What changed and why, with measured effects, is in the development log: [docs/changelog/changelog.md](docs/changelog/changelog.md) (LaTeX: `docs/changelog/changelog.tex`, regenerated with `python docs/changelog/changelog_to_tex.py`).
 
 ---
 
@@ -280,7 +280,7 @@ What changed and why, with measured effects, is in the development log: [docs/ch
 - **Progress.** The page polls `/api/atpg/progress/{id}` every 1.5 s for the current stage, its elapsed time and the LLM's current reasoning line.
 - **Live settings** (Admin page, or environment): `maintenance`, `max_concurrent_runs`, `max_gates`, `yosys_max_mb`, `atalanta_timeout_s`, `atalanta_seed`, `llm_batches`, `detector_in_targeting`, `llm_view`, `llm_share`, `target_gates`, `llm_timeout_s`, `seq_time_budget_s`, `yosys_timeout_s`. Admin changes last until the server restarts.
 - **Admin page** (needs `PYATPG_ADMIN_TOKEN` on the server): server status, queue (cancel one or all runs), live settings, recent runs, storage cleanup, restart, and the run database.
-- **Run database:** set `DATABASE_URL` (PostgreSQL, e.g. Neon) and every run is recorded — circuit classification, parameters, LLM, outcome, timings and per-engine results ([docs/run-database.md](docs/run-database.md)). `PYATPG_RECORD_RUNS=0` turns it off.
+- **Run database:** set `DATABASE_URL` (PostgreSQL, e.g. Neon) and every run is recorded — circuit classification, parameters, LLM, outcome, timings and per-engine results ([db/README.md](db/README.md)). `PYATPG_RECORD_RUNS=0` turns it off.
 
 ---
 
@@ -314,7 +314,7 @@ Rankers (`RandomRanker`, `ScoapRanker`, `RareNodeRanker`, `LLMRanker`) implement
 - **Backend — Render.** `bash build.sh` installs `requirements.txt`, precompiles Yosys (WebAssembly) and compiles ATALANTA against the build image; started with `uvicorn pyatpg.api.app:app --host 0.0.0.0 --port $PORT`. Environment: an LLM key (optional), `PYATPG_ADMIN_TOKEN`, `DATABASE_URL`.
 - **Frontend — Vercel.** Root directory `frontend`, `npm run build`, with `VITE_API_URL` pointing at the backend.
 
-See [project_architecture.md](project_architecture.md) for the request flow.
+See [docs/architecture.md](docs/architecture.md) for the request flow.
 
 ---
 

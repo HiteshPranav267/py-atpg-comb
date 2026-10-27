@@ -12,9 +12,15 @@
 \author{}
 \date{}
 \maketitle
-What changed, why, and what it measurably did. Newest first. The LaTeX version (\texttt{docs/changelog.tex}) is generated from this file by \texttt{python docs/changelog\_to\_tex.py}; edit this file, not the \texttt{.tex}.
+What changed, why, and what it measurably did. Newest first. The LaTeX version (\texttt{docs/changelog/changelog.tex}) is generated from this file by \texttt{python docs/changelog/changelog\_to\_tex.py}; edit this file, not the \texttt{.tex}.
 
 Numbers marked \emph{detector only} come from running the trigger detector on the full-scan model with no ATPG and no LLM (a few seconds per circuit). Numbers from full runs say so.
+
+\section*{2026-10-27: docs and database files regrouped}
+\begin{itemize}
+  \item \texttt{project\_architecture.md} moved to \texttt{docs/architecture.md}; the run-database description moved from \texttt{docs/run-database.md} to \texttt{db/README.md}, next to \texttt{db/schema.sql}; this log and its LaTeX generator moved to \texttt{docs/changelog/} (the generator resolves paths from its own folder, so only its docstring changed). Links updated in \texttt{README.md}, \texttt{docs/}, \texttt{db/} and the \texttt{run\_db.py} docstring.
+  \item \texttt{.gitignore}: the team's local material now lives in one ignored \texttt{archive/} folder; the entries for folders that no longer exist were removed.
+\end{itemize}
 
 \section*{2026-10-27: MIT licence; ATALANTA fetched at build time, not tracked}
 The repository is to go public as PyATPG's open-source release, so it now carries only the team's own code under the MIT licence (\texttt{LICENSE}).

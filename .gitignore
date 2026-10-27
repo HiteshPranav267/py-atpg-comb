@@ -45,11 +45,9 @@ atalanta_jobs/
 modus_jobs/
 datasets/
 
-# Local benchmark corpus and captured tool outputs (large, machine-specific)
-atpg testing/
-
-# Local investigation / bug-report write-ups
-reports/
+# The team's local archive: capstone paper, slides, reviews, literature,
+# prototypes, bug-report notes and superseded research material.
+archive/
 
 # Experiment *results* are generated; the trojan instances under
 # experiments/*/variants/ are the fixed experimental population and stay tracked.
@@ -64,7 +62,6 @@ benchmarks/incoming/*
 # build.sh fetches it at a pinned commit and applies patches/atalanta.patch.
 Atalanta/
 
-Capstone/
 scripts/
 tests/
 

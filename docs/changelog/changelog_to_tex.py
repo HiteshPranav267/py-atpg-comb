@@ -1,10 +1,10 @@
-"""Generate docs/changelog.tex from docs/changelog.md.
+"""Generate docs/changelog/changelog.tex from docs/changelog/changelog.md.
 
 Handles the subset of Markdown the changelog uses: #/##/### headings,
 paragraphs, "- " bullets (with indented continuation lines), **bold**,
 *italic* and `code`. Run from the repository root:
 
-    python docs/changelog_to_tex.py
+    python docs/changelog/changelog_to_tex.py
 """
 from __future__ import annotations
 

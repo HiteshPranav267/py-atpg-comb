@@ -3,7 +3,7 @@
 -- One row in `runs` per request the backend handles (ATPG, parse, feature
 -- extraction, ranking, Trojan generation, benchmark), classified by what was
 -- run, on what circuit, with which LLM, and how it ended. Engine-level
--- results hang off it in per-kind tables. See docs/run-database.md for what
+-- results hang off it in per-kind tables. See db/README.md for what
 -- every column means and where its value comes from.
 --
 -- Never stored: API keys, admin tokens, uploaded circuit source (only its

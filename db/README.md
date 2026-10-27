@@ -2,7 +2,7 @@
 
 Every request the backend handles is recorded as one row in `runs`, linked to
 the circuit it ran on and to per-engine result tables. Schema:
-[`db/schema.sql`](../db/schema.sql) (PostgreSQL 14+).
+[`db/schema.sql`](schema.sql) (PostgreSQL 14+).
 
 ```
 circuits 1──* runs 1──* comb_atpg_runs 1──* fault_results

@@ -6,7 +6,7 @@ request: rows are written by one background thread, failures are kept for
 the admin page (:func:`status`) and otherwise ignored, and a full queue drops
 the record rather than block.
 
-What is stored is classified as described in docs/run-database.md. API keys
+What is stored is classified as described in db/README.md. API keys
 never reach this module, and error text is scrubbed of anything key-shaped
 before it is stored.
 """

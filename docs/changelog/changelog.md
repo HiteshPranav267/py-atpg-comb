@@ -1,12 +1,23 @@
 # PyATPG development log
 
 What changed, why, and what it measurably did. Newest first. The LaTeX
-version (`docs/changelog.tex`) is generated from this file by
-`python docs/changelog_to_tex.py`; edit this file, not the `.tex`.
+version (`docs/changelog/changelog.tex`) is generated from this file by
+`python docs/changelog/changelog_to_tex.py`; edit this file, not the `.tex`.
 
 Numbers marked *detector only* come from running the trigger detector on the
 full-scan model with no ATPG and no LLM (a few seconds per circuit). Numbers
 from full runs say so.
+
+## 2026-10-27: docs and database files regrouped
+
+- `project_architecture.md` moved to `docs/architecture.md`; the run-database
+  description moved from `docs/run-database.md` to `db/README.md`, next to
+  `db/schema.sql`; this log and its LaTeX generator moved to `docs/changelog/`
+  (the generator resolves paths from its own folder, so only its docstring
+  changed). Links updated in `README.md`, `docs/`, `db/` and the `run_db.py`
+  docstring.
+- `.gitignore`: the team's local material now lives in one ignored `archive/`
+  folder; the entries for folders that no longer exist were removed.
 
 ## 2026-10-27: MIT licence; ATALANTA fetched at build time, not tracked
 

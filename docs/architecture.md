@@ -1,6 +1,6 @@
 # PyATPG System Architecture & Context
 
-The blueprint of the PyATPG framework: what each part of the code does, how an analysis flows through it, and how the frontend and backend run in production. The analysis pipeline itself (input handling, full scan, detectors, LLM, ATPG, verdict) is described step by step in [README.md → How an analysis runs](README.md#how-an-analysis-runs).
+The blueprint of the PyATPG framework: what each part of the code does, how an analysis flows through it, and how the frontend and backend run in production. The analysis pipeline itself (input handling, full scan, detectors, LLM, ATPG, verdict) is described step by step in [README.md → How an analysis runs](../README.md#how-an-analysis-runs).
 
 ---
 
