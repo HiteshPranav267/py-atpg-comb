@@ -17,6 +17,19 @@ pip install -r requirements.txt
 YOWASP_CACHE_DIR="$PWD/.yowasp-cache" python -c \
     "import sys, yowasp_yosys; sys.exit(yowasp_yosys.run_yosys(['-V']))"
 
+# Atalanta (Virginia Tech; teaching and research use only, see its README) is
+# not part of this repository. It is fetched from its public repository at a
+# pinned commit, and patches/atalanta.patch applies our changes: CPU time from
+# getrusage (times() truncated short runs to 0) and debug prints only under
+# -DDEBUG. An existing Atalanta/ (a local checkout) is built as it is.
+ATALANTA_REPO=https://github.com/hsluoyz/Atalanta.git
+ATALANTA_COMMIT=a8e07fe4af80c55b0d4ca77e382731b03ad731dc
+if [ ! -d Atalanta ]; then
+    git clone --quiet "$ATALANTA_REPO" Atalanta
+    git -C Atalanta checkout --quiet "$ATALANTA_COMMIT"
+    git -C Atalanta apply "$PWD/patches/atalanta.patch"
+fi
+
 cd Atalanta
 rm -f atalanta ./*.o
 make atalanta CFLAGS="-O -g -static"

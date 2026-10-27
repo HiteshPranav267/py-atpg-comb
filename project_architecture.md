@@ -71,7 +71,7 @@ PyATPG finds hardware Trojans in gate-level and RTL designs. It parses (or synth
 ## 3. Production Deployment Workflow
 
 ### The Backend (Render.com)
-1. On every push to `main`, Render runs `bash build.sh`: installs `requirements.txt`, precompiles Yosys (WebAssembly) into `.yowasp-cache`, compiles `Atalanta/atalanta` in Render's own build image, and smoke-tests it on c17.
+1. On every push to `main`, Render runs `bash build.sh`: installs `requirements.txt`, precompiles Yosys (WebAssembly) into `.yowasp-cache`, clones ATALANTA at a pinned commit, applies `patches/atalanta.patch` and compiles `Atalanta/atalanta` in Render's own build image, and smoke-tests it on c17.
 2. It starts `python -m uvicorn pyatpg.api.app:app --host 0.0.0.0 --port $PORT`.
 3. Environment variables: an LLM key (optional — users can paste their own), `PYATPG_ADMIN_TOKEN` (enables the Admin page), `DATABASE_URL` (run database). Render sets `RENDER`, which enables the size guard (60,000 gates + flip-flops, Yosys 300 MB) for the 512 MB instance.
 4. The API is live at `https://py-atpg-backend.onrender.com`. The free plan sleeps after 15 minutes idle; the first request then takes about a minute.

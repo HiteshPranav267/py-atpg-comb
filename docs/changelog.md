@@ -8,6 +8,81 @@ Numbers marked *detector only* come from running the trigger detector on the
 full-scan model with no ATPG and no LLM (a few seconds per circuit). Numbers
 from full runs say so.
 
+## 2026-10-27: MIT licence; ATALANTA fetched at build time, not tracked
+
+The repository is to go public as PyATPG's open-source release, so it now
+carries only the team's own code under the MIT licence (`LICENSE`).
+
+- **ATALANTA removed from the repository** (57 files, including the Windows
+  debug `Atalanta.exe` that pops a modal dialog). Its README limits it to
+  teaching and research use, so it is not ours to relicense. `build.sh` now
+  clones [hsluoyz/Atalanta](https://github.com/hsluoyz/Atalanta) at commit
+  `a8e07fe` and applies `patches/atalanta.patch`, our only changes to it (CPU
+  time from `getrusage`, since `times()` printed 0 for short runs; debug prints
+  only under `-DDEBUG`). An existing local `Atalanta/` is built as it is and
+  stays on disk, now git-ignored.
+- **Checked under WSL (Linux, as on Render):** the build's clone, patch,
+  static link and c17 smoke test pass; with a fixed seed (`-s 1`) the fetched
+  build writes byte-identical test files to the previous build on s38417,
+  s35932 and pci.
+
+## 2026-10-23: guide feedback; definition, LLM layer, formula checks, scale, generalisation
+
+Five points from the guide's review, answered in the paper
+(`Capstone/presentation_stuff/mock_paper.tex`, backup `.bak-2026-10-23`) with
+new measurements; no model call, the held-out results are unchanged.
+
+- **"Moderately rare" defined** (new Section III-B): relative to the host and
+  budget, `p_h(B) < p < theta`, with `place(p) >= 1 + N_b(p)`.
+  `scripts/analyse_rarity_horizon.py` -> `results/rarity_horizon.json`: the
+  rarity-ordered list stops inside cones of rarity 0 (s13207, s15850, s38417)
+  or 1/4096 (s38584), because each host has 16-47 benign never-toggling cones;
+  benign cones rarer than 0.1 / 1 / 4%: 38-114 / 73-246 / 185-322. Best/worst
+  case table by trigger probability. Validation: Clopper-Pearson intervals
+  (0 of 4096 -> p < 0.09%), a second 4096-pattern sample moves triggers by at
+  most 0.78 pp (6 of 28 labels flip at a boundary, none crosses 5%; two
+  uncommon triggers at 4.1 and 4.6%), the independence product is off by
+  0.60-2.19x, and the Atalanta liveness check.
+- **LLM layer described** (new Section IV-C and table): keys (env/.env,
+  per-request keys never logged or stored, fallback chain), token sizing,
+  batching, parsing, retries, timeouts, cache, Groq's per-organisation limits.
+  Measured: the chars/1.9 estimator is within -4 to +1% of billed tokens on
+  full cone batches, *not* pessimistic as the code comment says (1.8x high only
+  on a one-cone prompt); the 1,000-token margin under 8k TPM absorbs it.
+- **Formulas checked against code and sources**: SCOAP (Goldstein) and Eq. 1
+  (`structural_score`) match the code; every sign-test p in the verdict table
+  recomputed (all correct; 0.062 now printed as 0.0625); sign-test formula and
+  minimum win counts added; Bonferroni note (pooled still passes at 0.025,
+  set 1's 0.031 would not); tester cycles cited to Bushnell-Agrawal (exact
+  formula changes reductions by <= 0.12 pp); detector strength combination
+  stated as hand-set. Corrected: the list-size rule (Eq. 6: 200 on the four
+  hosts, 20 on s35932, not "30% of the circuit"), stale set-1 ranges (XOR
+  matches 77-247, lists 246-436, benign matches 76-242), and two wrong
+  explanations: s38584 never s4 is ranked 116th because its trigger sits inside
+  a rare payload's cone (host net 0.76%), not because of larger benign cones;
+  of set 1's single-payload uncommon Trojans only s38417's is inside a host
+  cone. References: jayasena2023 volume/pages removed (DOI only); added
+  Parker-McCluskey, Clopper-Pearson, ITC'99, IWLS 2005, Groq rate limits.
+- **Runtime and scalability** (new Section V-G, two tables).
+  `scripts/measure_scaling.py` -> `results/scaling/`: no-model selection
+  takes 1.4-3 s on the hosts, 191 s and 4.7 GB on vga_lcd (253k gates); rare
+  cones grow to 17,819 there, so the 4-request cap shows the model 1.8% of
+  them. LLM time per request (36-48 s) equals tokens / 8,000 TPM: the rate
+  limit, not the model, sets it.
+- **Generalisation** (new Section VI-B and table): unseen trigger instances on
+  the development hosts 11 of 16 (6/8 then 5/8), unseen hosts 3 of 8 (LLM's
+  median trigger rank 56 vs 7), unseen shapes untested; the floor holds for any
+  trigger by construction.
+- **Score weights** (new Section V-F; post hoc, nothing adopted).
+  `scripts/score_sensitivity.py` -> `results/score_sensitivity.json`: each of
+  the 9 weights dropped / halved / doubled, R+S rebuilt on all 42 held-out
+  netlists (shipped weights reproduce the reported lists exactly). Pooled R+S
+  still beats both controls under 22 of 27 changes (whole Trojans 6-19 vs 11),
+  no loss on `never` under any. Failures: `leaf_lvl` or `leaves` dropped or
+  halved, `leaf_fo` doubled; the other six terms barely matter. Dropping
+  `leaf_fo` would give 19 -- found on the test set, so not adopted.
+- Workflow figure text updated (5 hosts, 77-247 matches). Paper now 12 pages.
+
 ## 2026-10-18: rarity blind spot as the claim; random and structural controls
 
 The project's claim is now the rarity blind spot (C1) and whether a

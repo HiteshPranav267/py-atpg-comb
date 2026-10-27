@@ -90,14 +90,17 @@ COMPACT_LEGEND = (
 DEFAULT_REQUEST_TOKEN_BUDGET = 7000
 REQUEST_TOKEN_BUDGET_ENV_VAR = "LLM_REQUEST_TOKEN_BUDGET"
 
-#: Characters per token, deliberately on the low (= token-count-high) side
-#: so the estimate errs toward sending less. Measured against what the
-#: provider actually billed, not a local tokenizer: a c7552 targeting
-#: prompt came back at 4313 real tokens for what 2.3 chars/token had
-#: estimated at 3620, so the compact CSV encoding -- short numeric fields,
-#: many separators -- runs denser than prose. Under-counting here is the
-#: dangerous direction, since it is what lets an over-budget request
-#: through to be refused.
+#: Characters per token. Measured against what the provider actually
+#: billed, not a local tokenizer: a c7552 targeting prompt came back at
+#: 4313 real tokens for what 2.3 chars/token had estimated at 3620, so the
+#: compact CSV encoding -- short numeric fields, many separators -- runs
+#: denser than prose. It is not a safe overestimate for the cone prompt:
+#: on full held-out batches it came within -4 to +1% of the billed count
+#: (1.8x high only on a one-cone prompt, mostly prose). What keeps a
+#: request under Groq's 8000 tokens per minute is the 1000-token margin
+#: DEFAULT_REQUEST_TOKEN_BUDGET leaves; under-counting is the dangerous
+#: direction, since it is what lets an over-budget request through to be
+#: refused.
 _CHARS_PER_TOKEN = 1.9
 
 

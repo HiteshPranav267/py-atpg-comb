@@ -60,9 +60,9 @@ experiments/*/results/
 benchmarks/incoming/*
 !benchmarks/incoming/.gitkeep
 
-# Atalanta build outputs (compiled from source by build.sh)
-Atalanta/atalanta
-Atalanta/*.o
+# Atalanta is not part of this repository (teaching and research licence):
+# build.sh fetches it at a pinned commit and applies patches/atalanta.patch.
+Atalanta/
 
 Capstone/
 scripts/
@@ -78,15 +78,3 @@ benchmarks/
 # test suite and the batch/analysis scripts (scripts/ and tests/ above).
 experiments/
 CLAUDE.md
-
-# Atalanta: only the sources, makefile and the prebuilt Windows binary are
-# tracked. Pattern/fault outputs, vendor tutorials and benchmark copies, and
-# old IDE project files stay local.
-Atalanta/*.test
-Atalanta/*.vec
-Atalanta/*.ufaults
-Atalanta/atalanta_tutorials/
-Atalanta/data/*
-!Atalanta/data/Atalanta.exe
-Atalanta/Atalanta.*
-Atalanta/Atlanta.*

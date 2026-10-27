@@ -107,7 +107,7 @@ Measured on the circuits used to calibrate it (without the LLM):
 
 ### 5. LLM gate selection (targeted and compare modes; `pyatpg/atpg/targeting.py`, `llm_context.py`)
 
-Both modes test the **same number of gates** (30% of the circuit, 20–200, or the `target_gates` setting). Without a model the list is the structural heuristic's top picks: rarely toggling, several inputs, hard to observe, over every gate in the circuit. With one, the heuristic's top picks stay as a **floor**, and the remaining **`llm_share`** of the list (default 0.8) is filled as described below. Slots left empty go to the heuristic's next picks. So an LLM run can lose at most the heuristic's last few picks, and `llm_only_hits` is exactly what the model added. Previously the model's picks replaced the heuristic's outright: it reviews a few hundred of a large circuit's gates while the heuristic ranks all of them, and on s38417-T200 recall fell from 0.71 without the model to 0.36 with it, partly because its list was also shorter (163 vs 204 gates).
+Both modes test the **same number of gates** (or the `target_gates` setting): 30% of the circuit within 20–200, but no more than the gates the heuristic accepts, with a floor of 20 — 200 on the held-out hosts with benign rare logic, 20 on s35932. Without a model the list is the structural heuristic's top picks: rarely toggling, several inputs, hard to observe, over every gate in the circuit. With one, the heuristic's top picks stay as a **floor**, and the remaining **`llm_share`** of the list (default 0.8) is filled as described below. Slots left empty go to the heuristic's next picks. So an LLM run can lose at most the heuristic's last few picks, and `llm_only_hits` is exactly what the model added. Previously the model's picks replaced the heuristic's outright: it reviews a few hundred of a large circuit's gates while the heuristic ranks all of them, and on s38417-T200 recall fell from 0.71 without the model to 0.36 with it, partly because its list was also shorter (163 vs 204 gates).
 
 **What the model scores: cones** (`pyatpg/atpg/cones.py`, setting `llm_view`, default `cones`). A row of per-gate numbers is what the heuristic already ranks by, so a model shown only those rows can at best re-rank the same evidence. Instead it is shown every **rare cone**: a net that takes its rarer value in under 5% of random patterns, with the fanout-free logic beneath it (up to 4 levels, 40 gates). Each cone is one anonymised CSV row: size, depth, gate mix, how many nets it taps, how common they are (`leaf_p`), how widely they are shared (`leaf_fo`) and how far apart in the circuit they come from (`leaf_lvl`), how rare the root is, and what the root drives (gate types, whether it feeds an output or register, how common those gates' other inputs are). The row also says whether the root is itself a register input (`root_reg`): a cone whose only job is a register's next value is usually the design's own state, while a trigger acts through payload gates. The model scores each cone 0–100 for being an inserted trigger. **With the model, the slots take whole cones from its ranking and from root-rarity order in turn** (the cone, then up to 4 gates its root drives); **without it, all from root-rarity order**, so the two lists differ only in the cones the model added. The two orderings find different Trojans: on the first test set (`experiments/llm-vs-standard/dev`) the model ranked triggers that fire in 0.1–4% of patterns near the top where rarity ranked them 27th–224th, but ranked never-firing triggers below rarity's 1st–3rd. With the model's ranking alone it found 121 of 200 Trojan gates and rarity order 120; taking them in turn, at a share of 0.8 (0.5 left room for too few cones), recovers 169 when that run's scores are replayed. That share and the alternation were chosen on that set, so the held-out set (`experiments/llm-vs-standard/heldout`) is what measures them. On s38417 there are ~200 cones; the Trust-Hub Trojan's is 3rd by rarity, and a clean-written trigger that fires in 1–4% of patterns is 91st–224th. Until prompt `c3` the prompt's worked trigger had the shape of the test set's generated Trojans (16 leaves, two 4-input ANDs), so those first-set figures overstate the model; `c3`'s example has another size and gate mix. `llm_view=gates` restores the per-gate rows below.
 
@@ -209,7 +209,8 @@ py-atpg-comb/
 ├── frontend/       # React + Vite + TailwindCSS UI
 ├── db/schema.sql   # run database schema
 ├── docs/           # run database, automation, friend quick start
-└── Atalanta/       # ATALANTA 2.0 source (compiled by build.sh) + prebuilt Windows binary
+├── patches/        # our changes to ATALANTA 2.0, applied by build.sh
+└── build.sh        # Render build: fetches ATALANTA at a pinned commit, patches and compiles it
 ```
 
 ---
@@ -218,7 +219,7 @@ py-atpg-comb/
 
 ### Prerequisites
 
-- Python 3.11+, Node.js 20+ (frontend), a compiled ATALANTA binary (`Atalanta/`; `build.sh` compiles it).
+- Python 3.11+, Node.js 20+ (frontend), a compiled ATALANTA binary. ATALANTA is not in this repository: on Linux, `build.sh` clones [hsluoyz/Atalanta](https://github.com/hsluoyz/Atalanta) at a pinned commit into `Atalanta/`, applies `patches/atalanta.patch` and compiles it (or point `ATALANTA_BIN` at any build; on Windows use one built under WSL).
 - An LLM key is optional — without one the structural heuristic and detectors do the selection. Set any of these in the environment or `.env`:
   - `GROQ_API_KEY`, `GEMINI_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `NVIDIA_API_KEY` (vendor implied by the variable), or
   - `LLM_API_KEY` + `LLM_PROVIDER` (`groq` / `gemini` / `openai` / `anthropic` / `nvidia` / `openai_compatible`), optional `LLM_MODEL`, and `LLM_BASE_URL` for OpenAI-compatible endpoints (Ollama, OpenRouter, …).
@@ -328,4 +329,4 @@ See [project_architecture.md](project_architecture.md) for the request flow.
 
 ## License
 
-Research use only. ATALANTA is subject to its own license terms.
+PyATPG is released under the [MIT License](LICENSE). ATALANTA is not part of this repository and keeps its own terms (Virginia Tech; teaching and research use, no commercial use without permission): `build.sh` fetches it, and `patches/atalanta.patch` holds only our changes to it.
