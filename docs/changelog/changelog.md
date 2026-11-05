@@ -1,8 +1,45 @@
 # PyATPG development log
 
-What changed, why, and what it measurably did. Newest first. The LaTeX
-version (`docs/changelog/changelog.tex`) is generated from this file by
-`python docs/changelog/changelog_to_tex.py`; edit this file, not the `.tex`.
+What changed, why, and what it measurably did. Newest first. Older entries
+refer to research scripts (`scripts/`), experiment netlists (`experiments/`)
+and results that the team keeps outside this repository.
+
+## 2026-11-05: prepared for open-source use
+
+- **Docs.** The README is now a short user guide. New: `docs/cli.md`,
+  `docs/web-app.md`, `docs/configuration.md`, `docs/how-it-works.md` (the
+  pipeline internals moved out of the README), `CONTRIBUTING.md`,
+  `CITATION.cff`, `.env.example`, and `examples/` with four Trojan-inserted
+  circuits and their expected results.
+- **CLI.** `--full-scan` (circuits with flip-flops could only take the
+  sequential path from the command line before), `--no-llm`, and keys from
+  the environment or `.env` are now used as the help text already said
+  (only `--api-key` was). The report now prints the Trojan verdict and, when
+  Trojan gates are known by name, the *Trojan check* with the cone orderings.
+- **R+S is the default ordering without a model.** The no-model fault list
+  used to fill its cone slots in root-rarity order alone (R); it now takes
+  cones in turn from `structural_score`'s ranking and root-rarity order,
+  exactly as the R+S control. On the held-out sets R+S put the whole Trojan
+  in the list on 28 of 56 circuits against 8 for R, and tied the LLM (9-6).
+  On the examples the targeted list now holds every Trojan gate on c3540,
+  s5378 and s9234 (was 2, 0 and 2), with 59, 93 and 80 patterns. With a
+  model, the no-model baseline it is compared with is now R+S, so
+  `llm_only_hits` measures the model against the score, not against
+  rarity.
+- **Packaging.** `pyproject.toml`: `pip install -e .` installs the `pyatpg`
+  and `pyatpg-trojan` commands.
+- **Trojan generator in the package.** The held-out sets' generator
+  (`scripts/make_trojan_variants.py`, kept outside the repository) is now
+  `pyatpg/trojan/rare_trigger.py` with the `pyatpg-trojan` command, the same
+  algorithm (regenerating c3540_gen_uncommon_s10 and s5378_gen_rare_s9 from
+  their hosts gives byte-identical files). The Trust-Hub typo fix it also
+  applied to three Trust-Hub files is not included.
+- **Removed** (unused by the app and the CLI): `pyatpg/automation` (batch
+  runs driven by scripts not in this repository), six research-only
+  `pyatpg/evaluation` modules, `docs/automation.md`, the generated LaTeX
+  changelog and its converter, and frontend template leftovers (`App.tsx`,
+  `App.css`, Vite/React logos, a duplicate logo, a third-party character
+  image on the 404 page).
 
 Numbers marked *detector only* come from running the trigger detector on the
 full-scan model with no ATPG and no LLM (a few seconds per circuit). Numbers

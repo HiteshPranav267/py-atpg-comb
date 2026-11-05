@@ -287,7 +287,8 @@ class FaultTargetSelector:
         ``circuit`` (the netlist the profiles came from) enables the cone view
         (setting ``llm_view``, default): the slots are filled by whole rare
         cones (pyatpg.atpg.cones) instead of single gates -- with an LLM, its
-        top-scored cones and the rarest cones in turn; without one, the rarest.
+        top-scored cones and the rarest cones in turn; without one, the
+        structural score's top cones and the rarest in turn (R+S).
         """
         max_gates = self._effective_max_gates(profiles)
         if not use_detector:
@@ -521,27 +522,39 @@ class FaultTargetSelector:
 
     def _cone_baseline(self, profiles: list[dict[str, Any]], base: TargetSelection,
                        cones: list[Any], forced: list[str], size: int) -> TargetSelection:
-        """Without a model: the floor, then whole cones in root-rarity order.
+        """Without a model: the floor, then whole cones from the structural
+        score's ranking and root-rarity order in turn (the R+S ordering).
 
-        The same expansion the model's picks get, so the two lists differ only
-        in which cones were chosen -- an LLM gain is a better choice of cones,
-        not the expansion itself.
+        Rarity order alone (R) spends the slots on the rarest cones, and a
+        trigger that fires in 0.1-4% of patterns sits behind dozens to
+        hundreds of rarer benign ones. Alternating with
+        :func:`~pyatpg.atpg.cones.structural_score` found the whole Trojan in
+        28 of 56 held-out circuits against 8 for R, and tied the model (9-6),
+        so it is the default. The list is built exactly as the R+S control in
+        :meth:`_control_orderings`, and with the expansion the model's picks
+        get, so a model run differs from it only in its second ranking.
         """
-        from .cones import expansion
+        from .cones import expansion, structural_score
 
         ranking, floor, slots, exclude = self._split(profiles, size, forced)
-        picks, fill, used = self._fill_slots([expansion(c) for c in cones], slots, exclude,
+        candidates = [c for c in cones if any(g not in exclude for g in c.gates)]
+        scored = sorted(candidates, key=lambda c: (-structural_score(c.features), c.root))
+        order = _alternate(scored, candidates, "structure")
+        picks, fill, used = self._fill_slots([expansion(c) for c, _ in order], slots, exclude,
                                              ranking, len(floor))
         base.gates = floor + picks + fill
+        base.strategy = "structural-score"
+        base.cone_order = [list(c.gates) for c, _ in order]
         base.context = {
-            "view": "cones", "budget": len(floor) + slots, "floor": len(floor),
-            "llm_slots": slots, "cones_total": len(cones), "cones_expanded": used,
-            "expanded_gates": picks, "heuristic_fill": fill,
+            "view": "cones", "ordering": "R+S", "budget": len(floor) + slots,
+            "floor": len(floor), "llm_slots": slots, "cones_total": len(cones),
+            "cones_expanded": used, "expanded_gates": picks, "heuristic_fill": fill,
         }
         base.notes.append(
             f"Fault list: the structural heuristic's top {len(floor)} gate(s), then {used} "
-            f"of {len(cones)} rare cones expanded whole in root-rarity order ({len(picks)} "
-            f"gates)" + (f", and {len(fill)} by the heuristic's next picks." if fill else ".")
+            f"of {len(cones)} rare cones expanded whole, taken in turn from the structural "
+            f"score's ranking and root-rarity order ({len(picks)} gates)"
+            + (f", and {len(fill)} by the heuristic's next picks." if fill else ".")
         )
         return base
 
@@ -610,7 +623,7 @@ class FaultTargetSelector:
         if not scores:
             base.context = {**base.context, **context}
             base.notes.append(
-                "Model returned no usable cone scores; fell back to the structural heuristic."
+                "Model returned no usable cone scores; fell back to the structural score (R+S)."
             )
             return base
         by_root = {c.root: c for c in candidates}

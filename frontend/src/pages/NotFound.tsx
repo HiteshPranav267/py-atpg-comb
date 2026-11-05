@@ -11,10 +11,9 @@ export default function NotFound() {
 
       <div className="flex flex-1 items-center justify-center bg-muted/30 px-8 py-16">
         <div className="flex w-full max-w-4xl flex-col items-center gap-10 md:flex-row md:justify-between">
-          <img
-            src="/porygon.png"
-            alt="A confused Porygon-Z"
-            className="h-64 w-64 object-contain drop-shadow-xl md:h-72 md:w-72"
+          <CircuitBoard
+            aria-hidden="true"
+            className="h-48 w-48 text-primary/40 md:h-56 md:w-56"
           />
 
           <div className="flex flex-col items-center text-center md:items-start md:text-left">

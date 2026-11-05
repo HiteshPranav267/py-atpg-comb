@@ -1,77 +1,50 @@
+# Python
 __pycache__/
-*.pyc
-*.pyo
-*.pyd
-.Python
-env/
-venv/
-.venv/
-bin/
-lib/
-include/
-pypy-6.0.0/
-build/
-develop-eggs/
-dist/
-eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
+*.py[cod]
 *.egg-info/
-.installed.cfg
 *.egg
+.eggs/
+build/
+dist/
+.pytest_cache/
 
-.env
-.venv
-env/
+# Virtual environments
+.venv/
 venv/
+env/
 ENV/
+.Python
 
+# Local configuration: API keys and database URLs (see .env.example)
+.env
+
+# Editors and OS
 .vscode/
 .idea/
 .DS_Store
 
-# Outputs
+# Run outputs: logs, reports, the LLM score cache, ATPG job bundles,
+# generated Trojan datasets and the Yosys cache
 *.log
 *.sqlite
 results/
 outputs/
 security_report.json
-
-# Generated ATPG job bundles and trojan datasets
 atalanta_jobs/
 modus_jobs/
 datasets/
+.yowasp-cache/
+.orphic/
 
-# The team's local archive: capstone paper, slides, reviews, literature,
-# prototypes, bug-report notes and superseded research material.
-archive/
-
-# Experiment *results* are generated; the trojan instances under
-# experiments/*/variants/ are the fixed experimental population and stay tracked.
-experiments/*/results/
-
-# Circuits dropped in for scripts/run_suite.py to pick up (see docs/automation.md) --
-# transient inputs, not part of the tracked benchmark corpus.
-benchmarks/incoming/*
-!benchmarks/incoming/.gitkeep
-
-# Atalanta is not part of this repository (teaching and research licence):
+# ATALANTA is not part of this repository (teaching and research licence):
 # build.sh fetches it at a pinned commit and applies patches/atalanta.patch.
 Atalanta/
 
+# Kept by the team outside the repository: benchmark corpus, experiment
+# netlists and results, the test suite, research scripts and the archive.
+benchmarks/
+experiments/
 scripts/
 tests/
-
-# Scan artifact from an external indexing tool: regenerated on demand and
-# full of this machine's absolute paths, so it is noise in every diff.
-.orphic/
-.yowasp-cache/
-benchmarks/
-
-# Kept local, out of the repository: experiment netlists and results, the
-# test suite and the batch/analysis scripts (scripts/ and tests/ above).
-experiments/
+archive/
 CLAUDE.md

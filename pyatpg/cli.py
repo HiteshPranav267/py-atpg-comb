@@ -1,8 +1,8 @@
 """Command-line entry point for running an ATPG analysis.
 
-Circuits with flip-flops are routed automatically to the native sequential
-(time-frame-expansion) engine in ``pyatpg.seq`` -- see
-``AtpgAnalysisService.run``.
+Circuits with flip-flops are routed to the native sequential
+(time-frame-expansion) engine in ``pyatpg.seq`` unless ``--full-scan`` is
+given -- see ``AtpgAnalysisService.run``.
 """
 import argparse
 import json
@@ -77,6 +77,67 @@ def _print_sequential(sequential: dict) -> None:
         print(f"    Note: {note}")
 
 
+#: Display names of the cone orderings, in the order they are printed.
+ORDERING_LABELS = {
+    "R": "R       (rarity order only)",
+    "R+Rand1": "R+Rand1 (rarity + random, seed 1)",
+    "R+Rand2": "R+Rand2 (rarity + random, seed 2)",
+    "R+Rand3": "R+Rand3 (rarity + random, seed 3)",
+    "R+S": "R+S     (rarity + structural score)",
+    "R+L": "R+L     (rarity + LLM scores)",
+}
+
+
+#: How the verdict codes read in the report.
+VERDICT_LABELS = {
+    "trojan_suspected": "Trojan suspected",
+    "inconclusive": "Inconclusive",
+    "no_trojan_indicated": "No Trojan indicated",
+}
+
+
+def _print_verdict(verdict: dict | None) -> None:
+    """The tool's own answer: is there Trojan-like logic, and which gates."""
+    if not verdict:
+        return
+    print(f"\n  {'-' * 62}")
+    print("  Trojan verdict")
+    print(f"  {'-' * 62}")
+    label = VERDICT_LABELS.get(verdict["verdict"], verdict["verdict"])
+    print(f"    Verdict                       : {label} (confidence {_fmt(verdict.get('confidence'))})")
+    suspects = verdict.get("suspects") or []
+    strong = [s for s in suspects if s.get("confidence", 0) >= 0.7]
+    print(f"    Strong suspects (>= 0.7)      : {len(strong)}"
+          + (f"   weaker leads: {len(suspects) - len(strong)}" if len(suspects) > len(strong) else ""))
+    if strong:
+        names = ", ".join(s["gate"] for s in strong[:10])
+        print(f"      {names}{', ...' if len(strong) > 10 else ''}")
+    if verdict.get("summary"):
+        print(f"    {verdict['summary']}")
+
+
+def _print_trojan_check(truth: dict | None) -> None:
+    """Known Trojan gates (found by name) against each gate list, when there are any."""
+    if not truth:
+        return
+    print(f"\n  {'-' * 62}")
+    print("  Trojan check (Trojan gates recognised by their names)")
+    print(f"  {'-' * 62}")
+    print(f"    Trojan gates in the netlist   : {len(truth['trojan_gates'])}")
+    selection = truth.get("targeted_selection")
+    if selection:
+        print(f"    In the targeted fault list    : {len(selection['trojan_gates_hit'])} "
+              f"of {selection['selected']} gates on the list")
+    orderings = truth.get("orderings")
+    if orderings:
+        total = orderings["trojan_gates"]
+        print("    Cone orderings at the same list size (Trojan gates in the list):")
+        for key, row in orderings["lists"].items():
+            first = row.get("first_trojan_cone")
+            where = f"first Trojan cone: #{first} of {row['cones']}" if first else "no Trojan cone"
+            print(f"      {ORDERING_LABELS.get(key, key):<38}: {row['trojan_hits']:>3} / {total}  ({where})")
+
+
 def print_report(analysis: dict) -> None:
     is_sequential = analysis.get("sequential") is not None
     print("\n" + "=" * 66)
@@ -145,6 +206,9 @@ def print_report(analysis: dict) -> None:
             print(f"      {observation['detail']}")
             print(f"      Gates: {gates}")
 
+    _print_verdict(analysis.get("verdict"))
+    _print_trojan_check(analysis.get("trojan_ground_truth"))
+
     correlation = analysis.get("correlation")
     if correlation:
         print(f"\n  {'-' * 62}")
@@ -160,9 +224,10 @@ def print_report(analysis: dict) -> None:
 def main():
     parser = argparse.ArgumentParser(
         description=(
-            "Run an ATPG analysis over a netlist. Circuits with flip-flops are analysed "
-            "by the native sequential (time-frame-expansion) engine automatically -- "
-            "no flag needed."
+            "Run an ATPG analysis over a netlist. Circuits with flip-flops go to the native "
+            "sequential (time-frame-expansion) engine unless --full-scan is given. A language "
+            "model is used when a key is supplied with --api-key or found in the environment "
+            "(or .env); without one the structural score and detectors choose the faults."
         )
     )
     parser.add_argument("netlist", help="Path to a .v/.verilog/.bench netlist, an RTL .v/.sv file, or a .zip/directory of RTL sources (combinational or sequential)")
@@ -188,6 +253,18 @@ def main():
     parser.add_argument(
         "--llm-base-url",
         help="Endpoint override for OpenAI-compatible providers (NVIDIA NIM, Ollama, Groq...)",
+    )
+    parser.add_argument(
+        "--full-scan",
+        action="store_true",
+        help="Treat every flip-flop as a scan cell and run Atalanta on the combinational core "
+        "(industry-standard scan testing). Without it, circuits with flip-flops go to the "
+        "sequential engine. Has no effect on combinational circuits.",
+    )
+    parser.add_argument(
+        "--no-llm",
+        action="store_true",
+        help="Never consult a language model, even when a key is set in the environment or .env",
     )
     parser.add_argument(
         "--patterns",
@@ -216,7 +293,8 @@ def main():
             filename=netlist_name,
             mode=AnalysisMode(args.mode),
             toggle_patterns=args.patterns,
-            use_llm=bool(args.api_key),
+            use_llm=not args.no_llm,
+            full_scan=args.full_scan,
         )
     except Exception as exc:  # noqa: BLE001 - surface the real reason and stop
         print(f"Analysis failed: {exc}")

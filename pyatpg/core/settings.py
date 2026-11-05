@@ -55,13 +55,13 @@ SETTINGS: dict[str, Setting] = {s.key: s for s in [
     Setting("llm_share", "PYATPG_LLM_SHARE", float, 0.8, "LLM share of the fault list",
             "The structural heuristic's top picks keep the rest of the list; this share "
             "(0-1) is filled by whole cones -- with an LLM its top-scored cones and the "
-            "rarest in turn, without one the rarest. Both modes test the same number of "
+            "rarest in turn, without one the structural score's top cones and the rarest. Both modes test the same number of "
             "gates, so 'with vs without LLM' compares like for like. 0.8 was chosen on "
             "the first 15-file test set (0.5 left room for too few cones)."),
     Setting("llm_view", "PYATPG_LLM_VIEW", str, "cones", "What the LLM scores",
             "cones = whole rare cones (a rare net and the logic beneath it, summarised); the "
-            "slots are filled with the chosen cones, and without an LLM with the rarest "
-            "cones, so both modes get the same expansion. gates = one row per gate, as "
+            "slots are filled with the chosen cones, and without an LLM with the structural "
+            "score's and the rarest cones in turn, so both modes get the same expansion. gates = one row per gate, as "
             "before."),
     Setting("target_gates", "PYATPG_TARGET_GATES", int, 0, "Targeted fault-list size",
             "Gates in the targeted fault list, before detector findings are added. 0 = "

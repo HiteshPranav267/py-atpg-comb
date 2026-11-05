@@ -1,5 +1,0 @@
-# For scripts/run_via_api.py only -- drives the deployed backend's API,
-# so it needs none of the heavy stuff in requirements.txt (no Atalanta,
-# no google-genai/openai/anthropic SDKs, no FastAPI/Flask). Just:
-requests
-networkx

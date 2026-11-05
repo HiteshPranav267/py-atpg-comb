@@ -1,6 +1,6 @@
 # PyATPG System Architecture & Context
 
-The blueprint of the PyATPG framework: what each part of the code does, how an analysis flows through it, and how the frontend and backend run in production. The analysis pipeline itself (input handling, full scan, detectors, LLM, ATPG, verdict) is described step by step in [README.md → How an analysis runs](../README.md#how-an-analysis-runs).
+The blueprint of the PyATPG framework: what each part of the code does, how an analysis flows through it, and how the frontend and backend run in production. The analysis pipeline itself (input handling, full scan, detectors, LLM, ATPG, verdict) is described step by step in [how-it-works.md](how-it-works.md).
 
 ---
 
@@ -39,6 +39,7 @@ PyATPG finds hardware Trojans in gate-level and RTL designs. It parses (or synth
 * **`atpg/` — combinational and full-scan analysis**
   * `service.py`: the single entry point (`AtpgAnalysisService.run`): parse → full scan or sequential routing → profile → detectors → gate selection → ATALANTA runs → pattern simulation → rare-net activation → verdict → ground truth → circuit analysis.
   * `structural.py`: parsing wrapper and gate profiles.
+  * `cones.py`: rare cones (a rare net and the fanout-free logic beneath it), their features and `structural_score`, the R+S ranking.
   * `trigger_detector.py`: trigger/payload evidence (logic clocks, payload splices, duplicate inputs, free-running timers, payload multiplexers, never-toggling groups, never-activated rare nets), evidence families, region completion.
   * `suspects.py`: XOR-splice shape detector (weak lead).
   * `targeting.py` + `llm_context.py`: candidate pool, anonymised compact gate table with detector marks, prompt, token budget, batched review carrying a shortlist, answer parsing, answer cache.
@@ -56,7 +57,8 @@ PyATPG finds hardware Trojans in gate-level and RTL designs. It parses (or synth
 
 * **`ranking/`**: `GateRanker` rankers and `providers.py`, the provider layer every LLM call goes through (Groq default; Gemini, OpenAI, Anthropic, NVIDIA, OpenAI-compatible; key-prefix detection; backup keys; timeouts; retries that honour the provider's wait time; streaming of reasoning).
 
-* **`trojan/`, `analysis/`, `evaluation/`**: Trojan dataset generation, feature extraction, ranker evaluation.
+* **`trojan/`**: `rare_trigger.py` (the `pyatpg-trojan` command: a 16-tap AND-tree trigger of chosen rarity with XOR payloads, checked to fire with ATALANTA) and the web app's simpler dataset generator (`generator.py`, `inserter.py`, strategies).
+* **`analysis/`, `evaluation/`**: feature extraction, ranker evaluation.
 
 ### Frontend (`frontend/src/`)
 

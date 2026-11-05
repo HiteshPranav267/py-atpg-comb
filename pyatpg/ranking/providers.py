@@ -23,9 +23,9 @@ from typing import Any
 from dotenv import load_dotenv
 
 # python-dotenv is a declared dependency specifically so a local .env can
-# supply these credentials; every entry point (CLI, API server, automation
-# scripts, tests) resolves keys through this module, so loading it once here
-# covers all of them. Does not override variables already set in the
+# supply these credentials; every entry point (CLI, API server, tests)
+# resolves keys through this module, so loading it once here covers all of
+# them. Does not override variables already set in the
 # environment.
 load_dotenv()
 
@@ -81,9 +81,8 @@ _NO_KEY_MARKERS = (
     "no llm api key available",
 )
 #: Retrying one of these is pointless until a human tops up billing or swaps
-#: the key, so :meth:`LLMProvider._with_retry` fails fast on them, and the
-#: batch runner (``pyatpg.automation.retry``) reports them as a distinct
-#: "credentials" category rather than a transient blip.
+#: the key, so :meth:`LLMProvider._with_retry` fails fast on them rather than
+#: treating them as a transient blip.
 ACCOUNT_ERROR_MARKERS = _QUOTA_MARKERS + _AUTH_MARKERS + _NO_KEY_MARKERS
 
 
@@ -121,8 +120,8 @@ class LLMUnavailableError(RuntimeError):
     aborted and told why, rather than silently substituting the structural
     heuristic and presenting that as the answer. The message is what the
     user sees; ``reason`` is the short human-readable cause and ``cause``
-    the provider's original wording, kept so a batch runner can still
-    classify it (see ``pyatpg.automation.retry.classify_error``).
+    the provider's original wording, kept so a caller can still classify
+    it.
     """
 
     def __init__(self, provider_label: str, cause: str):

@@ -1,0 +1,50 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pyatpg"
+version = "1.0.1"
+description = "Structure-guided ATPG prioritisation for moderately rare hardware Trojan triggers in gate-level netlists"
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.11"
+authors = [
+    { name = "Duggireddy Hitesh Pranav Reddy" },
+    { name = "Dibyadyuti Mohanty" },
+    { name = "H Architha" },
+    { name = "Manas Prasannakumar Kole" },
+]
+keywords = ["ATPG", "hardware Trojan", "hardware security", "test generation", "netlist", "EDA"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Topic :: Scientific/Engineering :: Electronic Design Automation (EDA)",
+    "Topic :: Security",
+]
+# Kept in step with requirements.txt, which the Render build installs.
+dependencies = [
+    "networkx",
+    "openai",
+    "anthropic",
+    "python-dotenv",
+    "fastapi",
+    "uvicorn[standard]",
+    "pydantic",
+    "google-genai",
+    "python-multipart",
+    "yowasp-yosys",
+    "psycopg[binary]>=3.2",
+]
+
+[project.scripts]
+pyatpg = "pyatpg.cli:main"
+pyatpg-trojan = "pyatpg.trojan.rare_trigger:main"
+
+[project.urls]
+Repository = "https://github.com/HiteshPranav267/py-atpg-comb"
+
+[tool.setuptools.packages.find]
+include = ["pyatpg*"]
+namespaces = true

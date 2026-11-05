@@ -1,0 +1,26 @@
+cff-version: 1.2.0
+message: "If you use PyATPG in your research, please cite it as below."
+title: "PyATPG: Structure-Guided ATPG Prioritisation for Moderately Rare Hardware Trojan Triggers"
+type: software
+version: 1.0.1
+license: MIT
+repository-code: "https://github.com/HiteshPranav267/py-atpg-comb"
+authors:
+  - family-names: "Duggireddy"
+    given-names: "Hitesh Pranav Reddy"
+    affiliation: "PES University"
+  - family-names: "Mohanty"
+    given-names: "Dibyadyuti"
+    affiliation: "PES University"
+  - family-names: "Architha"
+    given-names: "H"
+    affiliation: "PES University"
+  - family-names: "Kole"
+    given-names: "Manas Prasannakumar"
+    affiliation: "PES University"
+keywords:
+  - ATPG
+  - hardware Trojan
+  - hardware security
+  - test generation
+  - gate-level netlist
