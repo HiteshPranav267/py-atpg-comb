@@ -49,7 +49,7 @@ _PRIMITIVES = {"and": "AND", "nand": "NAND", "or": "OR", "nor": "NOR",
                "xor": "XOR", "xnor": "XNOR", "not": "NOT", "buf": "BUF"}
 
 # Output pin names used by standard-cell libraries (SAED, GSCLib, Nangate...).
-_OUTPUT_PINS = {"Q", "QN", "Y", "YN", "Z", "ZN", "O", "OUT"}
+_OUTPUT_PINS = {"Q", "QN", "Q_N", "Y", "YN", "Z", "ZN", "O", "OUT", "X"}
 # Adders: SAED HADD (A0, B0 -> C1, SO) / FADD (A, B, CI -> CO, S), GSCLib ADDH/ADDF.
 _ADDER_OUTPUT_PINS = {"SO", "S", "CO", "C1"}
 
@@ -478,10 +478,11 @@ class VerilogParser:
             # model the sequential engine uses. The clock is kept only to
             # tell the real clock apart from one driven by logic (see
             # _model_logic_clocks).
-            q = self._ff_q(path, pins.get("Q", ""), pins.get("QN", ""))
-            d = pins.get("D", "")
+            q = self._ff_q(path, pins.get("Q", ""), pins.get("QN", "") or pins.get("Q_N", ""))
+            d = pins.get("D", "") or pins.get("DIN", "")  # DIN: LEDA library
             if family == "SDFF":
-                ff = ScanFlipFlop(q, d, pins.get("SI", ""), pins.get("SE", ""))
+                ff = ScanFlipFlop(q, d, pins.get("SI", "") or pins.get("SDIN", ""),
+                                  pins.get("SE", "") or pins.get("SSEL", ""))
             else:
                 ff = FlipFlop(q, d)
             self._ffs.append(ff)
@@ -524,6 +525,17 @@ class VerilogParser:
         out = next(iter(outputs.values()))
         if not out:
             return  # output left unconnected: the cell drives nothing
+        if family == "MUX4":
+            # sky130 mux4: X = S1 ? (S0 ? A3 : A2) : (S0 ? A1 : A0)
+            need = ("A0", "A1", "A2", "A3", "S0", "S1")
+            if not all(p in inputs for p in need):
+                self._unknown.add(cell)
+                return
+            low, high = self._fresh(path), self._fresh(path)
+            self._mux(path, low, inputs["A0"], inputs["A1"], inputs["S0"], invert=False)
+            self._mux(path, high, inputs["A2"], inputs["A3"], inputs["S0"], invert=False)
+            self._mux(path, out, low, high, inputs["S1"], invert=False)
+            return
         if family == "MUX":
             sel_pin = next((p for p in inputs if p.startswith("S")), None)
             data = [inputs[p] for p in sorted(inputs, key=_natural_key) if p != sel_pin]
@@ -850,6 +862,17 @@ def _group_pins(pins, sizes):
 _LOGIC_RE = re.compile(r"^(NAND|NOR|AND|OR|XNOR|XOR)(\d)")
 _AOI_RE = re.compile(r"^(AOI|OAI|AO|OA)(\d{2,4})")
 
+# Synopsys LEDA 250nm academic library (used by the TRIT benchmarks):
+# nnd2s1, nor3s3, xnr2s3, and9s1, hi1s1/i1s3/ib1s9 (inverters), nb1s1 (buffer).
+_LEDA_LOGIC_RE = re.compile(r"^(nnd|nor|and|or|xor|xnr)(\d+)s\d+$")
+_LEDA_FAMILY = {"nnd": "NAND", "nor": "NOR", "and": "AND", "or": "OR", "xor": "XOR", "xnr": "XNOR"}
+_LEDA_INV_RE = re.compile(r"^(hi1|i1|ib1)s\d+$")
+_LEDA_BUF_RE = re.compile(r"^nb1s\d+$")
+# SkyWater sky130_fd_sc_hd (prefix optional): a21oi_1, o221ai_1, a21o_1, mux2i_1, dfxtp_1.
+_SKY_PREFIX = "sky130_fd_sc_hd__"
+_SKY_AOI_RE = re.compile(r"^(a|o)(\d{2,4})(oi|ai|o|a)_\d+$")
+_SKY_SIMPLE_RE = re.compile(r"^(nand|nor|and|or|xor|xnor)(\d)_\d+$")
+
 
 def _classify_cell(name):
     """Map a cell name to ``(family, arg)``, or None if it is not a known cell.
@@ -865,6 +888,36 @@ def _classify_cell(name):
         return "DFF", None
     if low == "sdff":
         return "SDFF", None
+
+    m = _LEDA_LOGIC_RE.match(low)
+    if m:
+        return _LEDA_FAMILY[m.group(1)], None
+    if _LEDA_INV_RE.match(low):
+        return "NOT", None
+    if _LEDA_BUF_RE.match(low):
+        return "BUF", None
+    sky = low[len(_SKY_PREFIX):] if low.startswith(_SKY_PREFIX) else low
+    m = _SKY_AOI_RE.match(sky)
+    if m:
+        kind = {("a", "oi"): "AOI", ("o", "ai"): "OAI", ("a", "o"): "AO", ("o", "a"): "OA"}.get(
+            (m.group(1), m.group(3)))
+        if kind:
+            return kind, m.group(2)
+    m = _SKY_SIMPLE_RE.match(sky)
+    if m:
+        return m.group(1).upper(), None
+    if re.match(r"^(clk)?inv_\d+$", sky):
+        return "NOT", None
+    if re.match(r"^(clk)?buf_\d+$", sky):
+        return "BUF", None
+    if re.match(r"^mux2i_\d+$", sky):
+        return "MUX", True
+    if re.match(r"^mux2_\d+$", sky):
+        return "MUX", False
+    if re.match(r"^mux4_\d+$", sky):
+        return "MUX4", None
+    if re.match(r"^df[a-z]*_\d+$", sky):
+        return "DFF", None
 
     up = name.upper()
     if up.startswith("SDFF"):
