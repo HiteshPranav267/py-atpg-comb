@@ -23,6 +23,7 @@ once, at their top. Names never appear in a summary.
 """
 from __future__ import annotations
 
+import os
 import re
 from collections import Counter
 from dataclasses import dataclass, field
@@ -182,6 +183,9 @@ def _summarise(cone: Cone, circuit: Circuit, probs: dict[str, float], rarity: di
         "dup": "y" if any(len(set(gates[g].inputs)) < len(gates[g].inputs) for g in cone.gates) else "n",
         "level": round(level.get(cone.root, 0) / top, 2),
         "flag": sum(1 for g in cone.gates if g in flagged),
+        # share of the leaves that are themselves rare nets (rarer value below ROOT_RARE)
+        "rare_leaves": round(sum(1 for n in cone.leaves if rarity.get(n, 0.5) < ROOT_RARE)
+                             / max(len(cone.leaves), 1), 2),
     }
 
 
@@ -192,6 +196,32 @@ def cone_line(alias: str, cone: Cone) -> str:
         f["leaf_lvl"], f["root_rare"], f["root_fo"], f["root_reg"], f["drives"], f["dup"], f["level"],
         f["flag"],
     ))
+
+
+#: "two" (default): the score and the rare-input template in turn; "single": the score alone,
+#: as in the first three held-out sets (kept to reproduce them).
+_SCORE_MODE = os.environ.get("PYATPG_SCORE_MODE", "two")
+
+
+def structural_ranking(cones: list[Cone]) -> list[Cone]:
+    """Cones in the order the structural ranking offers them.
+
+    ``single``: by :func:`structural_score`. ``two``: two trigger templates taken in turn, the
+    score (a wide conjunction of shared signals) and a rare-input template (a conjunction of nets
+    that are themselves rare, ties broken by the score), each cone once.
+    """
+    by_score = sorted(cones, key=lambda c: (-structural_score(c.features), c.root))
+    if _SCORE_MODE != "two":
+        return by_score
+    by_rare = sorted(cones, key=lambda c: (-float(c.features.get("rare_leaves", 0.0)),
+                                           -structural_score(c.features), c.root))
+    out, seen = [], set()
+    for a, b in zip(by_score, by_rare):
+        for c in (a, b):
+            if c.root not in seen:
+                seen.add(c.root)
+                out.append(c)
+    return out
 
 
 def structural_score(f: dict[str, Any]) -> float:

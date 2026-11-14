@@ -534,11 +534,11 @@ class FaultTargetSelector:
         :meth:`_control_orderings`, and with the expansion the model's picks
         get, so a model run differs from it only in its second ranking.
         """
-        from .cones import expansion, structural_score
+        from .cones import expansion, structural_ranking
 
         ranking, floor, slots, exclude = self._split(profiles, size, forced)
         candidates = [c for c in cones if any(g not in exclude for g in c.gates)]
-        scored = sorted(candidates, key=lambda c: (-structural_score(c.features), c.root))
+        scored = structural_ranking(candidates)
         order = _alternate(scored, candidates, "structure")
         picks, fill, used = self._fill_slots([expansion(c) for c, _ in order], slots, exclude,
                                              ranking, len(floor))
@@ -571,7 +571,7 @@ class FaultTargetSelector:
         """
         import random
 
-        from .cones import expansion, structural_score
+        from .cones import expansion, structural_ranking
 
         try:
             ranking, floor, slots, exclude = self._split(profiles, size, forced)
@@ -589,7 +589,7 @@ class FaultTargetSelector:
                 shuffled = list(candidates)
                 random.Random(seed).shuffle(shuffled)
                 out[f"R+Rand{seed}"] = build([c for c, _ in _alternate(shuffled, candidates, "random")])
-            scored = sorted(candidates, key=lambda c: (-structural_score(c.features), c.root))
+            scored = structural_ranking(candidates)
             out["R+S"] = build([c for c, _ in _alternate(scored, candidates, "structure")])
             return out
         except Exception:  # noqa: BLE001 - a comparison must not fail the run
