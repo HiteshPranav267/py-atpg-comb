@@ -480,6 +480,11 @@ class VerilogParser:
             # _model_logic_clocks).
             q = self._ff_q(path, pins.get("Q", ""), pins.get("QN", "") or pins.get("Q_N", ""))
             d = pins.get("D", "") or pins.get("DIN", "")  # DIN: LEDA library
+            if pins.get("DE") and d:
+                # sky130 edfxtp: enable flip-flop, next state = DE ? D : Q
+                held = self._fresh(path)
+                self._mux(path, held, q, d, pins["DE"], invert=False)
+                d = held
             if family == "SDFF":
                 ff = ScanFlipFlop(q, d, pins.get("SI", "") or pins.get("SDIN", ""),
                                   pins.get("SE", "") or pins.get("SSEL", ""))
@@ -916,7 +921,7 @@ def _classify_cell(name):
         return "MUX", False
     if re.match(r"^mux4_\d+$", sky):
         return "MUX4", None
-    if re.match(r"^df[a-z]*_\d+$", sky):
+    if re.match(r"^e?df[a-z]*_\d+$", sky):  # edfxtp: enable flip-flop
         return "DFF", None
 
     up = name.upper()

@@ -34,10 +34,12 @@ from pyatpg.core.netlist import Circuit
 
 #: A cone's root takes its rarer value in fewer than this share of random patterns.
 ROOT_RARE = 0.05
-#: Levels walked back from the root.
-MAX_DEPTH = 4
 #: Gates in a cone, at most (the rest of a huge fanout-free region is left out).
 MAX_GATES = 40
+#: Levels walked back from the root. No separate limit: the walk follows fanout-free logic as
+#: deep as it goes, up to MAX_GATES, so a long chain-shaped trigger stays one cone. (Until
+#: 2026-11-14 this was 4 levels, which cut such chains into pieces.)
+MAX_DEPTH = MAX_GATES
 #: Cones with fewer gates than this are single rare gates; the gate view covers them.
 MIN_GATES = 2
 #: Consumers of the root listed in a summary.
