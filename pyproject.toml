@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pyatpg"
-version = "1.0.1"
+version = "1.1.0"
 description = "Structure-guided ATPG prioritisation for moderately rare hardware Trojan triggers in gate-level netlists"
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -17,24 +17,31 @@ authors = [
 ]
 keywords = ["ATPG", "hardware Trojan", "hardware security", "test generation", "netlist", "EDA"]
 classifiers = [
+    "Environment :: Console",
     "Programming Language :: Python :: 3",
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Topic :: Scientific/Engineering :: Electronic Design Automation (EDA)",
     "Topic :: Security",
 ]
-# Kept in step with requirements.txt, which the Render build installs.
+# The command-line tool. The web interface's server packages are the "web" extra:
+#   pip install -e ".[web]"
+# requirements.txt (used by the server build, build.sh) lists both.
 dependencies = [
     "networkx",
     "openai",
     "anthropic",
     "python-dotenv",
+    "google-genai",
+    "yowasp-yosys",
+]
+
+[project.optional-dependencies]
+web = [
     "fastapi",
     "uvicorn[standard]",
     "pydantic",
-    "google-genai",
     "python-multipart",
-    "yowasp-yosys",
     "psycopg[binary]>=3.2",
 ]
 

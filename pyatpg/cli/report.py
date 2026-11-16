@@ -1,17 +1,9 @@
-"""Command-line entry point for running an ATPG analysis.
+"""The printed report of ``pyatpg run``: one section per part of the analysis.
 
-Circuits with flip-flops are routed to the native sequential
-(time-frame-expansion) engine in ``pyatpg.seq`` unless ``--full-scan`` is
-given -- see ``AtpgAnalysisService.run``.
+Every function takes the analysis as the JSON-ready dict
+(``AtpgAnalysis.to_dict()``), the same data the ``-o`` report file holds.
 """
-import argparse
-import json
-import sys
-from dataclasses import asdict
-
-from pyatpg.atpg import AnalysisMode, AtpgAnalysisService
-from pyatpg.core.rtl import read_path
-from pyatpg.ranking.providers import AUTO_PROVIDER, PROVIDER_ORDER
+from __future__ import annotations
 
 #: Printed in place of any metric the ATPG tool did not report.
 UNREPORTED = "Not reported by the ATPG tool"
@@ -221,92 +213,33 @@ def print_report(analysis: dict) -> None:
     print("\n" + "=" * 66 + "\n")
 
 
-def main():
-    parser = argparse.ArgumentParser(
-        description=(
-            "Run an ATPG analysis over a netlist. Circuits with flip-flops go to the native "
-            "sequential (time-frame-expansion) engine unless --full-scan is given. A language "
-            "model is used when a key is supplied with --api-key or found in the environment "
-            "(or .env); without one the structural score and detectors choose the faults."
-        )
-    )
-    parser.add_argument("netlist", help="Path to a .v/.verilog/.bench netlist, an RTL .v/.sv file, or a .zip/directory of RTL sources (combinational or sequential)")
-    parser.add_argument(
-        "--mode",
-        choices=[m.value for m in AnalysisMode],
-        default=AnalysisMode.COMPARE.value,
-        help="Which run(s) to perform (default: compare)",
-    )
-    parser.add_argument(
-        "--api-key",
-        help="LLM API key (any supported vendor); structural analysis is used without one. "
-        "Falls back to LLM_API_KEY / GEMINI_API_KEY / OPENAI_API_KEY / ANTHROPIC_API_KEY / "
-        "NVIDIA_API_KEY in the environment.",
-    )
-    parser.add_argument(
-        "--llm-provider",
-        choices=[AUTO_PROVIDER, *PROVIDER_ORDER],
-        default=AUTO_PROVIDER,
-        help="Which vendor the key belongs to (default: auto, sniffed from the key's prefix)",
-    )
-    parser.add_argument("--llm-model", help="Model id override (each provider has a default)")
-    parser.add_argument(
-        "--llm-base-url",
-        help="Endpoint override for OpenAI-compatible providers (NVIDIA NIM, Ollama, Groq...)",
-    )
-    parser.add_argument(
-        "--full-scan",
-        action="store_true",
-        help="Treat every flip-flop as a scan cell and run Atalanta on the combinational core "
-        "(industry-standard scan testing). Without it, circuits with flip-flops go to the "
-        "sequential engine. Has no effect on combinational circuits.",
-    )
-    parser.add_argument(
-        "--no-llm",
-        action="store_true",
-        help="Never consult a language model, even when a key is set in the environment or .env",
-    )
-    parser.add_argument(
-        "--patterns",
-        type=int,
-        default=3000,
-        help="Random patterns used for toggle-rate profiling (does not affect the ATPG tool)",
-    )
-    parser.add_argument("--output", "-o", default="atpg_report.json", help="Where to write the JSON report")
-    args = parser.parse_args()
-
-    try:
-        source_text, netlist_name = read_path(args.netlist)
-    except (OSError, ValueError) as exc:
-        print(f"Could not read {args.netlist}: {exc}")
-        sys.exit(1)
-
-    service = AtpgAnalysisService(
-        api_key=args.api_key,
-        llm_provider=args.llm_provider,
-        llm_model=args.llm_model,
-        llm_base_url=args.llm_base_url,
-    )
-    try:
-        analysis = service.run(
-            source_text=source_text,
-            filename=netlist_name,
-            mode=AnalysisMode(args.mode),
-            toggle_patterns=args.patterns,
-            use_llm=not args.no_llm,
-            full_scan=args.full_scan,
-        )
-    except Exception as exc:  # noqa: BLE001 - surface the real reason and stop
-        print(f"Analysis failed: {exc}")
-        sys.exit(1)
-
-    payload = analysis.to_dict()
-    print_report(payload)
-
-    with open(args.output, "w", encoding="utf-8") as handle:
-        json.dump(payload, handle, indent=2, default=str)
-    print(f"Report written to {args.output}")
-
-
-if __name__ == "__main__":
-    main()
+def summary_line(analysis: dict) -> str:
+    """One line per netlist, for ``--quiet`` and batch runs."""
+    name = analysis["circuit"]["name"]
+    if analysis.get("sequential") is not None:
+        r = analysis["sequential"]["analysis"]["results"]
+        return (f"{name}: sequential engine, coverage {_fmt(r['fault_coverage'], ' %')}, "
+                f"{_fmt(r['sequence_count'])} sequences")
+    parts = [name + ":"]
+    runs = analysis.get("runs") or {}
+    standard = runs.get("non_targeted")
+    targeted = runs.get("targeted")
+    if standard and targeted:
+        parts.append(f"standard {standard['test_vectors']['count']} -> targeted "
+                     f"{targeted['test_vectors']['count']} patterns")
+        cut = (analysis.get("comparison") or {}).get("pattern_reduction_pct")
+        if cut is not None:
+            parts.append(f"({cut} % fewer)")
+    else:
+        for run in runs.values():
+            parts.append(f"{run['label']}: {run['test_vectors']['count']} patterns, "
+                         f"coverage {_fmt(run['results']['fault_coverage'], ' %')}")
+    verdict = analysis.get("verdict")
+    if verdict:
+        parts.append("| verdict: " + VERDICT_LABELS.get(verdict["verdict"], verdict["verdict"]))
+    truth = analysis.get("trojan_ground_truth") or {}
+    selection = truth.get("targeted_selection")
+    if selection:
+        parts.append(f"| Trojan gates in targeted list: {len(selection['trojan_gates_hit'])}"
+                     f"/{len(truth['trojan_gates'])}")
+    return " ".join(parts)

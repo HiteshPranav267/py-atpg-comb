@@ -20,21 +20,21 @@ python -m venv .venv && source .venv/bin/activate     # Windows: .venv\Scripts\a
 pip install -e .
 ```
 
-Build ATALANTA as in the [README](README.md#install). For the web app, run `npm install` in `frontend/`.
+Build ATALANTA as in the [README](README.md#install). For the optional web app, also run `pip install -e ".[web]"` and `npm install` in `web/`.
 
 ## Where things are
 
 - **Code layout:** [docs/architecture.md](docs/architecture.md).
 - **The analysis pipeline in order:** [docs/how-it-works.md](docs/how-it-works.md).
-- **Main entry point:** `AtpgAnalysisService.run()` in `pyatpg/atpg/service.py`. The CLI (`pyatpg/cli.py`) and the API route (`pyatpg/api/routes/atpg.py`) both call it.
+- **Main entry point:** `AtpgAnalysisService.run()` in `pyatpg/atpg/service.py`. The CLI (`pyatpg/cli/`: commands in `commands.py`, the menu in `menu.py`, `pyatpg rank` in `rank.py`) and the API route (`pyatpg/api/routes/atpg.py`) both call it.
 
 ## Making a change
 
 1. Create a branch from `main`.
 2. Keep each pull request to one change, and match the style of the code around it: type hints, docstrings that say *why*, no unexplained magic numbers.
 3. Check your change by hand before opening the pull request:
-   - **Python:** run the CLI on the [examples](examples/README.md) and compare with the expected results there. Use `--full-scan` for the sequential ones. If you changed ranking, targeting or the detectors, say in the pull request how the results moved.
-   - **Frontend:** `npm run lint` and `npm run build` in `frontend/` must pass.
+   - **Python:** run `pyatpg examples N` on the [examples](examples/README.md) and compare with the expected results there. If you changed ranking, targeting or the detectors, say in the pull request how the results moved.
+   - **Web app:** `npm run lint` and `npm run build` in `web/` must pass.
    - **API:** start the backend and open http://127.0.0.1:8000/docs to try the changed route.
 4. Update the docs the change touches: the README, `docs/`, and the CLI `--help` text.
 5. Open the pull request. Describe what changed, why, and how you checked it.

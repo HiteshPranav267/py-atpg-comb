@@ -1,16 +1,16 @@
 # PyATPG System Architecture & Context
 
-The blueprint of the PyATPG framework: what each part of the code does, how an analysis flows through it, and how the frontend and backend run in production. The analysis pipeline itself (input handling, full scan, detectors, LLM, ATPG, verdict) is described step by step in [how-it-works.md](how-it-works.md).
+The blueprint of the PyATPG framework: what each part of the code does, how an analysis flows through it, and how the optional web interface runs in production. The analysis pipeline itself (input handling, full scan, detectors, LLM, ATPG, verdict) is described step by step in [how-it-works.md](how-it-works.md).
 
 ---
 
 ## 1. High-Level Overview
 
-PyATPG finds hardware Trojans in gate-level and RTL designs. It parses (or synthesizes) a netlist, profiles every gate (SCOAP testability, toggle rates, structure), runs a deterministic trigger/payload detector, lets an LLM review the most suspicious gates and choose which faults to target, generates test patterns with ATALANTA (combinational logic and full-scan designs) or a native sequential engine (designs run without scan), and checks how the patterns exercise the circuit's rare nets and the suspected Trojan. Every run reports recall of the Trojan's gates with and without the LLM when the ground truth is known.
+PyATPG finds hardware Trojans in gate-level and RTL designs. It parses (or synthesizes) a netlist, profiles every gate (SCOAP testability, toggle rates, structure), runs a deterministic trigger/payload detector, ranks the rare logic cones by structure and rarity (or, optionally, has an LLM score them) to choose which faults to target, generates test patterns with ATALANTA (combinational logic and full-scan designs) or a native sequential engine (designs run without scan), and checks how the patterns exercise the circuit's rare nets and the suspected Trojan. Every run reports recall of the Trojan's gates with and without the LLM when the ground truth is known.
 
 ### Tech Stack
-- **Frontend:** React 19, TypeScript, Vite, TailwindCSS, TanStack Query, Zustand (Vercel)
-- **Backend:** Python 3, FastAPI, NetworkX, Uvicorn, psycopg (Render)
+- **Command-line tool (main):** Python 3.11+, NetworkX; the `pyatpg` command (`pyatpg/cli/`)
+- **Optional web interface:** FastAPI, Uvicorn, psycopg (`pyatpg/api/`, hosted on Render) and React 19, TypeScript, Vite, TailwindCSS (`web/`, hosted on Vercel)
 - **Engines:** ATALANTA 2.0 (C++, compiled at deploy), Yosys via `yowasp-yosys` (RTL synthesis), the native sequential engine in `pyatpg/seq`
 - **Data:** PostgreSQL run database (Neon), optional
 
@@ -18,9 +18,16 @@ PyATPG finds hardware Trojans in gate-level and RTL designs. It parses (or synth
 
 ## 2. Directory & File Structure
 
-### Backend (`pyatpg/`)
+### Python package (`pyatpg/`)
 
-* **`api/` — web layer**
+* **`cli/` — the `pyatpg` command**
+  * `__init__.py`: argument parsing and dispatch (`run`, `rank`, `trojan`, `examples`, `doctor`, `serve`, `menu`; `pyatpg NETLIST` is `run`).
+  * `commands.py`: each command, the pattern and fault-list writers, the setup check.
+  * `rank.py`: `pyatpg rank`, the analysis up to the fault list (same selector as a run without a model), with each cone's rarity place, both template values and which one picked it.
+  * `menu.py`: the interactive menu (plain `pyatpg` in a terminal).
+  * `report.py`: the printed report of a run and its one-line summary. `ui.py`: colour, tables, the live progress line (from `core/progress.py`).
+
+* **`api/` — optional web layer** (needs `pip install -e ".[web]"`)
   * `app.py`: FastAPI app, CORS, routers, `/health`.
   * `routes/`: `atpg.py` (run, progress, artifacts), `circuit.py`, `feature.py`, `ranking.py`, `trojan.py`, `llm.py` (providers, model listing), `benchmark.py` (API only), `admin.py` (queue, settings, status, history, storage, restart, run database), `analytics.py`.
   * `concurrency.py`: runs each analysis on a worker thread behind a slot pool (`max_concurrent_runs`), reports queueing, cancels a run whose browser disconnected, and records every run in the run database.
@@ -57,10 +64,10 @@ PyATPG finds hardware Trojans in gate-level and RTL designs. It parses (or synth
 
 * **`ranking/`**: `GateRanker` rankers and `providers.py`, the provider layer every LLM call goes through (Groq default; Gemini, OpenAI, Anthropic, NVIDIA, OpenAI-compatible; key-prefix detection; backup keys; timeouts; retries that honour the provider's wait time; streaming of reasoning).
 
-* **`trojan/`**: `rare_trigger.py` (the `pyatpg-trojan` command: a 16-tap AND-tree trigger of chosen rarity with XOR payloads, checked to fire with ATALANTA) and the web app's simpler dataset generator (`generator.py`, `inserter.py`, strategies).
+* **`trojan/`**: `rare_trigger.py` (the `pyatpg trojan` command, also `pyatpg-trojan`: a 16-tap AND-tree trigger of chosen rarity with XOR payloads, checked to fire with ATALANTA) and the web app's simpler dataset generator (`generator.py`, `inserter.py`, strategies).
 * **`analysis/`, `evaluation/`**: feature extraction, ranker evaluation.
 
-### Frontend (`frontend/src/`)
+### Optional web interface (`web/src/`)
 
 * `services/api.ts`: Axios client pointed at `VITE_API_URL` (or the backend URL saved in Settings).
 * `pages/ATPG.tsx`: upload, mode, full-scan and LLM options, live progress with the LLM's reasoning line, results.
@@ -73,13 +80,13 @@ PyATPG finds hardware Trojans in gate-level and RTL designs. It parses (or synth
 ## 3. Production Deployment Workflow
 
 ### The Backend (Render.com)
-1. On every push to `main`, Render runs `bash build.sh`: installs `requirements.txt`, precompiles Yosys (WebAssembly) into `.yowasp-cache`, clones ATALANTA at a pinned commit, applies `patches/atalanta.patch` and compiles `Atalanta/atalanta` in Render's own build image, and smoke-tests it on c17.
+1. On every push to `main`, Render runs `bash build.sh`: installs `requirements.txt` (the CLI's packages plus the `web` extra), precompiles Yosys (WebAssembly) into `.yowasp-cache`, clones ATALANTA at a pinned commit, applies `patches/atalanta.patch` and compiles `Atalanta/atalanta` in Render's own build image, and smoke-tests it on c17.
 2. It starts `python -m uvicorn pyatpg.api.app:app --host 0.0.0.0 --port $PORT`.
 3. Environment variables: an LLM key (optional — users can paste their own), `PYATPG_ADMIN_TOKEN` (enables the Admin page), `DATABASE_URL` (run database). Render sets `RENDER`, which enables the size guard (60,000 gates + flip-flops, Yosys 300 MB) for the 512 MB instance.
 4. The API is live at `https://py-atpg-backend.onrender.com`. The free plan sleeps after 15 minutes idle; the first request then takes about a minute.
 
 ### The Frontend (Vercel.com)
-1. On every push, Vercel builds the `frontend` directory with `npm run build`, baking in `VITE_API_URL`.
+1. On every push, Vercel builds the `web` directory (its project's root directory) with `npm run build`, baking in `VITE_API_URL`.
 2. The app is live at `https://py-atpg-comb.vercel.app`.
 
 ### How They Talk

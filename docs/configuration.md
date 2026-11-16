@@ -62,6 +62,7 @@ Each of these is a *live setting*. On a server, the Admin page can change it whi
 |---|---|---|
 | `PYATPG_TARGET_GATES` | `0` | Size of the targeted fault list before detector findings are added. `0` scales with the circuit: 30% of its gates, within 20-200, capped by how many gates pass the structural heuristic |
 | `PYATPG_LLM_SHARE` | `0.8` | Share of the list filled with whole rare cones, taken in turn from rarity order and a second ranking: the model's scores, or the structural score without a model. The structural heuristic's top picks fill the rest |
+| `PYATPG_SCORE_MODE` | `two` | The structural ranking used without a model. `two`: two trigger templates taken in turn, the structural score (a wide conjunction of widely shared signals) and a rare-input template (a conjunction of nets that are rare themselves). `single`: the structural score alone, as in the paper's first held-out sets. Read once at start-up |
 | `PYATPG_LLM_VIEW` | `cones` | What the model scores: `cones` (one row per rare cone) or `gates` (one row per gate, the older view) |
 | `PYATPG_LLM_BATCHES` | `4` | Most requests one selection may be split into when the cones do not fit one request |
 | `PYATPG_DETECTOR_IN_TARGETING` | `1` | `0` keeps detector findings out of the targeted list. Use it to measure what the ranking finds by itself. The verdict still uses the detectors |
@@ -85,10 +86,10 @@ Each of these is a *live setting*. On a server, the Admin page can change it whi
 | `PYATPG_RECORD_RUNS` | `1` | `0` stops recording runs even with `DATABASE_URL` set |
 | `PYATPG_CLIENT_SALT` | `DATABASE_URL` | Salt for the anonymous client ids stored with each run |
 
-## Frontend
+## Web interface (optional)
 
 | Variable | Where | Meaning |
 |---|---|---|
-| `VITE_API_URL` | Build time (`frontend/.env.production`, or the build environment) | The backend URL a production build talks to. A user can override it in **Settings → Backend Connection** |
+| `VITE_API_URL` | Build time (`web/.env.production`, or the build environment) | The backend URL a production build talks to. A user can override it in **Settings → Backend Connection** |
 
 In development (`npm run dev`) the frontend forwards `/api` to `http://localhost:8000` and needs no variable.

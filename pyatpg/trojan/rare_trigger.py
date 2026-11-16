@@ -254,9 +254,9 @@ def insert_trojan(text: str, cls: str, payloads: int, seed: int,
     raise RuntimeError(f"no {cls} Trojan passed in {max_builds} builds ({rejected})")
 
 
-def main(argv: list[str] | None = None) -> None:
+def main(argv: list[str] | None = None, prog: str = "pyatpg-trojan") -> None:
     ap = argparse.ArgumentParser(
-        prog="pyatpg-trojan",
+        prog=prog,
         description="Insert a combinational Trojan with a trigger of chosen rarity "
                     "(16 tapped nets, AND tree, XOR payloads; gates named Tj_*) into "
                     "an ISCAS-primitive or SAED-cell Verilog netlist. Needs ATALANTA "

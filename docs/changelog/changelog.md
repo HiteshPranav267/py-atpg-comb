@@ -4,6 +4,59 @@ What changed, why, and what it measurably did. Newest first. Older entries
 refer to research scripts (`scripts/`), experiment netlists (`experiments/`)
 and results that the team keeps outside this repository.
 
+## 2026-11-16: command line first (1.1.0)
+
+- **The command line is the main interface.** `pyatpg` now has subcommands
+  and an interactive menu (plain `pyatpg` in a terminal). `pyatpg run` is
+  the analysis as before; `pyatpg NETLIST` still works. New:
+  - `pyatpg rank`: the ranked rare cones and the targeted fault list without
+    ATALANTA or a model, in seconds. Each cone shows its place in plain
+    rarity order, both template values and which template or rarity order
+    picked it; with Trojan gates known by name, the orderings' Trojan check.
+  - `pyatpg doctor`: checks Python, ATALANTA (a test run on c17), Yosys,
+    GHDL, the LLM key and the web packages.
+  - `pyatpg examples [N] [--rank]`: lists the bundled circuits with their
+    expected results and runs one with the right flags.
+  - `pyatpg trojan` (same as `pyatpg-trojan`) and `pyatpg serve` (the web
+    backend).
+  - `run` options `--json` (report to stdout), `-q/--quiet` (one line),
+    `--vectors-out` (test patterns as text), `--faults-out` (fault list in
+    ATALANTA's `-f` format) and a live progress line on stderr.
+  The code moved from `pyatpg/cli.py` to the `pyatpg/cli/` package.
+- **The web interface is optional.** `frontend/` is now `web/`, and its server
+  packages (FastAPI, Uvicorn, pydantic, python-multipart, psycopg) moved to
+  the `web` extra: `pip install -e ".[web]"`. `requirements.txt`, which the
+  server build installs, still lists everything.
+- **Examples re-measured** with the current ranking (below): c3540 12 of 12
+  Trojan gates in the list (270 -> 57 patterns), s5378 15 of 15 (649 -> 83),
+  s9234 2 of 12 (was 12; its trigger is now 32nd and the list holds 29
+  cones, 16th with `PYATPG_SCORE_MODE=single`), b17 5 of 15 as before.
+  `PYATPG_SCORE_MODE` is now documented.
+
+## 2026-11-14: two trigger templates; cones followed to full depth; LEDA and SkyWater cells
+
+- **Parser** (`ffe98b5`): LEDA 250 nm and SkyWater 130 standard cells (the
+  TRIT benchmark netlists), checked cell by cell against the shipped models
+  and on TRIT's clean hosts against the ISCAS netlists on 2,000 random
+  vectors. SkyWater enable flip-flops (`edfxtp`) since `fdff0de`.
+- **Two templates** (`533bbf0`). On 1,480 Trojans from an independent
+  generator (TRIT) the structural score did not beat rarity order: their
+  triggers combine nets that are already rare, which the score has no term
+  for. A new cone feature, `rare_leaves` (share of a cone's taps that are
+  rare nets), drives a second template, and the default ranking takes the
+  score's ranking and the rare-input template's in turn
+  (`structural_ranking`). Under a rule fixed before the test, it beat
+  rarity order on 540 fresh TRIT-style Trojans (8-0 over circuit groups,
+  p = 0.004) and on our own Large-scale set (11-1, p = 0.003), where it
+  held 178 whole Trojans against 49 for rarity order (215 for the score
+  alone). `PYATPG_SCORE_MODE=single` gives the score alone.
+- **Full-depth cones** (`fdff0de`). The cone walk stopped four levels below
+  the root, which cut chain-shaped triggers (one AND2 per tap) into pieces
+  that no ordering ranked: 0 of 100 chains whole. It now follows
+  fanout-free logic as deep as it goes, up to the 40-gate cap. On 300 fresh
+  chains of 16, 24 and 32 taps the default held 130 whole against 49 for
+  rarity order.
+
 ## 2026-11-05: prepared for open-source use
 
 - **Docs.** The README is now a short user guide. New: `docs/cli.md`,

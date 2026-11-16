@@ -25,25 +25,26 @@ pyatpg examples/s9234_gen_uncommon_s10.v --no-llm --full-scan
 pyatpg examples/b17_gen_rare_s9.v        --no-llm      # about 2 minutes
 ```
 
-In the web app, upload the file on **Circuits**. Then on **ATPG**, choose *Compare Both* and *Full scan* (the default).
+Or let PyATPG pick the flags: `pyatpg examples` lists them, `pyatpg examples 2` runs the second, and `pyatpg examples 2 --rank` shows only the ranked cones, in seconds and without ATALANTA.
 
 ## What to expect
 
-These are measured with `--no-llm`, ATALANTA at its default fixed seed, and the default list size. *Patterns* compares standard ATPG with the targeted run on the R+S list. *Trojan gates in the list* comes from the report's *Trojan check* section.
+These are measured with `--no-llm`, ATALANTA at its default fixed seed, the default list size and the default ranking (PyATPG 1.1). *Patterns* compares standard ATPG with the targeted run. *Trojan gates in the list* comes from the report's *Trojan check* section, or from `pyatpg rank`.
 
-| File | Trojan gates | R (rarity only) | R+Rand (3 seeds) | R+S (structural score) | Patterns: standard → targeted |
-|---|---|---|---|---|---|
-| `c3540_gen_uncommon_s10.v` | 12 | 2 | 2, 2, 3 | **12** | 270 → 59 (78% fewer) |
-| `s5378_gen_rare_s9.v` | 15 | 0 | 0, 0, 0 | **15** | 649 → 93 (86% fewer) |
-| `s9234_gen_uncommon_s10.v` | 12 | 2 | 2, 2, 2 | **12** | 957 → 80 (92% fewer) |
-| `b17_gen_rare_s9.v` | 15 | 5 | 5, 5, 5 | 5 | 6,439 → 157 (98% fewer) |
+| File | Trojan gates | Rarity only | Rarity + random (3 seeds) | Rarity + structure | Trigger cone's place: rarity / structure | Patterns: standard -> targeted |
+|---|---|---|---|---|---|---|
+| `c3540_gen_uncommon_s10.v` | 12 | 2 | 2, 2, 3 | **12** | 123rd / **1st** | 270 -> 57 (79% fewer) |
+| `s5378_gen_rare_s9.v` | 15 | 0 | 0, 0, 0 | **15** | 50th / **17th** | 649 -> 83 (87% fewer) |
+| `s9234_gen_uncommon_s10.v` | 12 | 2 | 2, 2, 2 | 2 | 167th / 32nd | 957 -> 75 (92% fewer) |
+| `b17_gen_rare_s9.v` | 15 | 5 | 5, 5, 5 | 5 | 242nd / 374th | 6,439 -> 163 (97% fewer) |
 
 How to read them:
 
-- **c3540, s5378, s9234:** the trigger is moderately rare. Dozens to over a hundred harmless rare cones are rarer than it, so rarity order reaches its cone only at place 50-167, long after the list is full. The structural score puts it at place 1-11, and the whole Trojan enters the list. On c3540 and s9234, the 2 Trojan gates that R finds are the trigger's root and its payload XOR, which the XOR-shape detector adds to every list.
-- **b17:** the limit of the method. The circuit has more than 900 rare cones, and the list holds only a few of them, so no ordering reaches the trigger. The structural score ranks it 470th. All orderings keep only the detector's 5 gates. Use this circuit to test scale, not the ranking.
+- **c3540 and s5378:** the trigger is moderately rare. Dozens to over a hundred harmless rare cones are rarer than it, so rarity order reaches its cone only long after the list is full. The structural ranking puts it 1st or 17th, inside the list (48 and 34 cones), and the whole Trojan enters it. On c3540 the 2 Trojan gates that rarity order finds are the trigger's root and its payload XOR, which the XOR-shape detector adds to every list.
+- **s9234: a trade-off.** The structural ranking lifts the trigger from 167th to 32nd, but the list holds 29 cones, so it stops just short. The default ranking takes two trigger templates in turn: a wide conjunction of widely shared signals (this trigger's shape) and a conjunction of nets that are rare themselves (the shape of TRIT's Trojans, where the first template alone did not beat rarity order). Sharing the places costs this trigger a few. With the first template alone, `PYATPG_SCORE_MODE=single pyatpg examples 3`, it is 16th and all 12 Trojan gates are in the list, as in PyATPG 1.0.
+- **b17:** the limit of the method. The circuit has more than 900 rare cones, and the list holds only a few of them, so no ordering reaches the trigger. All orderings keep only the detector's 5 gates. Use this circuit to test scale, not the ranking.
 
-Without a language model, the targeted run's own fault list is the R+S list, so the report's *In the targeted fault list* line matches the R+S row, and the targeted patterns test the whole Trojan. With an LLM key, the model's ranking replaces the structural score and an R+L row is added. In the project's experiments, R+L and R+S were statistically tied.
+Without a language model, the targeted run's own fault list is the *rarity + structure* list, so the report's *In the targeted fault list* line matches that row. With an LLM key, the model's ranking replaces the structural one and an R+L row is added. In the project's experiments, the two were statistically tied.
 
 A run with flip-flops but without `--full-scan` goes to the sequential engine instead. For `s9234_gen_uncommon_s10.v` it reaches 13% fault coverage with 10 test sequences (40 clock cycles), and the report has no ranked fault list.
 

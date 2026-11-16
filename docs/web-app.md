@@ -1,22 +1,26 @@
 # Web app guide
 
-The web app is a React frontend (`frontend/`) for the PyATPG backend (`pyatpg/api/`). It runs the same analysis as the [command line](cli.md) and adds live progress, tables and charts.
+The web app is an optional browser front end: a React app in `web/` and the PyATPG backend in `pyatpg/api/`. It runs the same analysis as the [command line](cli.md), which is the main way to use PyATPG, and shows it as tables and charts.
 
 ## Run it on your own machine
 
-You need the [install steps](../README.md#install) done (Python package and ATALANTA) and Node.js 20+.
+You need the [install steps](../README.md#install) done (Python package and ATALANTA), the web extra and Node.js 20+:
+
+```bash
+pip install -e ".[web]"                         # FastAPI, Uvicorn and the run-database driver
+```
 
 ```bash
 # Terminal 1, from the repository root: the backend
-python -m uvicorn pyatpg.api.app:app            # http://127.0.0.1:8000, API docs at /docs
+pyatpg serve                                    # http://127.0.0.1:8000, API docs at /docs
 
 # Terminal 2: the frontend
-cd frontend
+cd web
 npm install                                     # first time only
 npm run dev                                     # http://localhost:5173
 ```
 
-In development the frontend sends every `/api` request to `http://localhost:8000` (see `frontend/vite.config.ts`). Nothing else needs configuring. Add `--reload` to the backend command while editing Python code.
+In development the frontend sends every `/api` request to `http://localhost:8000` (see `web/vite.config.ts`). Nothing else needs configuring. Add `--reload` to `pyatpg serve` while editing Python code.
 
 On Windows, set `ATALANTA_BIN` in the backend's terminal before starting it ([configuration.md](configuration.md#atalanta-on-windows)).
 
@@ -63,24 +67,24 @@ Keys entered here are sent with each run and are not stored on the server.
 
 ## Use a hosted backend
 
-The frontend reads its default backend URL from `VITE_API_URL` at build time (`frontend/.env.production` for production builds). Either:
+The frontend reads its default backend URL from `VITE_API_URL` at build time (`web/.env.production` for production builds). Either:
 
 - set **Settings → Backend Connection** to the hosted URL in a running app, or
-- build your own frontend against it: `VITE_API_URL=https://your-backend.example.com npm run build`, and serve `frontend/dist/`.
+- build your own frontend against it: `VITE_API_URL=https://your-backend.example.com npm run build`, and serve `web/dist/`.
 
 A hosted backend on a small instance has limits that a local run does not. It rejects designs over 60,000 gates plus flip-flops and stops Yosys above 300 MB (`PYATPG_MAX_GATES`, `PYATPG_YOSYS_MAX_MB`; both apply only when the server runs on Render). It runs one analysis at a time, and the others queue. A free Render instance sleeps when idle, so the first request after a pause can take about a minute.
 
 ## Deploy your own
 
 - **Backend:** any Linux host with Python 3.11+ and a C++ toolchain. Run `bash build.sh` (installs the requirements, warms up Yosys, builds ATALANTA statically and smoke-tests it), then `uvicorn pyatpg.api.app:app --host 0.0.0.0 --port $PORT`. Optional environment: an LLM key, `PYATPG_ADMIN_TOKEN` and `DATABASE_URL` ([configuration.md](configuration.md)).
-- **Frontend:** any static host. Build from `frontend/` with `npm run build` and `VITE_API_URL` set to the backend. `frontend/vercel.json` holds the single-page-app routing for Vercel.
+- **Frontend:** any static host. Build from `web/` with `npm run build` and `VITE_API_URL` set to the backend (on Vercel: root directory `web`). `web/vercel.json` holds the single-page-app routing for Vercel.
 
 How requests flow between the two is described in [architecture.md](architecture.md#3-production-deployment-workflow).
 
 ## Frontend development
 
 ```bash
-cd frontend
+cd web
 npm run dev      # development server with hot reload
 npm run lint     # oxlint
 npm run build    # type check (tsc) and production build

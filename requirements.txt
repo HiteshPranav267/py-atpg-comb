@@ -1,11 +1,15 @@
+# Everything the server build (build.sh) installs: the command-line tool's
+# packages plus the web interface's ("web" extra in pyproject.toml).
+# For the command-line tool alone:  pip install -e .
 networkx
 openai
 anthropic
 python-dotenv
+google-genai
+yowasp-yosys
+# web interface (optional)
 fastapi
 uvicorn[standard]
 pydantic
-google-genai
 python-multipart
-yowasp-yosys
 psycopg[binary]>=3.2
